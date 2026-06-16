@@ -1,12 +1,9 @@
-#include <map>
-#include <unordered_map>
-#include <string>
 #include <cmath>
 #include <cstddef>
-#include <functional>
-#include <tuple>
-#include <type_traits>
+#include <iostream>
 #include <omp.h>
+#include "flat_grid.hpp"
+
 namespace
 {
 // Статическая переменная для хранения времени начала выполнения программы
@@ -22,261 +19,134 @@ void time_elapsed(double& elapsed)
     elapsed = duration.count();
 }
 
-// Вспомогательная функция: комбинирование хешей (из boost/hash_combine)
-template <class T>
-inline void hash_combine(std::size_t& seed, const T& v)
-{
-    seed ^= std::hash<T> {}(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
-// Хеш для std::tuple
-struct TupleHash
-{
-    template <typename... Args>
-    std::size_t operator()(const std::tuple<Args...>& t) const
-    {
-        return hash_impl(t, std::index_sequence_for<Args...> {});
-    }
-
-private:
-    template <typename Tuple, std::size_t... Is>
-    std::size_t hash_impl(const Tuple& t, std::index_sequence<Is...>) const
-    {
-        std::size_t seed = 0;
-        (hash_combine(seed, std::get<Is>(t)), ...); // C++17 fold expression
-        return seed;
-    }
-};
-
-using CellKey = std::tuple<int, int, int>;
-using CellMap = std::unordered_map<CellKey, std::vector<size_t>, TupleHash>;
-
 void link_list(std::vector<Particle>& Elem, int itimestep, size_t ntotal, size_t& niac, std::vector<size_t>& pair_i,
                std::vector<size_t>& pair_j, std::vector<double>& w, std::vector<std::vector<double>>& dwdx)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
 #endif
-    double s1, s2 = 0.0;
-    time_elapsed(s1);
-    for (size_t i = 0; i < pair_i.size(); i++)
-    {
-        pair_i[i] = 0;
-        pair_j[i] = 0;
-    }
+    // === Замеры производительности ===
+    double t_build = 0.0, t_pair = 0.0;
+    double t_start, t_end;
+    time_elapsed(t_start);
+
     int scale_k = 0;
     if (skf == 1) scale_k = 2;  // Кубический сплайн
     else if (skf == 2) scale_k = 3;  // Гауссово ядро
     else if (skf == 3) scale_k = 3;  // Квинтическое ядро
-    double max_hmsl = 0.0;
-    for (size_t i = 0; i < ntotal; ++i)
-    {
-        if (Elem[i].hsml > max_hmsl) max_hmsl = Elem[i].hsml;
-    }
-    double dx = scale_k * max_hmsl;
-    CellMap Cell;
-    Cell.reserve(ntotal);
-    std::vector<CellKey> particle_cell(ntotal);
-    for (size_t i = 0; i < ntotal; ++i)
-    {
-        int ix = static_cast<int>(std::floor(Elem[i].x[0] / dx));
-        int iy = (dim >= 2) ? static_cast<int>(std::floor(Elem[i].x[1] / dx)) : 0;
-        int iz = (dim >= 3) ? static_cast<int>(std::floor(Elem[i].x[2] / dx)) : 0;
 
-        CellKey key{ix, iy, iz};
-        Cell[key].push_back(i);
-        particle_cell[i] = key;
-    }
+    // Этап 2: построение FlatGrid (замена CellMap)
+    // Последовательная версия — оптимальна при N <= ~10000
+    FlatGrid grid;
+    grid.build(Elem, ntotal, scale_k);
+    double dx = grid.dx;
+
     niac = 0;
-    time_elapsed(s2);
-    //std::wcout << "Затраченное время на последовательную секцию = " << s2 - s1 << " секунд" << std::endl;
-    time_elapsed(s1);
-    std::vector<double> thread_time(omp_get_max_threads(), 0.0);
+    time_elapsed(t_end);
+    t_build = t_end - t_start;
+    time_elapsed(t_start);
+
+    // === Парный цикл (Этап 3: единый цикл + thread-local буфер dxiac) ===
     #pragma omp parallel
     {
-        auto tid = omp_get_thread_num();
-        double start = omp_get_wtime();  // Начало замера
+        // Этап 3 (B3): thread-local переиспользуемый буфер dxiac.
+        // Объявляется ОДИН раз на поток, переиспользуется без пересоздания.
+        std::vector<double> dxiac(dim, 0.0);
+
         #pragma omp for schedule(auto)
         for (size_t i = 0; i < ntotal; ++i)
         {
-            auto [ix, iy, iz] = particle_cell[i];
-            CellKey kl {ix, iy, iz};
+            // Индекс ячейки частицы i
+            int ci = grid.cell_index(
+                Elem[i].x[0],
+                (dim >= 2) ? Elem[i].x[1] : 0.0,
+                (dim >= 3) ? Elem[i].x[2] : 0.0);
+
+            // Декомпозиция cell_idx → (ix, iy, iz)
+            int ix = ci % grid.nx;
+            int iy = (grid.nx > 0) ? (ci / grid.nx) % grid.ny : 0;
+            int iz = (grid.nx * grid.ny > 0) ? ci / (grid.nx * grid.ny) : 0;
+
             int fac = static_cast<int>(std::round(scale_k * Elem[i].hsml / dx));
-            int ky_n = 0;
-            int ky_k = 0;
-            int kz_n = 0;
-            int kz_k = 0;
-            if (dim >= 2)
-            {
-                ky_n = -fac;
-                ky_k = fac;
-            }
-            if (dim >= 3)
-            {
-                kz_n = -fac;
-                kz_k = fac;
-            }
-            //if (fac < 1) fac = 1;
-            //if (fac == 1)
-            if (fac < 1)
-            {
-                for (auto j : Cell[kl])
-                {
-                    if (j > i)
-                    {
-                        // Вычисление разности координат
-                        std::vector<double> dxiac(dim);
-                        double driac = 0.0;
 
-                        for (size_t d = 0; d < dim; ++d)
-                        {
-                            dxiac[d] = Elem[i].x[d] - Elem[j].x[d];
-                            driac += dxiac[d] * dxiac[d];
-                        }
-                        double mhsml = 0.5 * (Elem[i].hsml + Elem[j].hsml);
-                        // Проверка на взаимодействие
-                        double r = std::sqrt(driac);
-                        if (driac < ((scale_k * mhsml) * (scale_k * mhsml)))
-                        {
-                            size_t idx;
-                            #pragma omp atomic capture
-                            {
-                                idx = niac;
-                                niac++;
-                            }
-                            if (idx < max_interaction)
-                            {
-                                double tdwdx[dim];
-                                double w_buf = 0.0;
-                                kernel(r, dxiac, mhsml,w_buf, tdwdx);
-                                //countiac[i]++;
-                                pair_i[idx] = i + 1;
-                                pair_j[idx] = j + 1;
-                                w[idx] = w_buf;
-                                for (size_t d = 0; d < dim; ++d)
-                                {
-                                    dwdx[d][idx] = tdwdx[d];
-                                    tdwdx[d] = 0.0;
-                                }                               
-                            }
-                            else
-                            {
-                                std::cout << "Превышен  max_interaction, niac = " << niac << std::endl;
-                            }
-                        }
-                    }
-                }
-            }
-            else
+            // Сохранение семантики fac < 1: только собственная ячейка
+            int rx = (fac < 1) ? 0 : fac;
+            int ry = (dim >= 2) ? ((fac < 1) ? 0 : fac) : 0;
+            int rz = (dim >= 3) ? ((fac < 1) ? 0 : fac) : 0;
+
+            for (int kx = -rx; kx <= rx; ++kx)
             {
-                for (int kx = -fac; kx <= fac; ++kx)
+                int nx_cell = ix + kx;
+                if (nx_cell < 0 || nx_cell >= grid.nx) continue;
+
+                for (int ky = -ry; ky <= ry; ++ky)
                 {
-                    for (int ky = ky_n; ky <= ky_k; ++ky)
+                    int ny_cell = iy + ky;
+                    if (ny_cell < 0 || ny_cell >= grid.ny) continue;
+
+                    for (int kz = -rz; kz <= rz; ++kz)
                     {
-                        for (int kz = kz_n; kz <= kz_k; ++kz)
+                        int nz_cell = iz + kz;
+                        if (nz_cell < 0 || nz_cell >= grid.nz) continue;
+
+                        int nc = nx_cell + grid.nx * (ny_cell + grid.ny * nz_cell);
+                        auto [begin, end] = grid.cell_range(nc);
+
+                        for (int idx = begin; idx < end; ++idx)
                         {
-                            CellKey neighbor_key{ix + kx, iy + ky, iz + kz};
-                            auto it = Cell.find(neighbor_key);
-                            if (it != Cell.end())
+                            size_t j = grid.sorted_idx[idx];
+                            if (j <= i) continue;
+
+                            // Перезаписываем thread-local буфер (без аллокации)
+                            double driac = 0.0;
+                            for (size_t d = 0; d < dim; ++d)
                             {
-                                for (size_t j : it->second)
+                                dxiac[d] = Elem[i].x[d] - Elem[j].x[d];
+                                driac += dxiac[d] * dxiac[d];
+                            }
+                            double mhsml = 0.5 * (Elem[i].hsml + Elem[j].hsml);
+                            double cutoff = scale_k * mhsml;
+
+                            // Проверка на взаимодействие
+                            if (driac < cutoff * cutoff)
+                            {
+                                double r = std::sqrt(driac);
+                                size_t pidx;
+                                #pragma omp atomic capture
                                 {
-                                    if (j > i)
+                                    pidx = niac;
+                                    niac++;
+                                }
+                                if (pidx < max_interaction)
+                                {
+                                    double tdwdx[dim];
+                                    double w_buf = 0.0;
+                                    kernel(r, dxiac, mhsml, w_buf, tdwdx);
+                                    pair_i[pidx] = i + 1;
+                                    pair_j[pidx] = j + 1;
+                                    w[pidx] = w_buf;
+                                    for (size_t d = 0; d < dim; ++d)
                                     {
-                                        // Вычисление разности координат
-                                        std::vector<double> dxiac(dim);
-                                        double driac = 0.0;
-
-                                        for (size_t d = 0; d < dim; ++d)
-                                        {
-                                            dxiac[d] = Elem[i].x[d] - Elem[j].x[d];
-                                            driac += dxiac[d] * dxiac[d];
-                                        }
-                                        double mhsml = 0.5 * (Elem[i].hsml + Elem[j].hsml);
-                                        double r = std::sqrt(driac);
-                                        // Проверка на взаимодействие
-                                        if (driac < ((scale_k * mhsml) * (scale_k * mhsml)))
-                                        {
-                                            size_t idx;
-                                            #pragma omp atomic capture
-                                            {
-                                                idx = niac;
-                                                niac++;
-                                            }
-                                            if (idx < max_interaction)
-                                            {
-                                                double tdwdx[dim];
-                                                double w_buf = 0.0;
-                                                kernel(r, dxiac, mhsml, w_buf, tdwdx);
-                                                //countiac[i]++;
-                                                pair_i[idx] = i + 1;
-                                                pair_j[idx] = j + 1;
-                                                w[idx] = w_buf;
-                                                for (size_t d = 0; d < dim; ++d)
-                                                {
-                                                    dwdx[d][idx] = tdwdx[d];
-                                                    tdwdx[d] = 0.0;
-                                                }                                               
-                                            }
-                                            /*else
-                                            {
-                                                std::cout << "Превышен  max_interaction, niac = " << niac << std::endl;
-                                            }*/
-                                        }
+                                        dwdx[d][pidx] = tdwdx[d];
                                     }
+                                }
+                                else
+                                {
+                                    std::cout << "Превышен max_interaction, niac = " << niac << std::endl;
                                 }
                             }
                         }
                     }
                 }
             }
-            double end = omp_get_wtime();    // Конец замера
-            // Сохраняем время в общий массив
-            thread_time[tid] = end - start;
         }
-
-
     }
-    /*for (int t = 0; t < omp_get_max_threads(); ++t)
-    {
-        std::cout << "Поток " << t << ": " << thread_time[t] << " сек\n";
-    }
-    time_elapsed(s2);
-    std::wcout << "Затраченное время на параллельную секцию = " << s2 - s1 << " секунд" << std::endl;
-    std::wcout << "Общее число взаимодействий частиц - " << niac << std::endl;*/
-    // Статистика
-    /*if (itimestep % print_step == 0 && int_stat)
-    {
-        int sumiac = 0;
-        int maxiac = 0;
-        int miniac = 1000;
-        int noiac = 0;
-        size_t maxp = 0;
-        size_t minp = 0;
 
-        for (size_t i = 0; i < ntotal; ++i)
-        {
-            sumiac += countiac[i];
-            if (countiac[i] > maxiac)
-            {
-                maxiac = countiac[i];
-                maxp = i + 1;
-            }
-            if (countiac[i] < miniac)
-            {
-                miniac = countiac[i];
-                minp = i + 1;
-            }
-            if (countiac[i] == 0) noiac++;
-        }
-        //std::ios::sync_with_stdio(false);
-        std::ofstream file("log.txt", std::ios::app);
-        file << " >> Статистика: взаимодействия на частицу:\n";
-        file << "*** Частица " << maxp << " максимальные взаимодействия: " << maxiac << "\n";
-        file << "*** Частица " << minp << " минимальные взаимодействия: " << miniac << "\n";
-        file << "*** Среднее: " << double(sumiac)/double(ntotal) << "\n";
-        file << "*** Общее число пар: " << niac << "\n";
-        file << "*** Частицы без взаимодействий: " << noiac << "\n";
-        file.close();
-    } */
+    time_elapsed(t_end);
+    t_pair = t_end - t_start;
+    /*std::wcout << "[link_list] Построение сетки (FlatGrid): " << t_build << " с" << std::endl;
+    std::wcout << "[link_list] Парный цикл: " << t_pair << " с" << std::endl;
+    std::wcout << "[link_list] Итого: " << t_build + t_pair << " с" << std::endl;
+    std::wcout << "[link_list] niac = " << niac << std::endl;
+    std::wcout << "[link_list] n_cells = " << grid.n_cells() << " (" << grid.nx << "x" << grid.ny << "x" << grid.nz << ")" << std::endl;*/
 }
