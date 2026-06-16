@@ -1,0 +1,52 @@
+# Исполняемые файлы
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Объектные файлы
+*.o
+*.obj
+
+# Отладочные символы
+*.pdb
+*.idb
+*.ilk
+
+# Файлы Code::Blocks
+*.cbp
+*.depend
+*.layout
+
+# Временные файлы
+*.tmp
+*.bak
+*.swp
+*~
+
+# Директории сборки
+bin/
+obj/
+Debug/
+Release/
+
+# Файлы Visual Studio
+.vs/
+*.suo
+*.user
+*.sdf
+*.opensdf
+
+# Файлы ОС
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Лог-файлы
+log.txt
+
+# CSV-дампы
+sph_gp.csv
+
+# Отчёты (хранятся отдельно)
+# Отчеты/
