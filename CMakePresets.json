@@ -1,0 +1,47 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 16,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "clang-windows",
+      "displayName": "Clang (Windows) — baseline-конфигурация",
+      "description": "Воспроизводит прежнюю сборку tasks.json: Clang, C++20, -O2, -Weverything, OpenMP",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "C:/Program Files/LLVM/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "C:/Program Files/LLVM/bin/clang++.exe",
+        "CMAKE_BUILD_TYPE": "Release",
+        "SPH_USE_OPENMP": "ON",
+        "SPH_NATIVE_ARCH": "OFF",
+        "SPH_OLEVEL": "2"
+      }
+    },
+    {
+      "name": "clang-windows-debug",
+      "displayName": "Clang (Windows) — Debug для LLDB/assert",
+      "inherits": "clang-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "clang-windows-native",
+      "displayName": "Clang (Windows) — Release + -march=native (SIMD, Этап 4.4)",
+      "inherits": "clang-windows",
+      "cacheVariables": {
+        "SPH_NATIVE_ARCH": "ON",
+        "SPH_OLEVEL": "3"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "clang-windows",        "configurePreset": "clang-windows" },
+    { "name": "clang-windows-debug",  "configurePreset": "clang-windows-debug" },
+    { "name": "clang-windows-native", "configurePreset": "clang-windows-native" }
+  ]
+}

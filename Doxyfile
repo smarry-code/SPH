@@ -1,0 +1,81 @@
+# ============================================================================
+# Doxyfile — конфигурация автогенерации API-документации проекта SPH
+# ----------------------------------------------------------------------------
+# Вариант B (минимальный стек, см. отчёт §5.2):
+#   - Doxygen генерирует ОТДЕЛЬНЫЙ HTML-сайт API (GENERATE_HTML=YES);
+#   - XML также генерируется для возможного будущего перехода на Sphinx+Breathe;
+#   - сайт MkDocs Material ссылается на этот Doxygen-сайт из навигации.
+# Запуск:  doxygen Doxyfile
+# Результат: docs/_build/doxygen/html/index.html  и  docs/_build/doxygen/xml/
+# ============================================================================
+
+PROJECT_NAME           = "SPH API"
+PROJECT_BRIEF          = "Симулятор гидродинамики сглаженных частиц (C++20/OpenMP)"
+PROJECT_NUMBER         =
+OUTPUT_LANGUAGE        = Russian
+
+# --- Исходники --------------------------------------------------------------
+INPUT                  = src/ include/
+RECURSIVE              = YES
+FILE_PATTERNS          = *.cpp *.hpp *.h *.cc
+EXTENSION_MAPPING      = hpp=C++ cpp=C++
+INPUT_ENCODING         = UTF-8
+
+# Каталоги, исключаемые из разбора (тесты/бенчмарки в корне проекта)
+EXCLUDE                =
+EXCLUDE_PATTERNS       = */SPH_Lee/*
+
+# --- Извлечение -------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+
+# --- Вывод ------------------------------------------------------------------
+OUTPUT_DIRECTORY       = docs/_build/doxygen
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+
+# --- Документация из кода ---------------------------------------------------
+# Поддержка JAVADOC_AUTOBRIEF: первая строка /** ... */ — краткое описание.
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS           = YES
+SEPARATE_MEMBER_PAGES  = NO
+
+# --- Перекрёстные ссылки на исходники ---------------------------------------
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+# --- Графы зависимостей (требуется graphviz/dot) ----------------------------
+HAVE_DOT               = YES
+DOT_PATH = "C:/Program Files/Graphviz/bin"
+UML_LOOK               = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+CALL_GRAPH             = YES
+
+# --- Поиск ------------------------------------------------------------------
+SEARCHENGINE           = YES
+
+# --- Прочее -----------------------------------------------------------------
+USE_MATHJAX            = YES
+QUIET                  = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_FORMAT            = "$file:$line: $text"
+WARN_LOGFILE           = docs/_build/doxygen_warnings.log
+
+# EXTRACT_DEPRECATED удалён в Doxygen 1.17+ — EXTRACT_ALL=YES покрывает эту функцию
+# Подавление предупреждений о стандартной библиотеке
+WARN_IF_UNDOCUMENTED   = YES

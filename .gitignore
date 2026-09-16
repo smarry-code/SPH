@@ -1,52 +1,77 @@
-# Исполняемые файлы
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Объектные файлы
-*.o
-*.obj
-
-# Отладочные символы
-*.pdb
-*.idb
-*.ilk
-
-# Файлы Code::Blocks
-*.cbp
-*.depend
-*.layout
-
-# Временные файлы
-*.tmp
-*.bak
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.clinerules/
 *.swp
+*.swo
 *~
 
-# Директории сборки
-bin/
-obj/
-Debug/
-Release/
+# CMake and native build output
+/build/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
 
-# Файлы Visual Studio
-.vs/
-*.suo
-*.user
-*.sdf
-*.opensdf
+# Compiled binaries and intermediate files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.pdb
+*.ilk
+*.dSYM/
 
-# Файлы ОС
-Thumbs.db
-.DS_Store
-desktop.ini
+# Test and coverage artifacts
+Testing/
+*.gcda
+*.gcno
+*.gcov
+coverage/
+/.migration-build/
+/migration/logs/
 
-# Лог-файлы
-log.txt
+# Python caches used by documentation tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
 
-# CSV-дампы
+# Generated documentation
+/site/
+/docs/_build/
+.cache/
+
+# SPH simulation and profiling output
+sph_output_*.txt
+sph_output_*.dat
 sph_gp.csv
+force_timing.csv
+log.txt
+*.log
+*.msg
 
-# Отчёты (хранятся отдельно)
-# Отчеты/
+# Stage-00 E2E golden output is source data, not a generated worktree result.
+!tests/end_to_end/layered-impact-current/golden/log.txt
+!tests/end_to_end/layered-impact-current/golden/sph_gp.csv
+!tests/end_to_end/layered-impact-current/golden/sph_output_*.txt
+
+# IDE-generated project state
+*.layout

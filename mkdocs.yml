@@ -1,0 +1,126 @@
+site_name: SPH — Документация
+
+site_description: Симулятор гидродинамики сглаженных частиц (SPH) на C++20/OpenMP
+site_url: https://placeholder.invalid/
+repo_url: https://placeholder.invalid/
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: ru
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tooltips
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Тёмная тема
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Светлая тема
+
+plugins:
+  - search:
+      lang: [ru, en]
+
+# Hook: публикация исходников src/include в сайт и нормализация ссылок :N → #LN,
+# чтобы ссылки на исходный код из разделов архитектуры работали в собранном сайте
+# (подробности — в mkdocs_hooks/source_links.py).
+hooks:
+  - mkdocs_hooks/source_links.py
+
+# Валидация ссылок: кросс-ссылки на файлы исходного кода вне docs_dir
+# (../../include/*.hpp, ../../src/*.cpp и т. д.) — осознанная особенность
+# подхода Docs-as-Code. MkDocs не может их проверить (они вне docs_dir),
+# поэтому их валидация вынесена в CI-этап (lychee). Здесь такие ссылки
+# игнорируются, чтобы --strict проверял только внутреннюю консистентность nav.
+validation:
+  links:
+    # Кросс-ссылки на исходный код вне docs_dir (../../include/*.hpp и т. д.)
+    # проверяются линкером lychee в CI-этапе; здесь они игнорируются,
+    # чтобы --strict контролировал только внутреннюю консистентность сайта.
+    not_found: ignore
+    absolute_links: ignore
+    unrecognized_links: ignore
+    anchors: warn
+
+markdown_extensions:
+  # Рендеринг LaTeX (KaTeX через MathJax-совместимый вывод)
+  - pymdownx.arithmatex:
+      generic: true
+  # Блоки кода с подсветкой и Mermaid
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: "#"
+
+# KaTeX: локальные скрипты и стили кладутся в docs/assets/ при необходимости.
+# Здесь подключаются CDN-версии (требуется интернет при просмотре).
+# katex.min.css обязателен: без него KaTeX показывает одновременно MathML и
+# HTML-рендер формулы, и она дублируется (например O(N^2) → «O(N2)O(N2)»).
+extra_css:
+  - https://unpkg.com/katex@0.16.9/dist/katex.min.css
+extra_javascript:
+  - https://unpkg.com/katex@0.16.9/dist/katex.min.js
+  - https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js
+  - assets/js/katex-init.js
+
+nav:
+  - Главная: index.md
+  - Обучение:
+      - Быстрый старт: 01-tutorials/01-quick-start.md
+  - Практика:
+      - Запуск тестов и бенчмарков: 02-how-to/01-run-tests.md
+  - Справка:
+      - Параметры запуска: 03-reference/cli.md
+      - Конфигурация:
+          - Initial_Conditions.txt: 03-reference/config/initial-conditions.md
+          - SimulationConfig: 03-reference/config/simulation-config.md
+          - Опции CMake: 03-reference/config/cmake-options.md
+      - Форматы файлов:
+          - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
+          - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
+      - Материалы:
+          - Реестр материалов: 03-reference/materials/registry.md
+      - API (Doxygen): _build/doxygen/html/index.html
+  - Теория и Архитектура:
+      - Архитектура:
+          - Обзор конвейера: 04-explanation/architecture/pipeline-overview.md
+          - Раскладка данных (SoA): 04-explanation/architecture/data-layout-soa.md
+          - Поиск соседей: 04-explanation/architecture/neighbor-search.md
+          - Связный список (link_list): 04-explanation/architecture/linked-list.md
+          - Сетка FlatGrid: 04-explanation/architecture/flat-grid.md
+          - Параллелизм: 04-explanation/architecture/parallelism.md
+      - Решения (ADR):
+          - Шаблон ADR: 04-explanation/decisions/adr-template.md
+          - "ADR-001: Выбор метода SPH": 04-explanation/decisions/adr-001-sph-method-selection.md
+          - "ADR-002: dim как constexpr": 04-explanation/decisions/adr-002-dim-constexpr.md
+          - "ADR-003: SimulationConfig": 04-explanation/decisions/adr-003-simulation-config-extraction.md
+          - "ADR-004: Подобъект Materials": 04-explanation/decisions/adr-004-materials-subobject.md
+          - "ADR-005: Размыкание EOS": 04-explanation/decisions/adr-005-eos-dependency-break.md
+          - "ADR-006: Graph coloring": 04-explanation/decisions/adr-006-pair-graph-coloring.md
+  - Внутреннее:
+      - Глоссарий: _internal/glossary.md
+      - Журнал изменений: _internal/changelog.md

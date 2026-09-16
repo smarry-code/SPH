@@ -13,6 +13,7 @@
 #endif
 #include "param.hpp"
 #include "flat_grid.hpp"
+#include "particle_system.hpp"
 
 // Тест 1: Базовая проверка — 3 частицы в 3 разных ячейках (1D)
 void test_basic_3_particles() {
@@ -21,16 +22,17 @@ void test_basic_3_particles() {
     // Создаём 3 частицы с координатами, попадающими в разные ячейки
     // dx = scale_k * max_hmsl = 2 * 0.5 = 1.0
     // Частицы: x = 0.1, 1.5, 3.2 -> ячейки 0, 1, 3
-    std::vector<Particle> Elem(3);
-    for (auto& p : Elem) p.inzializ();
+    ParticleSystem sys;
+    sys.resize(3);
+    for (size_t _i = 0; _i < sys.size(); ++_i) sys.inzializ_index(_i);
     
-    Elem[0].x[0] = 0.1;  Elem[0].hsml = 0.5;
-    Elem[1].x[0] = 1.5;  Elem[1].hsml = 0.5;
-    Elem[2].x[0] = 3.2;  Elem[2].hsml = 0.5;
+    sys.x[0][0] = 0.1;  sys.hsml[0] = 0.5;
+    sys.x[0][1] = 1.5;  sys.hsml[1] = 0.5;
+    sys.x[0][2] = 3.2;  sys.hsml[2] = 0.5;
     
     FlatGrid grid;
     int scale_k = 2; // кубический сплайн (skf=1)
-    grid.build(Elem, 3, scale_k);
+    grid.build(sys, 3, scale_k);
     
     // Проверка параметров сетки
     std::cout << "  dx = " << grid.dx << " (ожидалось 1.0)" << std::endl;
@@ -89,17 +91,18 @@ void test_basic_3_particles() {
 void test_all_in_one_cell() {
     std::cout << "=== Тест 2: Все частицы в одной ячейке ===" << std::endl;
     
-    std::vector<Particle> Elem(3);
-    for (auto& p : Elem) p.inzializ();
+    ParticleSystem sys;
+    sys.resize(3);
+    for (size_t _i = 0; _i < sys.size(); ++_i) sys.inzializ_index(_i);
     
     // Все частицы очень близко друг к другу (в пределах одной ячейки)
-    Elem[0].x[0] = 1.0;  Elem[0].hsml = 0.5;
-    Elem[1].x[0] = 1.1;  Elem[1].hsml = 0.5;
-    Elem[2].x[0] = 1.2;  Elem[2].hsml = 0.5;
+    sys.x[0][0] = 1.0;  sys.hsml[0] = 0.5;
+    sys.x[0][1] = 1.1;  sys.hsml[1] = 0.5;
+    sys.x[0][2] = 1.2;  sys.hsml[2] = 0.5;
     
     FlatGrid grid;
     int scale_k = 2;
-    grid.build(Elem, 3, scale_k);
+    grid.build(sys, 3, scale_k);
     
     std::cout << "  dx = " << grid.dx << std::endl;
     std::cout << "  nx = " << grid.nx << std::endl;
@@ -126,17 +129,18 @@ void test_all_in_one_cell() {
 void test_negative_coordinates() {
     std::cout << "=== Тест 3: Отрицательные координаты ===" << std::endl;
     
-    std::vector<Particle> Elem(3);
-    for (auto& p : Elem) p.inzializ();
+    ParticleSystem sys;
+    sys.resize(3);
+    for (size_t _i = 0; _i < sys.size(); ++_i) sys.inzializ_index(_i);
     
     // Отрицательные координаты — после сдвига на origin должны стать >= 0
-    Elem[0].x[0] = -5.0;  Elem[0].hsml = 0.5;
-    Elem[1].x[0] = -3.0;  Elem[1].hsml = 0.5;
-    Elem[2].x[0] = -1.0;  Elem[2].hsml = 0.5;
+    sys.x[0][0] = -5.0;  sys.hsml[0] = 0.5;
+    sys.x[0][1] = -3.0;  sys.hsml[1] = 0.5;
+    sys.x[0][2] = -1.0;  sys.hsml[2] = 0.5;
     
     FlatGrid grid;
     int scale_k = 2;
-    grid.build(Elem, 3, scale_k);
+    grid.build(sys, 3, scale_k);
     
     std::cout << "  origin[0] = " << grid.origin[0] << " (ожидалось -5.0)" << std::endl;
     std::cout << "  dx = " << grid.dx << std::endl;
@@ -161,11 +165,11 @@ void test_negative_coordinates() {
 void test_empty() {
     std::cout << "=== Тест 4: Пустой набор частиц ===" << std::endl;
     
-    std::vector<Particle> Elem;
+    ParticleSystem sys;
     
     FlatGrid grid;
     int scale_k = 2;
-    grid.build(Elem, 0, scale_k);
+    grid.build(sys, 0, scale_k);
     
     assert(grid.n_cells() == 1 && "Для пустого набора n_cells должен быть 1");
     assert(grid.sorted_idx.empty() && "sorted_idx должен быть пуст");
@@ -182,19 +186,20 @@ void test_2d_case() {
     // Поскольку dim — constexpr, проверяем только логику cell_index
     // В реальном коде dim задаётся при компиляции
     
-    std::vector<Particle> Elem(4);
-    for (auto& p : Elem) p.inzializ();
+    ParticleSystem sys;
+    sys.resize(4);
+    for (size_t _i = 0; _i < sys.size(); ++_i) sys.inzializ_index(_i);
     
     // Частицы в разных углах
-    Elem[0].x[0] = 0.0;  Elem[0].hsml = 0.5;
-    Elem[1].x[0] = 5.0;  Elem[1].hsml = 0.5;
-    Elem[2].x[0] = 0.0;  Elem[2].hsml = 0.5;
-    Elem[3].x[0] = 5.0;  Elem[3].hsml = 0.5;
+    sys.x[0][0] = 0.0;  sys.hsml[0] = 0.5;
+    sys.x[0][1] = 5.0;  sys.hsml[1] = 0.5;
+    sys.x[0][2] = 0.0;  sys.hsml[2] = 0.5;
+    sys.x[0][3] = 5.0;  sys.hsml[3] = 0.5;
     
     // Для dim=1 (текущая сборка) — проверяем что x-координаты корректно обрабатываются
     FlatGrid grid;
     int scale_k = 2;
-    grid.build(Elem, 4, scale_k);
+    grid.build(sys, 4, scale_k);
     
     std::cout << "  nx = " << grid.nx << ", n_cells = " << grid.n_cells() << std::endl;
     std::cout << "  offset[n_cells] = " << grid.offset[grid.n_cells()] << " (ожидалось 4)" << std::endl;
