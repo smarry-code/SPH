@@ -48,6 +48,11 @@ endif()
 #     объявления — в include/*.hpp, определения — в src/*.cpp (main.cpp в src/).
 #     Автосборка всех src/*.cpp (точки входа main.cpp и модулей).
 file(GLOB SPH_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+# Модули конвейера БЕЗ точки входа: переиспользуются целями тестов, которые
+# приносят собственный main() (ТЗ contact/04-e2e-test-brief.md §7 — общий
+# список исходников в переменной, без второго file(GLOB)).
+set(SPH_PIPELINE_SOURCES ${SPH_SOURCES})
+list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 # --- Исполняемый модуль (имя SPH.exe на Windows — как прежде) ----------------
 add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
@@ -85,6 +90,44 @@ endif()
 add_executable(test_contact test_contact.cpp src/ext_force.cpp)
 target_include_directories(test_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME contact_test COMMAND test_contact)
+
+# --- End-to-end тест на кейсе BC1 (contact/04-e2e-test-brief.md) ------------
+# Цель линкует ВЕСЬ конвейер (src/*.cpp кроме main.cpp) и компилирует его
+# СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и
+# несовместимы по ODR (layout ParticleSystem зависит от dim).
+# См. решение E1 и docs/04-explanation/decisions/adr-002-dim-constexpr.md.
+option(SPH_E2E_SLOW_TESTS "Регистрировать в ctest медленный полный прогон BC1 (метка slow)" OFF)
+
+add_executable(test_e2e_bc1 test_e2e_bc1.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_bc1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_bc1 PRIVATE
+    SPH_DIM=2
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc1 PRIVATE -fexceptions)
+endif()
+# Конвейер использует OpenMP (link_list, int_force, pair_graph).
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_bc1 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_bc1 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc1 PRIVATE -fopenmp)
+    target_link_options(test_e2e_bc1 PRIVATE -fopenmp)
+endif()
+
+# Smoke-режим (ТЗ §5): в прогоне ctest по умолчанию, цель по времени < 30 с.
+add_test(NAME e2e_bc1_smoke_test COMMAND test_e2e_bc1)
+set_tests_properties(e2e_bc1_smoke_test PROPERTIES LABELS "e2e" TIMEOUT 300)
+
+# Полный режим (ТЗ §5): минуты, поэтому по умолчанию НЕ регистрируется.
+# Включение:  cmake -S . -B build -DSPH_E2E_SLOW_TESTS=ON && ctest --test-dir build -L slow
+# (голая метка LABELS "slow" из ТЗ не исключает тест из прогона по умолчанию —
+#  CTest не умеет «зарегистрирован, но по умолчанию не запускается», поэтому
+#  регистрация гейтится опцией сборки.)
+if(SPH_E2E_SLOW_TESTS)
+    add_test(NAME e2e_bc1_full_test COMMAND test_e2e_bc1 --full)
+    set_tests_properties(e2e_bc1_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 7200)
+endif()
 
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
 add_executable(bench_color bench_color.cpp)
