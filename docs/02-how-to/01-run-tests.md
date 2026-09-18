@@ -15,6 +15,7 @@ ctest --test-dir build --output-on-failure
 | `flat_grid_test` | `test_flat_grid` | Сеточный поиск соседей |
 | `pair_graph_test` | `test_pair_graph` | Графовую раскраску пар (с OpenMP) |
 | `particle_system_test` | `test_particle_system` | Тождество моста AoS↔SoA (точность 1e-12) |
+| `contact_test` | `test_contact` | Контактные силы «частица-частица» (ADR-007): аналитика типов 1-3, баланс импульса, ограничитель шага |
 
 ## Бенчмарк
 

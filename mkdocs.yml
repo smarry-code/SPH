@@ -113,6 +113,7 @@ nav:
           - Связный список (link_list): 04-explanation/architecture/linked-list.md
           - Сетка FlatGrid: 04-explanation/architecture/flat-grid.md
           - Параллелизм: 04-explanation/architecture/parallelism.md
+          - "Контакт частица-частица": 04-explanation/architecture/contact-particle-particle.md
       - Решения (ADR):
           - Шаблон ADR: 04-explanation/decisions/adr-template.md
           - "ADR-001: Выбор метода SPH": 04-explanation/decisions/adr-001-sph-method-selection.md
@@ -121,6 +122,7 @@ nav:
           - "ADR-004: Подобъект Materials": 04-explanation/decisions/adr-004-materials-subobject.md
           - "ADR-005: Размыкание EOS": 04-explanation/decisions/adr-005-eos-dependency-break.md
           - "ADR-006: Graph coloring": 04-explanation/decisions/adr-006-pair-graph-coloring.md
+          - "ADR-007: Контактные силы (типы 1-3)": 04-explanation/decisions/adr-007-contact-force-types.md
   - Внутреннее:
       - Глоссарий: _internal/glossary.md
       - Журнал изменений: _internal/changelog.md

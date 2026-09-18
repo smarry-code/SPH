@@ -34,6 +34,8 @@
 | `t_total` | double | `3e-6` | `t_total` | Полное время расчёта, с |
 | `save_t` | double | `2.5e-8` | `save_t` | Интервал сохранения кадров, с |
 | `print_step` | int | `50` | `print_step` | Шаг вывода прогресса на экран |
+| `contact_force_type` | int | `0` | `contact_force_type` | Контакт «частица-частица» (ADR-007): 0 — выключен, 1 — пинбол Белицко, 2 — Свигл, 3 — импульсный. Значение вне 0..3 откатывается к 0 |
+| `contact_penalty_scale` | double | `1.0` | `contact_penalty_scale` | Масштабный коэффициент $K_p$ штрафной силы (типы 1-2) |
 
 !!! warning "Параметры вне файла"
     Поля `maxn`, `max_interaction` вычисляются в `main()` после инициализации
