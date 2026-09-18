@@ -9,7 +9,7 @@ constexpr size_t dim = 1; // Размерность задачи (1, 2 или 3)
 // Общие параметры
 struct Particle
 {
-    Particle::Particle();
+    Particle();
     std::vector<double> x;
     std::vector<double> vx;
     int itype;

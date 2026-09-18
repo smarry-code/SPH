@@ -10,6 +10,23 @@ cmake_minimum_required(VERSION 3.16)
 
 project(SPH LANGUAGES CXX)
 
+# --- AppleClang + OpenMP: системный clang не понимает голый -fopenmp,
+#     нужен -Xpreprocessor -fopenmp и явные include/lib из Homebrew libomp
+#     (fix(build), см. contact/01-plan.md, шаг 0, решение D5).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    execute_process(
+        COMMAND brew --prefix libomp
+        OUTPUT_VARIABLE SPH_LIBOMP_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT SPH_LIBOMP_PREFIX)
+        set(SPH_LIBOMP_PREFIX "/opt/homebrew/opt/libomp")
+    endif()
+    set(SPH_APPLECLANG_OMP_COMPILE_OPTIONS -Xpreprocessor -fopenmp -I${SPH_LIBOMP_PREFIX}/include)
+    set(SPH_APPLECLANG_OMP_LINK_OPTIONS -L${SPH_LIBOMP_PREFIX}/lib -lomp)
+endif()
+
 # --- Стандарт: C++20 (как в прежней сборке -std=c++20) ----------------------
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,7 +63,10 @@ target_include_directories(test_pair_graph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/i
 add_test(NAME pair_graph_test COMMAND test_pair_graph)
 # pair_graph.hpp использует OpenMP (спекулятивная блочно-параллельная окраска, фаза B1).
 # Без -fopenmp omp_get_max_threads()==1 и параллельный путь не тестируется.
-if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_pair_graph PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_pair_graph PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(test_pair_graph PRIVATE -fopenmp)
     target_link_options(test_pair_graph PRIVATE -fopenmp)
 endif()
@@ -67,7 +87,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_options(bench_color PRIVATE -O2)
 endif()
-if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(bench_color PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(bench_color PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(bench_color PRIVATE -fopenmp)
     target_link_options(bench_color PRIVATE -fopenmp)
 endif()
@@ -101,7 +124,10 @@ endif()
 # --- OpenMP -----------------------------------------------------------------
 # Прямой -fopenmp для Clang на Windows (надёжнее find_package(OpenMP),
 # который не всегда находит libomp в дистрибутиве LLVM/clang).
-if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(SPH PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(SPH PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(SPH PRIVATE -fopenmp)
     target_link_options(SPH PRIVATE -fopenmp)
 endif()
