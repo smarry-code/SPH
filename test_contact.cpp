@@ -2,9 +2,12 @@
 // Unit-тест контактных сил «частица-частица» (part_0.md, ADR-007).
 // Шаг 2: чистая математика (contact_force.hpp) + реестр модуля сдвига
 // (materials.hpp). Аналитика типов 1-3 сверяется с формулами (2.3)-(2.10)
-// с относительным допуском 1e-12. Тесты оркестратора (ext_force) — шаг 4.
+// с относительным допуском 1e-12.
+// Шаг 4: тесты оркестратора (ext_force) — пары строятся вручную, без поиска
+// соседей (niac/pair_i/pair_j задаются напрямую).
 #include "contact_force.hpp"
 #include "materials.hpp"
+#include "ext_force.hpp"
 #include <cmath>
 #include <cstdio>
 
@@ -195,6 +198,259 @@ void test_type0_unknown()
     check(res_unknown.fn == 0.0 && res_unknown.dt_limit == contact::kNoLimit, "M12 type unknown");
 }
 
+// ------------------------- Шаг 4: тесты оркестратора -------------------------
+// dim == 1 (param.hpp) — тесты идут в 1D, формулы контакта dim-независимы.
+
+// Пара частиц: itype[0]=3 (тантал, G=69e9), itype[1]=4 (алюминий, G=26e9) —
+// оба материала известны реестру shear_modulus_by_itype (нужно для типа 1).
+ParticleSystem make_pair(double x0, double x1, double v0, double v1,
+                          double m0, double m1, double h0, double h1,
+                          double c0, double c1, int itype0 = 3, int itype1 = 4)
+{
+    ParticleSystem sys;
+    sys.resize(2);
+    sys.inzializ_index(0);
+    sys.inzializ_index(1);
+    sys.x[0][0] = x0;  sys.x[0][1] = x1;
+    sys.vx[0][0] = v0; sys.vx[0][1] = v1;
+    sys.mass[0] = m0;  sys.mass[1] = m1;
+    sys.hsml[0] = h0;  sys.hsml[1] = h1;
+    sys.c[0] = c0;     sys.c[1] = c1;
+    sys.itype[0] = itype0;
+    sys.itype[1] = itype1;
+    return sys;
+}
+
+SimulationConfig make_cfg(int contact_type, double kp = 1.0)
+{
+    SimulationConfig cfg;
+    cfg.apply_defaults();
+    cfg.contact_force_type = contact_type;
+    cfg.contact_penalty_scale = kp;
+    return cfg;
+}
+
+// Тот же критерий, что pair_dt_ref() в ext_force.cpp (static, недоступна извне) —
+// продублирована здесь для сверки ожидаемого результата.
+double expected_pair_dt_ref(const SimulationConfig& cfg, const ParticleSystem& sys, size_t k)
+{
+    double v2 = 0.0;
+    for (size_t d = 0; d < dim; ++d) v2 += sys.vx[d][k] * sys.vx[d][k];
+    const double denom = sys.c[k] + std::sqrt(v2);
+    return denom > 0.0 ? cfg.CFL * sys.hsml[k] / denom : 1e30;
+}
+
+bool finite_dvxdt(const std::vector<std::vector<double>>& dvxdt, size_t ntotal)
+{
+    for (size_t d = 0; d < dim; ++d)
+        for (size_t i = 0; i < ntotal; ++i)
+            if (!std::isfinite(dvxdt[d][i])) return false;
+    return true;
+}
+
+void test_orchestrator_impulse_balance()
+{
+    // O1: тип 3, две частицы навстречу, один вызов ext_force -> точный баланс импульса.
+    ParticleSystem sys = make_pair(/*x*/0.0, 1e-4, /*v*/1.0, -1.0,
+                                    /*m*/2e-6, 3e-6, /*h*/1e-3, 1e-3, /*c*/500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Impulse);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+    const double dt = 1e-8;
+
+    ext_force(cfg, sys, dt, 2, 1, pair_i, pair_j, dvxdt, wb);
+
+    const double balance = dvxdt[0][0] * sys.mass[0] + dvxdt[0][1] * sys.mass[1];
+    check(std::fabs(balance) <= 1e-12 * std::max(std::fabs(dvxdt[0][0] * sys.mass[0]), 1.0),
+          "O1 баланс импульса пары (тип 3)");
+}
+
+void test_orchestrator_sign()
+{
+    // O2: типы 1-3, знак силы — ускорение i направлено от j (отталкивание).
+    for (int type : {contact::Pinball, contact::Swegle, contact::Impulse})
+    {
+        ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0,
+                                        2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
+        SimulationConfig cfg = make_cfg(type);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+
+        // i=0 слева от j=1: отталкивание => a[0] < 0 (влево), a[1] > 0 (вправо).
+        check(dvxdt[0][0] < 0.0, "O2 знак ускорения частицы i (отталкивание)");
+        check(dvxdt[0][1] > 0.0, "O2 знак ускорения частицы j (отталкивание)");
+    }
+}
+
+void test_orchestrator_filters()
+{
+    // O3: одинаковый материал -> контакт не регистрируется.
+    {
+        ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0,
+                                        /*itype0*/3, /*itype1*/3);
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 0, "O3 одинаковый материал -> pair_count==0");
+        check(dvxdt[0][0] == 0.0 && dvxdt[0][1] == 0.0, "O3 одинаковый материал -> dvxdt==0");
+    }
+    // O3: виртуальная частица (itype < 0).
+    {
+        ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0,
+                                        /*itype0*/3, /*itype1*/-4);
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 0, "O3 виртуальная частица -> pair_count==0");
+    }
+    // O3: itype == 0.
+    {
+        ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0,
+                                        /*itype0*/3, /*itype1*/0);
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 0, "O3 itype==0 -> pair_count==0");
+    }
+}
+
+void test_orchestrator_no_penetration()
+{
+    // O4: p <= 0 (частицы разведены) -> pair_count==0, min_dt_contact==1e30.
+    ParticleSystem sys = make_pair(0.0, 1.0 /* далеко */, 1.0, -1.0,
+                                    2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Pinball);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    check(wb.contact_pair_count == 0, "O4 p<=0 -> pair_count==0");
+    check(wb.min_dt_contact == 1e30, "O4 p<=0 -> min_dt_contact==1e30");
+}
+
+void test_orchestrator_type_off()
+{
+    // O5: contact_force_type=0 -> dvxdt совпадает с расчётом без контакта
+    // бит-в-бит (для этой пары контакт — единственный источник dvxdt);
+    // pair_count==0.
+    ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Off);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    check(wb.contact_pair_count == 0, "O5 type=0 -> pair_count==0");
+    check(dvxdt[0][0] == 0.0 && dvxdt[0][1] == 0.0, "O5 type=0 -> dvxdt==0 бит-в-бит");
+}
+
+void test_orchestrator_dt_limit_types_1_2()
+{
+    // O6: ограничитель шага для типов 1-2 равен аналитическому dt_limit
+    // (пересчитанному вручную по той же формуле, что и contact_force.hpp).
+    for (int type : {contact::Pinball, contact::Swegle})
+    {
+        const double x0 = 0.0, x1 = 1e-4;
+        const double v0 = 1.0, v1 = -1.0;
+        const double m0 = 2e-6, m1 = 3e-6;
+        const double h0 = 1e-3, h1 = 1e-3;
+        const double c0 = 500.0, c1 = 500.0;
+        ParticleSystem sys = make_pair(x0, x1, v0, v1, m0, m1, h0, h1, c0, c1);
+        SimulationConfig cfg = make_cfg(type);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        const double dt_applied = 1e-8;
+        ext_force(cfg, sys, dt_applied, 2, 1, pair_i, pair_j, dvxdt, wb);
+
+        // Пересчёт ожидаемых величин по той же геометрии/свойствам, что в ext_force.
+        const double r = std::fabs(x0 - x1);
+        const double p = 0.5 * (h0 + h1) - r;
+        const double dx = x0 - x1;
+        const double dv = v0 - v1;
+        const double g_pdot = -(dx * dv) / r;
+        const double m_red = m0 * m1 / (m0 + m1);
+        const double c_pair = std::min(c0, c1);
+        const double Gi = shear_modulus_by_itype(cfg.mats, sys.itype[0]);
+        const double Gj = shear_modulus_by_itype(cfg.mats, sys.itype[1]);
+        const double g_eff = (Gi > 0.0 && Gj > 0.0) ? Gi * Gj / (Gi + Gj) : 0.0;
+        const double Ri = 0.5 * h0, Rj = 0.5 * h1;
+        const double r_eff = Ri * Rj / (Ri + Rj);
+        const double dt_ref = std::min(expected_pair_dt_ref(cfg, sys, 0), expected_pair_dt_ref(cfg, sys, 1));
+
+        contact::PairGeom g; g.r = r; g.p = p; g.pdot = g_pdot; g.v_rel = std::fabs(dv);
+        contact::PairProps pr; pr.m_red = m_red; pr.c_pair = c_pair; pr.g_eff = g_eff; pr.r_eff = r_eff; pr.dt_ref = dt_ref;
+
+        const auto expected = contact::penalty_force(type, g, pr, cfg.contact_penalty_scale, dt_applied);
+        check(rel_close(wb.min_dt_contact, expected.dt_limit), "O6 min_dt_contact совпадает с аналитикой");
+    }
+}
+
+void test_orchestrator_dt_limit_type_3()
+{
+    // O7: тип 3 не ставит ограничитель шага.
+    ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Impulse);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    check(wb.min_dt_contact == 1e30, "O7 тип 3 -> min_dt_contact==kNoLimit");
+}
+
+void test_orchestrator_diagnostics()
+{
+    // O8: contact_max_delta равен фактическому p пары.
+    const double x0 = 0.0, x1 = 1e-4, h0 = 1e-3, h1 = 1e-3;
+    ParticleSystem sys = make_pair(x0, x1, 1.0, -1.0, 2e-6, 3e-6, h0, h1, 500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Pinball);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    const double expected_p = 0.5 * (h0 + h1) - std::fabs(x0 - x1);
+    check(rel_close(wb.contact_max_delta, expected_p), "O8 contact_max_delta == p фактический");
+}
+
+void test_orchestrator_dt_collapse_regression()
+{
+    // O9: регрессия коллапса шага. Цикл x64: ext_force(dt) -> dt = min(CFL-модель, wb.min_dt_contact).
+    // Ожидание: dt выходит на плато (не убывает монотонно к нулю), ускорения
+    // конечны, NaN/Inf нет.
+    ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
+    SimulationConfig cfg = make_cfg(contact::Pinball, /*kp*/1.0);
+    WorkBuffers wb;
+    std::vector<size_t> pair_i{0}, pair_j{1};
+    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+
+    double dt = 1e-7;   // начальный CFL-подобный шаг
+    double prev_dt = dt;
+    bool collapsed = false;
+    bool all_finite = true;
+    for (int iter = 0; iter < 64; ++iter)
+    {
+        ext_force(cfg, sys, dt, 2, 1, pair_i, pair_j, dvxdt, wb);
+        if (!finite_dvxdt(dvxdt, 2)) { all_finite = false; break; }
+
+        const double dt_cfl_model = 1e-7;  // фиксированный «CFL» верхний предел
+        double next_dt = std::min(dt_cfl_model, wb.min_dt_contact);
+        if (next_dt < prev_dt * 1e-6) { collapsed = true; }
+        prev_dt = next_dt;
+        dt = next_dt;
+    }
+    check(all_finite, "O9 ускорения конечны на всех итерациях");
+    check(!collapsed, "O9 шаг не коллапсирует (выходит на плато)");
+    check(dt > 0.0, "O9 итоговый dt положителен");
+}
+
 } // namespace
 
 int main()
@@ -204,6 +460,16 @@ int main()
     test_type2_swegle();
     test_type3_impulse();
     test_type0_unknown();
+
+    test_orchestrator_impulse_balance();
+    test_orchestrator_sign();
+    test_orchestrator_filters();
+    test_orchestrator_no_penetration();
+    test_orchestrator_type_off();
+    test_orchestrator_dt_limit_types_1_2();
+    test_orchestrator_dt_limit_type_3();
+    test_orchestrator_diagnostics();
+    test_orchestrator_dt_collapse_regression();
 
     if (failures == 0)
     {
