@@ -79,6 +79,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(test_particle_system PRIVATE -Wno-unused-parameter)
 endif()
 
+# --- Тест контактных сил (part_0.md, ADR-007): аналитика типов 1-3,
+#     баланс импульса, ограничитель шага. Линкуется с src/ext_force.cpp,
+#     чтобы покрыть и оркестратор.
+add_executable(test_contact test_contact.cpp src/ext_force.cpp)
+target_include_directories(test_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME contact_test COMMAND test_contact)
+
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
 add_executable(bench_color bench_color.cpp)
 target_include_directories(bench_color PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
