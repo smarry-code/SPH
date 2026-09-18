@@ -536,6 +536,7 @@ struct RunSettings
     int    contact_force_type = 0;
     bool   silence = true;
     bool   check_frames_flag = true;
+    bool   keep_workdir = false;   // --keep-workdir: не удалять каталог прогона
 };
 
 struct RunResult
@@ -548,6 +549,7 @@ struct RunResult
     double t_reached = 0.0;
     double dt_last = 0.0;
     size_t steps = 0;
+    std::string workdir;           // каталог прогона (существует только при --keep-workdir)
 };
 
 // Конфигурация расчёта (ТЗ §3). Источник значений:
@@ -576,6 +578,8 @@ RunResult run_case(const RunSettings& rs)
 {
     RunResult res;
     ScopedWorkDir wd(rs.name);
+    if (rs.keep_workdir) wd.keep();
+    res.workdir = wd.dir().string();
 
     SimulationConfig cfg;
     apply_bc1_config(cfg, rs);
@@ -610,7 +614,26 @@ RunResult run_case(const RunSettings& rs)
     }
     catch (const std::exception& e)
     {
-        res.error = std::string("исключение в конвейере: ") + e.what();
+        // Даже при обрыве log.txt уже содержит все выполненные шаги —
+        // без этого «прогон не состоялся» не говорит, где именно он умер.
+        std::string e_err;
+        const Curve partial = read_curve(wd.dir() / "log.txt", e_err);
+        std::ostringstream os;
+        os << "исключение в конвейере: " << e.what();
+        if (!partial.empty())
+        {
+            os << " [оборвано на шаге " << partial.t.size()
+               << ", t = " << partial.t.back() << " с из " << rs.t_total
+               << " с, то есть " << (100.0 * partial.t.back() / rs.t_total) << " % расчёта]";
+        }
+        else
+        {
+            os << " [до первой записи в log.txt]";
+        }
+        res.error = os.str();
+        res.curve = partial;
+        res.steps = partial.t.size();
+        res.t_reached = partial.empty() ? 0.0 : partial.t.back();
         return res;
     }
     res.t_reached = time;
@@ -820,11 +843,20 @@ void test_known_limitation_b4c_b4c(const Bc1Geometry& g)
 }
 
 // --- §7: отсутствие побочных эффектов в рабочем каталоге -------------------
+// Снимок берётся ТОЛЬКО по именам, которые пишет конвейер (log.txt,
+// sph_output_*.txt, sph_gp.csv, force_timing.csv). Сравнивать весь каталог
+// нельзя: при `ctest -j` соседние тесты создают в том же каталоге свои файлы
+// (test_particle_system пишет __ps_test_out.txt), и проверка стала бы флакающей.
+bool is_pipeline_artifact(const std::string& n)
+{
+    return n == "log.txt" || n == "sph_gp.csv" || n == "force_timing.csv" ||
+           (n.rfind("sph_output_", 0) == 0);
+}
+
 struct DirSnapshot
 {
-    std::vector<std::string> names;
-    bool log_exists = false;
-    std::uintmax_t log_size = 0;
+    // имя -> размер; отсутствующий файл в отображении просто отсутствует
+    std::vector<std::pair<std::string, std::uintmax_t>> artifacts;
 };
 
 DirSnapshot snapshot_dir(const fs::path& d)
@@ -833,12 +865,12 @@ DirSnapshot snapshot_dir(const fs::path& d)
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(d, ec))
     {
-        s.names.push_back(e.path().filename().string());
+        const std::string n = e.path().filename().string();
+        if (!is_pipeline_artifact(n)) continue;
+        std::error_code ec2;
+        s.artifacts.emplace_back(n, fs::file_size(e.path(), ec2));
     }
-    std::sort(s.names.begin(), s.names.end());
-    const fs::path lg = d / "log.txt";
-    s.log_exists = fs::exists(lg, ec);
-    if (s.log_exists) s.log_size = fs::file_size(lg, ec);
+    std::sort(s.artifacts.begin(), s.artifacts.end());
     return s;
 }
 
@@ -846,12 +878,27 @@ void check_no_side_effects(const fs::path& cwd, const DirSnapshot& before)
 {
     std::printf("\n[§7] Побочные эффекты в рабочем каталоге\n");
     const DirSnapshot after = snapshot_dir(cwd);
-    check(before.names == after.names,
-          "§7 состав рабочего каталога не изменился (нет новых log.txt / sph_output_*)");
-    check(before.log_exists == after.log_exists,
-          "§7 наличие log.txt в рабочем каталоге не изменилось");
-    check(before.log_size == after.log_size,
-          "§7 размер log.txt в рабочем каталоге не изменился");
+    {
+        std::ostringstream os;
+        os << "артефактов конвейера в рабочем каталоге: было " << before.artifacts.size()
+           << ", стало " << after.artifacts.size();
+        note(os.str());
+    }
+    check(before.artifacts == after.artifacts,
+          "§7 log.txt / sph_output_*.txt / sph_gp.csv в рабочем каталоге не созданы и не изменены");
+    if (before.artifacts != after.artifacts)
+    {
+        for (const auto& a : after.artifacts)
+        {
+            const auto it = std::find_if(before.artifacts.begin(), before.artifacts.end(),
+                                         [&](const auto& b) { return b == a; });
+            if (it == before.artifacts.end())
+            {
+                std::printf("         появился/изменился: %s (%llu байт)\n",
+                            a.first.c_str(), static_cast<unsigned long long>(a.second));
+            }
+        }
+    }
 }
 
 // ===========================================================================
@@ -1007,7 +1054,8 @@ void print_usage()
         "  (без аргументов)  smoke-режим: delta_x = 8e-4, t_total = 3e-7\n"
         "  --full            полный кейс: delta_x = 2e-4, t_total = 3e-6 + сценарии §6\n"
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
-        "  --verbose         не глушить вывод конвейера\n");
+        "  --verbose         не глушить вывод конвейера\n"
+        "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n");
 }
 
 } // namespace
@@ -1017,12 +1065,14 @@ int main(int argc, char** argv)
     bool full = false;
     bool emit = false;
     bool verbose = false;
+    bool keep_workdir = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
         if (a == "--full") full = true;
         else if (a == "--emit-reference") emit = true;
         else if (a == "--verbose") verbose = true;
+        else if (a == "--keep-workdir") keep_workdir = true;
         else if (a == "-h" || a == "--help") { print_usage(); return 0; }
         else
         {
@@ -1040,6 +1090,7 @@ int main(int argc, char** argv)
     rs.delta_x = full ? 2e-4 : 8e-4;
     rs.t_total = full ? 3e-6 : 3e-7;
     rs.silence = !verbose;
+    rs.keep_workdir = keep_workdir;
 
     if (emit)
     {
@@ -1062,9 +1113,17 @@ int main(int argc, char** argv)
 
     std::printf("\n[§1] Геометрия\n");
     const RunResult r = run_case(rs);
+    if (keep_workdir)
+    {
+        std::printf("  info : каталог прогона сохранён: %s\n", r.workdir.c_str());
+    }
     if (!r.ok)
     {
         std::printf("  FAIL : прогон не состоялся: %s\n", r.error.c_str());
+        if (!keep_workdir)
+        {
+            std::printf("         повторить с --keep-workdir, чтобы сохранить log.txt и кадры прогона\n");
+        }
         ++failures;
     }
     else
