@@ -87,6 +87,14 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
             std::wcout << "  Текущий щаг по времени = " << dt
                       << "    текущее время расчета = " << time + dt
                       << "    текущий цикл = " << current_ts << std::endl;
+            if (cfg.contact_force_type != 0)
+            {
+                const bool limited_by_contact = (wb.min_dt_contact < 1e30) &&
+                    (wb.min_dt_contact <= compute_cfl_timestep(cfg, sys, ntotal));
+                std::wcout << "  Шаг ограничен " << (limited_by_contact ? "КОНТАКТОМ" : "CFL")
+                          << "    contact_pair_count = " << wb.contact_pair_count
+                          << "    contact_max_delta = " << wb.contact_max_delta << std::endl;
+            }
             std::wcout << "______________________________________" << std::endl;
         }
 
@@ -142,6 +150,7 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         // Вычисление сил и производных
         single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb, graph);
         dt = compute_cfl_timestep(cfg, sys, ntotal);
+        if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контактный предел
         // Обновление свойств частиц (полный временной шаг)
         if (current_ts == 1)
         {

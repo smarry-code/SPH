@@ -202,7 +202,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // Внешние силы
     if (ex_force)
     {
-        ext_force(sys, ntotal + nvirt, niac, pair_i, pair_j, exdvxdt);
+        ext_force(cfg, sys, dt, ntotal + nvirt, niac, pair_i, pair_j, exdvxdt, wb);
     }
     // Обновление длины сглаживания
     if (sle != 0)

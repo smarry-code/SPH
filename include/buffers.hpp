@@ -32,6 +32,20 @@ struct WorkBuffers
     std::vector<double> txz;
     std::vector<double> tyz;
 
+    // --- Контакт (ADR-007). Пишутся в ext_force, читаются в time_integration.
+    // ext_force обходит пары последовательно (OpenMP там нет), гонок нет.
+    double min_dt_contact    = 1e30;  // ограничитель шага; 1e30 => контакт не ограничивает (contact::kNoLimit)
+    size_t contact_pair_count = 0;    // число пар с p > 0 за шаг
+    double contact_max_delta  = 0.0;  // max(p) за шаг, м
+
+    // Сброс контактной диагностики перед накоплением на текущем шаге.
+    void reset_contact()
+    {
+        min_dt_contact = 1e30;
+        contact_pair_count = 0;
+        contact_max_delta = 0.0;
+    }
+
     // Гарантирует вместимость n элементов во всех тензорных буферах.
     // Растёт только вверх (без усечения), поэтому на шагах после первого — no-op.
     void ensure(size_t n)
