@@ -329,6 +329,24 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         {
             cfg.print_step = static_cast<size_t>(std::stoull(value));
         }
+        else if (key == "contact_force_type")
+        {
+            const int v = std::stoi(value);
+            if (v < 0 || v > 3)
+            {
+                std::cerr << "contact_force_type вне диапазона 0..3: " << v
+                          << ", откат к 0 (контакт выключен)\n";
+                cfg.contact_force_type = 0;
+            }
+            else
+            {
+                cfg.contact_force_type = v;
+            }
+        }
+        else if (key == "contact_penalty_scale")
+        {
+            cfg.contact_penalty_scale = std::stod(value);
+        }
     }
     in.close();    
 }

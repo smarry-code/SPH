@@ -38,3 +38,23 @@ struct Materials
         {2510, 197e9, 8.71e9, 15.44e9, 0.03, 0.927, 0.67, 0.70, 0.85, 0.2, 0.005, 0.001, 0.5, 233e9, -593e9, 2800e9, 0.26e9},
         {3555, 1.165e11, 2.626e9, 3.561e9, 0.137, 0.930, 0.600, 0.110, 0.600, 1.0, 0.0, 0.005, 1.000, 1.692e11, 0.0, 0.0, 0.2e9}};
 };
+
+// Модуль сдвига по номеру материала (поле itype частицы).
+// Реестр разложен по двум массивам; диспетчер воспроизводит логику
+// int_force.cpp:636-652. Возвращает 0.0 для материалов без G
+// (газ/вода, itype 1-2, виртуальные частицы itype < 0) — вызывающая
+// сторона обязана трактовать 0 как «G неизвестен», а не как нулевую жёсткость.
+inline double shear_modulus_by_itype(const Materials& m, int itype)
+{
+    if (itype >= 3 && itype <= 9)
+    {
+        const size_t k = static_cast<size_t>(itype) - Materials::n_Me;
+        return k < m.G.size() ? m.G[k] : 0.0;
+    }
+    if (itype == 10 || itype == 11)
+    {
+        const size_t k = static_cast<size_t>(itype - 10);
+        return k < m.const_JH_2.size() ? m.const_JH_2[k][1] : 0.0;
+    }
+    return 0.0;
+}

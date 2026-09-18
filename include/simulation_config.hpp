@@ -32,6 +32,11 @@ struct SimulationConfig
     int density_method          = 1;    // Метод расчёта плотности (1/2/3)
     int coloring_niac_threshold = 0;    // Порог graph coloring vs atomic
 
+    // --- Контакт «частица-частица» (part_0.md, ADR-007) ---
+    // 0 - выключен (по умолчанию), 1 - пинбол Белицко, 2 - Свигл, 3 - импульсный.
+    int    contact_force_type   = 0;
+    double contact_penalty_scale = 1.0;   // масштабный коэффициент Kp (типы 1-2)
+
     // --- Шаг по времени / вывод ---
     double CFL       = 0.1;             // Число Куранта
     double t_total   = 3e-6;            // Полное время расчёта
@@ -69,6 +74,7 @@ inline void SimulationConfig::apply_defaults()
 {
     pa_sph = 2;  nnps = 1;  sle = 1;  skf = 1;
     density_method = 1;  coloring_niac_threshold = 0;
+    contact_force_type = 0;  contact_penalty_scale = 1.0;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;
