@@ -721,20 +721,55 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
     check(r.t_reached >= rs.t_total, "§4.4 расчёт дошёл до t_total");
     check(r.steps > 0, "§4.4 выполнен хотя бы один шаг");
 
-    // §4.4: шаг не сколлапсировал. Ожидаемое число шагов оцениваем по
-    // последнему принятому dt; потолок — 10x от этой оценки.
-    if (r.dt_last > 0.0)
+    // §4.4: шаг не сколлапсировал.
+    // Опорным берётся ПЕРВЫЙ принятый шаг (t[0] в log.txt), а не последний:
+    // при коллапсе последний dt сам по себе крошечный, оценка t_total/dt_last
+    // раздувается, и потолок перестаёт что-либо ограничивать.
+    // Две проверки: (а) число шагов не больше 10x номинальной оценки,
+    // (б) минимальный dt за прогон не упал более чем в 100 раз относительно
+    //     первого — это и есть прямой признак коллапса.
+    if (r.curve.t.size() >= 2)
     {
-        const double expected = rs.t_total / r.dt_last;
-        const double cap = 10.0 * expected;
-        std::ostringstream os;
-        os << "§4.4 число шагов " << r.steps << " < потолка "
-           << static_cast<size_t>(cap) << " (10x от оценки " << expected << ")";
-        check(static_cast<double>(r.steps) < cap, os.str());
+        const double dt_first = r.curve.t.front();
+        double dt_min = dt_first;
+        size_t dt_min_step = 0;
+        for (size_t i = 1; i < r.curve.t.size(); ++i)
+        {
+            const double d = r.curve.t[i] - r.curve.t[i - 1];
+            if (d < dt_min) { dt_min = d; dt_min_step = i; }
+        }
+        {
+            std::ostringstream os;
+            os << "первый dt = " << dt_first << ", минимальный dt = " << dt_min
+               << " (шаг " << dt_min_step << "), отношение = "
+               << (dt_min > 0.0 ? dt_first / dt_min : 0.0);
+            note(os.str());
+        }
+        if (dt_first > 0.0)
+        {
+            const double expected = rs.t_total / dt_first;
+            const double cap = 10.0 * expected;
+            std::ostringstream os;
+            os << "§4.4 число шагов " << r.steps << " < потолка "
+               << static_cast<size_t>(cap) << " (10x от оценки " << expected
+               << " по первому dt)";
+            check(static_cast<double>(r.steps) < cap, os.str());
+
+            constexpr double kMaxDtDrop = 100.0;
+            std::ostringstream os2;
+            os2 << "§4.4 шаг не сколлапсировал: dt_first/dt_min = "
+                << (dt_min > 0.0 ? dt_first / dt_min : 1e300)
+                << " < " << kMaxDtDrop;
+            check(dt_min > 0.0 && dt_first / dt_min < kMaxDtDrop, os2.str());
+        }
+        else
+        {
+            check(false, "§4.4 первый dt должен быть положительным");
+        }
     }
     else
     {
-        check(false, "§4.4 последний dt должен быть положительным");
+        check(false, "§4.4 в log.txt меньше двух шагов — оценить коллапс шага нечем");
     }
 
     // §4.4: кадры без NaN/Inf, rho > 0, mass > 0.
@@ -1123,6 +1158,19 @@ int main(int argc, char** argv)
         if (!keep_workdir)
         {
             std::printf("         повторить с --keep-workdir, чтобы сохранить log.txt и кадры прогона\n");
+        }
+        // Частичная кривая всё равно есть — покажем, вёл ли себя шаг по времени
+        // нормально до обрыва (коллапс шага и обрыв по плотности — разные болезни).
+        if (r.curve.t.size() >= 2)
+        {
+            const double dt_first = r.curve.t.front();
+            double dt_min = dt_first;
+            for (size_t i = 1; i < r.curve.t.size(); ++i)
+            {
+                dt_min = std::min(dt_min, r.curve.t[i] - r.curve.t[i - 1]);
+            }
+            std::printf("         до обрыва: первый dt = %g, минимальный dt = %g, отношение = %g\n",
+                        dt_first, dt_min, dt_min > 0.0 ? dt_first / dt_min : 0.0);
         }
         ++failures;
     }
