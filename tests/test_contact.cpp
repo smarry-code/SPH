@@ -218,6 +218,15 @@ ParticleSystem make_pair(double x0, double x1, double v0, double v1,
     sys.c[0] = c0;     sys.c[1] = c1;
     sys.itype[0] = itype0;
     sys.itype[1] = itype1;
+    // Радиус тела оркестратор берёт как 0.5*(mass/rho)^(1/dim) (particle_radius
+    // в ext_force.cpp), поэтому rho здесь задаётся из требуемого радиуса, а не
+    // произвольно: rho = mass/h^dim даёт ровно R = h/2. Тем самым порог контакта
+    // остаётся 0.5*(h_i+h_j) — как в тестах M/O до перехода на радиус по объёму,
+    // и все их ожидаемые значения сохраняют силу.
+    // Без этой строки rho = 0 (obnul_index), радиус вырождается в нуль и контакт
+    // не возникает ни в одном тесте.
+    sys.rho[0] = m0 / std::pow(h0, static_cast<double>(dim));
+    sys.rho[1] = m1 / std::pow(h1, static_cast<double>(dim));
     return sys;
 }
 
@@ -399,6 +408,95 @@ void test_orchestrator_ghost_excluded()
     }
 }
 
+void test_orchestrator_radius_from_volume()
+{
+    // O11: радиус тела берётся из объёма частицы (mass/rho), а не из hsml.
+    // Проверяется то, ради чего сделан переход: в покое соприкасающиеся частицы
+    // НЕ проникают друг в друга, и контакт включается только при сближении
+    // ближе суммы радиусов.
+    //
+    // Построение: задаём радиусы напрямую через rho, а hsml делаем заведомо
+    // БОЛЬШИМ (десятикратным). Если бы порог по-прежнему считался от hsml,
+    // пара срабатывала бы во всех трёх проверках ниже.
+    const double dxp = 2e-4;              // «шаг сетки»: расстояние между центрами
+    const double R   = 0.5 * dxp;         // радиус тела -> сумма радиусов = dxp
+    const double m0 = 2e-6, m1 = 3e-6;
+    const double h_big = 10.0 * dxp;      // hsml намеренно не связан с размером тела
+
+    const auto make_at = [&](double gap)
+    {
+        ParticleSystem sys = make_pair(0.0, gap, 1.0, -1.0, m0, m1,
+                                       h_big, h_big, 500.0, 500.0);
+        // rho из требуемого радиуса: R = 0.5*(m/rho)^(1/dim) => rho = m/(2R)^dim
+        sys.rho[0] = m0 / std::pow(2.0 * R, static_cast<double>(dim));
+        sys.rho[1] = m1 / std::pow(2.0 * R, static_cast<double>(dim));
+        return sys;
+    };
+
+    const auto pair_count_at = [&](double gap)
+    {
+        ParticleSystem sys = make_at(gap);
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
+        return wb.contact_pair_count;
+    };
+
+    // Расстояние больше суммы радиусов — тела ещё не касаются.
+    check(pair_count_at(1.5 * dxp) == 0, "O11 r > R_i+R_j -> контакта нет");
+    // Ровно касание: p = 0, контакт требует строгого p > 0.
+    check(pair_count_at(dxp) == 0, "O11 r == R_i+R_j (касание) -> контакта нет");
+    // Сблизились — контакт возник.
+    check(pair_count_at(0.5 * dxp) == 1, "O11 r < R_i+R_j -> контакт есть");
+
+    // Проникание отсчитывается от суммы радиусов, а не от hsml.
+    {
+        const double gap = 0.5 * dxp;
+        ParticleSystem sys = make_at(gap);
+        SimulationConfig cfg = make_cfg(contact::Pinball);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(rel_close(wb.contact_max_delta, 2.0 * R - gap),
+              "O11 p = (R_i+R_j) - r, а не (h_i+h_j)/2 - r");
+    }
+
+    // Радиус следует за сжатием: вдвое большая rho -> вдвое меньший объём.
+    // При dim == 1 радиус падает вдвое, поэтому касавшиеся тела расходятся.
+    {
+        ParticleSystem sys = make_at(dxp * 0.9);   // слегка проникают
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 1, "O11 контроль: до сжатия контакт есть");
+
+        ParticleSystem dense = make_at(dxp * 0.9);
+        dense.rho[0] *= 8.0;  dense.rho[1] *= 8.0;   // объём /8 при любом dim <= 3
+        WorkBuffers wb2;
+        std::vector<std::vector<double>> dvxdt2(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, dense, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt2, wb2);
+        check(wb2.contact_pair_count == 0, "O11 сжатие уменьшает радиус -> контакт пропал");
+    }
+
+    // rho <= 0 — размер не восстановить; пара просто не даёт контакта
+    // (падать здесь не наша забота: отрицательную плотность ловит int_force).
+    {
+        ParticleSystem sys = make_at(0.5 * dxp);
+        sys.rho[0] = 0.0;
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 0, "O11 rho <= 0 -> контакта нет, без падения");
+    }
+}
+
 void test_orchestrator_no_penetration()
 {
     // O4: p <= 0 (частицы разведены) -> pair_count==0, min_dt_contact==1e30.
@@ -541,6 +639,7 @@ int main()
     test_orchestrator_sign();
     test_orchestrator_filters();
     test_orchestrator_ghost_excluded();
+    test_orchestrator_radius_from_volume();
     test_orchestrator_no_penetration();
     test_orchestrator_type_off();
     test_orchestrator_dt_limit_types_1_2();

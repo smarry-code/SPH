@@ -30,6 +30,41 @@ bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j, siz
         && sys.itype[i] > 0 && sys.itype[j] > 0 && sys.itype[i] != sys.itype[j];
 }
 
+// Радиус частицы как дискретного тела — из её СОБСТВЕННОГО объёма
+// (при dim == 2 — площади меридионального сечения), а не из длины сглаживания.
+//
+// Зачем не h/2. Длина сглаживания — носитель ядра, а не размер тела: в кейсах
+// проекта hsml = 2*delta_x, поэтому R = h/2 давало бы R = delta_x при том, что
+// частица занимает delta_x, а соседние центры отстоят на delta_x. Порог
+// контакта R_i + R_j получался вдвое больше шага сетки, и КАЖДАЯ межматериальная
+// пара на границе тел объявлялась проникшей на p = delta_x ещё до начала
+// движения, в состоянии покоя.
+//
+// Для типов 1 и 3 это было почти безвредно (их сила масштабируется скоростью
+// сближения pdot, а в покое pdot = 0), но тип 2 (Свигл) берёт величину силы
+// только из p: F1 = m_red * p / dt_ref^2 — это «погасить проникание p за один
+// опорный шаг». Формула самосогласована, когда p накоплено ЗА ШАГ
+// (p ~ v*dt_ref): тогда она ровно останавливает сближение. Подстановка же
+// статического p = delta_x, в 40 раз большего, давала на кейсе BC2 8.3e8 Н и
+// приращение скорости 7.3e4 м/с за шаг при скорости соударения 2210 м/с —
+// частицу выбрасывало, плотность уходила в минус, int_force падал на шаге 124.
+//
+// Определение через mass/rho возвращает p смысл накопленного перекрытия:
+// в покое соседние частицы касаются (p = 0) и контакт включается только при
+// настоящем сближении. Побочно радиус следует за сжатием: растёт rho — тело
+// занимает меньший объём.
+//
+// rho <= 0 — состояние, из которого размер не восстановить; возвращаем 0,
+// тогда порог R_i + R_j обращается в нуль и контакт для пары не возникает
+// (диагностику отрицательной плотности ведёт int_force).
+double particle_radius(const ParticleSystem& sys, size_t k)
+{
+    const double rho = sys.rho[k];
+    if (!(rho > 0.0)) return 0.0;
+    const double volume = sys.mass[k] / rho;
+    return 0.5 * std::pow(volume, 1.0 / static_cast<double>(dim));
+}
+
 // Локальный CFL-шаг пары: тот же критерий, что compute_cfl_timestep
 // (time_integration.cpp:13-27), суженный на пару. Гарантирует
 // dt_applied <= dt_ref, поэтому жёсткость от dt_ref не образует петли
@@ -168,7 +203,11 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
             double r2 = 0.0;
             for (size_t d = 0; d < dim; ++d) { dx[d] = sys.x[d][i] - sys.x[d][j]; r2 += dx[d]*dx[d]; }
             const double r = std::sqrt(r2);
-            const double p = 0.5 * (sys.hsml[i] + sys.hsml[j]) - r;    // (2.1)
+            // (2.1) с радиусами тел вместо длин сглаживания (см. particle_radius):
+            // тела касаются при r = R_i + R_j, проникают при r < R_i + R_j.
+            const double Ri = particle_radius(sys, i);
+            const double Rj = particle_radius(sys, j);
+            const double p = (Ri + Rj) - r;
 
             if (r > 0.0 && p > 0.0)
             {
@@ -184,7 +223,6 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
                 g.pdot  = -dot / r;                 // > 0 при сближении
                 g.v_rel = std::sqrt(v2);
 
-                const double Ri = 0.5 * sys.hsml[i], Rj = 0.5 * sys.hsml[j];
                 const double Gi = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
                 const double Gj = shear_modulus_by_itype(cfg.mats, sys.itype[j]);
 
@@ -192,6 +230,7 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
                 pr.m_red  = sys.mass[i] * sys.mass[j] / (sys.mass[i] + sys.mass[j]);
                 pr.c_pair = std::min(sys.c[i], sys.c[j]);
                 pr.g_eff  = (Gi > 0.0 && Gj > 0.0) ? Gi * Gj / (Gi + Gj) : 0.0;
+                // p > 0 гарантирует Ri + Rj > r > 0, поэтому деление безопасно.
                 pr.r_eff  = Ri * Rj / (Ri + Rj);
                 pr.dt_ref = std::min(pair_dt_ref(cfg, sys, i), pair_dt_ref(cfg, sys, j));
 
