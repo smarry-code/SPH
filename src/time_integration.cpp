@@ -310,7 +310,13 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
 
         // Вывод информации о мониторинге
         std::ofstream file("log.txt", std::ios::app);
-        file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
+        // Пишется ОСЕВАЯ компонента. В осесимметричной постановке ось удара —
+        // x[1] (z), и именно осевую скорость поверхности измеряет интерферометр,
+        // с которым сверяется эталон. Раньше писалась vx[0] (радиальная), из-за
+        // чего расчёт и эксперимент были несопоставимы в принципе.
+        // Прежние Керамика/**/log_*.txt содержат vx[0] и с новыми несравнимы.
+        const size_t moni_axis = (dim > 1) ? 1 : 0;
+        file << time << " " << sys.vx[moni_axis][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
         file.close();
 
         // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе

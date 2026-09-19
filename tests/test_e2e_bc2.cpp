@@ -1,5 +1,5 @@
-// test_e2e_bc1.cpp
-// End-to-end тест на кейсе BC1 (удар по карбиду бора).
+// test_e2e_bc2.cpp
+// End-to-end тест на кейсе BC2 (удар по карбиду бора).
 // ТЗ: contact/04-e2e-test-brief.md. Автоматизирует шаг 6 плана
 // (contact/01-plan.md) — интеграционную проверку всего конвейера на реальной
 // осесимметричной геометрии с последующей сверкой с эталонной кривой.
@@ -25,7 +25,7 @@
 //   --full          — полный кейс (delta_x = 2e-4, t_total = 3e-6) + контактные
 //                     сценарии §6;
 //   --emit-reference— напечатать эталон текущего режима в stdout (см. шапку
-//                     tests/data/bc1_reference.txt);
+//                     tests/data/bc2_reference.txt);
 //   --verbose       — не глушить вывод конвейера.
 #include <algorithm>
 #include <array>
@@ -45,11 +45,12 @@
 #include "param.hpp"
 #include "particle_system.hpp"
 #include "simulation_config.hpp"
+#include "input.hpp"
 #include "time_integration.hpp"
 #include "ext_force.hpp"
 
-static_assert(dim == 2, "test_e2e_bc1 требует сборки с -DSPH_DIM=2 (решение E1, ТЗ §2)");
-static_assert(axis_sim, "test_e2e_bc1 требует axis_sim = true (осесимметричная постановка BC1)");
+static_assert(dim == 2, "test_e2e_bc2 требует сборки с -DSPH_DIM=2 (решение E1, ТЗ §2)");
+static_assert(axis_sim, "test_e2e_bc2 требует axis_sim = true (осесимметричная постановка BC2)");
 
 #ifndef SPH_TEST_DATA_DIR
 // Задаётся из CMake (target_compile_definitions). Фолбэк нужен только для
@@ -83,7 +84,7 @@ void note(const std::string& what)
 }
 
 // ===========================================================================
-// 1. Геометрия кейса BC1
+// 1. Геометрия кейса BC2
 // ===========================================================================
 // Перенесена из закомментированного блока src/input.cpp:490-596 (внутри
 // shock_tube). Здесь — ЕДИНСТВЕННЫЙ исполняемый экземпляр этой постановки;
@@ -112,7 +113,7 @@ struct LayerSpec
     const char* name;
 };
 
-struct Bc1Geometry
+struct Bc2Geometry
 {
     size_t ntotal = 0;
     size_t moni_particle = 0;
@@ -134,7 +135,7 @@ size_t grid_count(double lo, double hi, double dx)
     return n <= 0.0 ? 0u : static_cast<size_t>(n);
 }
 
-std::array<LayerSpec, 4> bc1_layers(double dx)
+std::array<LayerSpec, 4> bc2_layers(double dx)
 {
     // Опорные плоскости (ТЗ §1.1) — как в оригинальном блоке input.cpp.
     const double Z1 = 0.006;
@@ -159,7 +160,7 @@ std::array<LayerSpec, 4> bc1_layers(double dx)
 // любом delta_x (иначе в smoke-режиме индекс 12973 просто вне диапазона).
 constexpr double kMoniRadius = 0.0125;
 
-size_t pick_moni_particle(const Bc1Geometry& g)
+size_t pick_moni_particle(const Bc2Geometry& g)
 {
     const size_t n_r = g.layer_nr[2];
     const size_t n_z = g.layer_nz[2];
@@ -174,11 +175,11 @@ size_t pick_moni_particle(const Bc1Geometry& g)
     return g.layer_begin[2] + best_ir * n_z + (n_z - 1);
 }
 
-Bc1Geometry build_bc1_geometry(ParticleSystem& sys, double delta_x)
+Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
 {
-    const auto layers = bc1_layers(delta_x);
+    const auto layers = bc2_layers(delta_x);
 
-    Bc1Geometry g;
+    Bc2Geometry g;
     g.delta_x = delta_x;
 
     // --- проход 1: только подсчёт (даёт размер ДО любой записи) -------------
@@ -325,18 +326,24 @@ CompareResult compare_curves(const Curve& calc, const Curve& ref)
     }
     const double lo = std::max(calc.t.front(), ref.t.front());
     const double hi = std::min(calc.t.back(),  ref.t.back());
-    const double calc_span = calc.t.back() - calc.t.front();
-    if (hi <= lo || calc_span <= 0.0)
+    const double ref_span = ref.t.back() - ref.t.front();
+    if (hi <= lo || ref_span <= 0.0)
     {
         r.reason = "диапазоны времени расчёта и эталона не пересекаются";
         return r;
     }
-    r.coverage = (hi - lo) / calc_span;
+    // Покрытие считается от окна ЭТАЛОНА, а не от диапазона расчёта.
+    // Эталон снят прибором и покрывает лишь часть расчёта (запись началась
+    // в 1.51 мкс): доля от диапазона расчёта не достигла бы порога никогда,
+    // сколько бы ни считали. Содержательный вопрос — не «весь ли расчёт
+    // покрыт эталоном», а «весь ли эталон воспроизведён расчётом».
+    r.coverage = (hi - lo) / ref_span;
     if (r.coverage < kMinCover)
     {
         std::ostringstream os;
-        os << "покрытие эталоном диапазона расчёта " << (r.coverage * 100.0)
-           << " % < " << (kMinCover * 100.0) << " % — постановки не совпадают";
+        os << "расчёт покрывает лишь " << (r.coverage * 100.0)
+           << " % окна эталона < " << (kMinCover * 100.0)
+           << " % — расчёт короче эталона или постановки не совпадают";
         r.reason = os.str();
         return r;
     }
@@ -385,7 +392,7 @@ public:
     {
         std::ostringstream os;
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        os << "sph_e2e_bc1_" << tag << "_" << static_cast<long long>(stamp)
+        os << "sph_e2e_bc2_" << tag << "_" << static_cast<long long>(stamp)
            << "_" << counter_++;
         dir_ = fs::temp_directory_path() / os.str();
         fs::remove_all(dir_);
@@ -546,7 +553,7 @@ struct RunResult
 {
     bool ok = false;
     std::string error;
-    Bc1Geometry geom;
+    Bc2Geometry geom;
     Curve curve;
     FrameCheck frames;
     double t_reached = 0.0;
@@ -559,23 +566,48 @@ struct RunResult
 };
 
 // Конфигурация расчёта (ТЗ §3). Источник значений:
-//   «Керамика/Карбид бора/BC1/Initial_Conditions.txt».
+//   «Керамика/Карбид бора/BC2/Initial_Conditions.txt».
 // Файл в кодировке cp1251 и НЕ парсится намеренно: разбор зависел бы от
 // рабочего каталога и от кодировки — обе вещи ломают тест непредсказуемо.
-void apply_bc1_config(SimulationConfig& cfg, const RunSettings& rs)
+fs::path config_path()
+{
+    return fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt";
+}
+
+// t_total физического кейса — из файла конфигурации, а не из литерала в коде:
+// файл остаётся единственным источником истины по параметрам кейса.
+double case_t_total()
+{
+    SimulationConfig probe;
+    probe.apply_defaults();
+    const fs::path p = config_path();
+    if (!fs::exists(p))
+    {
+        throw std::runtime_error("не найден конфиг теста: " + p.string());
+    }
+    parse_sph_config(probe, p.string());
+    return probe.t_total;
+}
+
+void apply_bc2_config(SimulationConfig& cfg, const RunSettings& rs)
 {
     cfg.apply_defaults();
-    cfg.pa_sph  = 2;
-    cfg.nnps    = 2;
-    cfg.sle     = 1;
-    cfg.skf     = 1;
-    cfg.CFL     = 0.1;
-    cfg.epsilon = 0.25;
-    cfg.alpha   = 1.0;
-    cfg.beta    = 1.0;
-    cfg.etq     = 0.01;
-    cfg.save_t  = 2.5e-8;
-    cfg.print_step = 50;
+
+    // Конфигурация читается из файла теми же средствами, что и в боевом
+    // запуске (parse_sph_config), — так тест покрывает реальный путь загрузки
+    // параметров, а не обходит его присваиванием полей.
+    const fs::path cfg_path = config_path();
+    if (!fs::exists(cfg_path))
+    {
+        // parse_sph_config при неоткрывшемся файле молча оставляет умолчания:
+        // без этой проверки тест считал бы «не тот» кейс и выглядел рабочим.
+        throw std::runtime_error("не найден конфиг теста: " + cfg_path.string());
+    }
+    parse_sph_config(cfg, cfg_path.string());
+
+    // Ниже — только то, что параметром физического кейса не является:
+    //   t_total в smoke  — укорочение ради быстрого прогона в CI (ТЗ §5);
+    //   contact_force_type — перебирается по сценариям §6.
     cfg.t_total = rs.t_total;
     cfg.contact_force_type = rs.contact_force_type;
 }
@@ -588,10 +620,10 @@ RunResult run_case(const RunSettings& rs)
     res.workdir = wd.dir().string();
 
     SimulationConfig cfg;
-    apply_bc1_config(cfg, rs);
+    apply_bc2_config(cfg, rs);
 
     ParticleSystem sys;
-    res.geom = build_bc1_geometry(sys, rs.delta_x);
+    res.geom = build_bc2_geometry(sys, rs.delta_x);
     const size_t ntotal = res.geom.ntotal;
     cfg.moni_particle = res.geom.moni_particle;
 
@@ -606,7 +638,7 @@ RunResult run_case(const RunSettings& rs)
     }
 
     // Начальный шаг. main.cpp ставит dt = 0.005 из ветки shocktube — это
-    // одномерная ударная труба, к BC1 отношения не имеющая; для BC1 такой шаг
+    // одномерная ударная труба, к BC2 отношения не имеющая; для BC2 такой шаг
     // бессмысленен (в contact_force_type = 3 он вошёл бы в импульс первого
     // шага). Берём тот же критерий Куранта, которым конвейер пересчитывает
     // шаг дальше. Решение сверх E1-E3, зафиксировано здесь.
@@ -614,7 +646,7 @@ RunResult run_case(const RunSettings& rs)
     double time = 0.0;
 
     // Сторож: бюджет времени + детектор застоя. Потолок «шагов до финиша»
-    // 2e6 подобран так, чтобы не задевать здоровый расчёт (BC1 при dx = 2e-4
+    // 2e6 подобран так, чтобы не задевать здоровый расчёт (BC2 при dx = 2e-4
     // финиширует за ~1.4e3 шагов), но ловить коллапс: при dt ~ 1e-12 остаток
     // оценивается в ~2.6e6 шагов. Терпение 200 шагов — чтобы одиночный
     // просадочный шаг не считался застоем.
@@ -679,9 +711,9 @@ RunResult run_case(const RunSettings& rs)
 // 6. Проверки
 // ===========================================================================
 
-void report_geometry(const Bc1Geometry& g, bool full)
+void report_geometry(const Bc2Geometry& g, bool full)
 {
-    const auto layers = bc1_layers(g.delta_x);
+    const auto layers = bc2_layers(g.delta_x);
     for (size_t L = 0; L < 4; ++L)
     {
         std::ostringstream os;
@@ -852,14 +884,14 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
 // Тест-документация, а НЕ проверка исправления. Когда будет реализовано
 // D2=B (идентификатор тела в ParticleSystem), ожидания ниже инвертируются:
 // пара «одинаковый материал, разные тела» обязана стать контактной.
-void test_known_limitation_b4c_b4c(const Bc1Geometry& g)
+void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
 {
     std::printf("\n[§6] Известное ограничение D2=A: контакт не различает два тела одного материала\n");
 
     // (а) доказательство на самой геометрии: слои 2 и 3 целиком itype = 10,
     //     поэтому критерий itype[i] != itype[j] не может сработать ни на одной
     //     паре между ними — независимо от их положений на любом шаге.
-    const auto layers = bc1_layers(g.delta_x);
+    const auto layers = bc2_layers(g.delta_x);
     check(layers[1].itype == 10 && layers[2].itype == 10,
           "§6 слои 2 и 3 — оба itype = 10, критерий D2=A между ними неприменим");
 
@@ -979,16 +1011,16 @@ void check_no_side_effects(const fs::path& cwd, const DirSnapshot& before)
 
 fs::path reference_path(bool full)
 {
-    return fs::path(SPH_TEST_DATA_DIR) / (full ? "bc1_reference.txt" : "bc1_reference_smoke.txt");
+    return fs::path(SPH_TEST_DATA_DIR) / (full ? "bc2_reference.txt" : "bc2_reference_smoke.txt");
 }
 
 void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
 {
-    std::printf("# Эталон для end-to-end теста BC1 (удар по карбиду бора)\n");
+    std::printf("# Эталон для end-to-end теста BC2 (удар по карбиду бора)\n");
     std::printf("#\n");
-    std::printf("# СГЕНЕРИРОВАНО: test_e2e_bc1 %s--emit-reference\n", full ? "--full " : "");
+    std::printf("# СГЕНЕРИРОВАНО: test_e2e_bc2 %s--emit-reference\n", full ? "--full " : "");
     std::printf("# Формат: <время, с>  <vx[0][moni_particle], м/с>  <itype[moni_particle]>\n");
-    std::printf("# (ровно формат time_integration.cpp:304-305 и BC1/log_*.txt)\n");
+    std::printf("# (ровно формат time_integration.cpp:304-305 и BC2/log_*.txt)\n");
     std::printf("#\n");
     std::printf("# ПАРАМЕТРЫ ПОСТАНОВКИ\n");
     std::printf("#   режим:                 %s\n", full ? "full" : "smoke");
@@ -1018,6 +1050,18 @@ void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
 
 void check_against_reference(const RunResult& r, bool full)
 {
+    // Эталон — приборная запись, начинающаяся в 1.51 мкс. Smoke считает до
+    // 0.3 мкс, поэтому его окно с эталоном не пересекается ни при каких
+    // условиях: сверять нечего, и падать тут не на чем. Назначение smoke —
+    // живучесть конвейера (ТЗ §5), она проверена выше в §4.4.
+    if (!full)
+    {
+        std::printf("\n[§4] Сверка с эталоном: пропущена\n");
+        std::printf("  info : эталон записан прибором с 1.51 мкс, smoke считает до 0.3 мкс —\n"
+                    "         окна не пересекаются. Сверка кривой выполняется в режиме --full.\n");
+        return;
+    }
+
     const fs::path ref_path = reference_path(full);
     std::printf("\n[§4] Сверка с эталоном: %s\n", ref_path.string().c_str());
 
@@ -1044,7 +1088,7 @@ void check_against_reference(const RunResult& r, bool full)
             "         если оно неверно, тест закрепит ошибку.\n"
             "         Как заполнить:\n"
             "           1) убедиться, что расчёт физически корректен (проверяет владелец);\n"
-            "           2) ./test_e2e_bc1 %s--emit-reference > %s\n"
+            "           2) ./test_e2e_bc2 %s--emit-reference > %s\n"
             "           3) вписать в шапку commit/дату/автора и просмотреть кривую глазами.\n",
             ref_path.string().c_str(), full ? "--full " : "", ref_path.string().c_str());
         ++failures;
@@ -1122,7 +1166,7 @@ void test_contact_scenarios(const RunSettings& base)
 void print_usage()
 {
     std::printf(
-        "Использование: test_e2e_bc1 [--full] [--emit-reference] [--verbose]\n"
+        "Использование: test_e2e_bc2 [--full] [--emit-reference] [--verbose]\n"
         "  (без аргументов)  smoke-режим: delta_x = 8e-4, t_total = 3e-7\n"
         "  --full            полный кейс: delta_x = 2e-4, t_total = 3e-6 + сценарии §6\n"
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
@@ -1177,7 +1221,10 @@ int main(int argc, char** argv)
     RunSettings rs;
     rs.name = full ? "full" : "smoke";
     rs.delta_x = full ? 2e-4 : 8e-4;
-    rs.t_total = full ? 3e-6 : 3e-7;
+    // Полный режим берёт t_total из tests/data/bc2_initial_conditions.txt.
+    // Smoke укорачивает расчёт: это решение обвязки (быстрый прогон в CI),
+    // а не параметр кейса, поэтому оно и живёт в коде, а не в конфиге.
+    rs.t_total = full ? case_t_total() : 3e-7;
     rs.silence = !verbose;
     rs.keep_workdir = keep_workdir;
     rs.wall_limit_s = wall_limit_s;
@@ -1185,20 +1232,20 @@ int main(int argc, char** argv)
     if (emit)
     {
         // Эталон печатается в stdout — диагностика уходит в stderr, иначе
-        // `... --emit-reference > bc1_reference.txt` соберёт мусор.
-        std::fprintf(stderr, "test_e2e_bc1: генерация эталона, режим %s...\n", rs.name);
+        // `... --emit-reference > bc2_reference.txt` соберёт мусор.
+        std::fprintf(stderr, "test_e2e_bc2: генерация эталона, режим %s...\n", rs.name);
         const RunResult r = run_case(rs);
         if (!r.ok)
         {
-            std::fprintf(stderr, "test_e2e_bc1: прогон не состоялся: %s\n", r.error.c_str());
+            std::fprintf(stderr, "test_e2e_bc2: прогон не состоялся: %s\n", r.error.c_str());
             return 1;
         }
         emit_reference(r, rs, full);
-        std::fprintf(stderr, "test_e2e_bc1: напечатано %zu строк данных\n", r.curve.t.size());
+        std::fprintf(stderr, "test_e2e_bc2: напечатано %zu строк данных\n", r.curve.t.size());
         return 0;
     }
 
-    std::printf("=== e2e BC1, режим %s (delta_x = %g, t_total = %g) ===\n",
+    std::printf("=== e2e BC2, режим %s (delta_x = %g, t_total = %g) ===\n",
                 rs.name, rs.delta_x, rs.t_total);
 
     std::printf("\n[§1] Геометрия\n");
@@ -1249,7 +1296,7 @@ int main(int argc, char** argv)
 
     check_no_side_effects(cwd, before);
 
-    std::printf("\n=== e2e BC1: %s (провалов: %d) ===\n",
+    std::printf("\n=== e2e BC2: %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);
     return failures == 0 ? 0 : 1;
 }
