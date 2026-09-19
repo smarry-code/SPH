@@ -948,12 +948,12 @@ void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
 
         // Пара B4C <-> B4C: оба itype = 10.
         sys.itype[0] = 10; sys.itype[1] = 10;
-        ext_force(cfg, sys, 1e-9, 2, 1, pi, pj, dvxdt, wb);
+        ext_force(cfg, sys, 1e-9, 2, 2, 1, pi, pj, dvxdt, wb);
         const size_t pairs_same = wb.contact_pair_count;
 
         // Та же геометрия, но разные материалы (ударник 8 <-> керамика 10).
         sys.itype[0] = 8; sys.itype[1] = 10;
-        ext_force(cfg, sys, 1e-9, 2, 1, pi, pj, dvxdt, wb);
+        ext_force(cfg, sys, 1e-9, 2, 2, 1, pi, pj, dvxdt, wb);
         const size_t pairs_diff = wb.contact_pair_count;
 
         std::ostringstream a, b;

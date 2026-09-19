@@ -11,9 +11,23 @@ namespace
 // Ограничение: два тела из одного материала контакта не увидят — в проекте нет
 // идентификатора тела (part id из k-файла затирается номером материала,
 // input.cpp:230 и 786-807). Смена критерия — правка только этой функции.
-bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j)
+//
+// nreal — число реальных частиц; зеркальные лежат за ними, в [nreal, ntotal),
+// и наследуют положительный itype оригинала (virt_part.cpp -> inzializ_2d_symm_index),
+// поэтому по одному материалу от реальных неотличимы. Контакт им запрещён:
+//  - призрак представляет то же тело на угле theta+pi, и пара «реальная + призрак»
+//    дублирует отталкивание, уже описанное прямой парой «реальная + реальная»;
+//  - реакция, записанная в слот призрака, теряется: интегрирование идёт по
+//    [0, nreal), так что импульс пары не сохраняется;
+//  - счётчики wb (contact_pair_count, contact_max_delta, min_dt_contact)
+//    засорялись бы фантомными парами, а min_dt_contact ещё и урезал бы шаг
+//    всего расчёта по несуществующему контакту.
+// Штрафной контакт определён между дискретными телами, а призрак — не тело,
+// а приём замыкания носителя ядра в континуальных SPH-суммах.
+bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j, size_t nreal)
 {
-    return sys.itype[i] > 0 && sys.itype[j] > 0 && sys.itype[i] != sys.itype[j];
+    return i < nreal && j < nreal
+        && sys.itype[i] > 0 && sys.itype[j] > 0 && sys.itype[i] != sys.itype[j];
 }
 
 // Локальный CFL-шаг пары: тот же критерий, что compute_cfl_timestep
@@ -71,11 +85,17 @@ void virtual_symm_2d (ParticleSystem& sys, size_t i, size_t j, std::vector<std::
 
 // Основная функция ext_force
 void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
-               size_t ntotal, size_t niac,
+               size_t ntotal, size_t nreal, size_t niac,
                const std::vector<size_t>& pair_i, const std::vector<size_t>& pair_j,
                std::vector<std::vector<double>>& dvxdt, WorkBuffers& wb)
 {
     const int contact_type = cfg.contact_force_type;
+    // Защита от рассогласования вызывающей стороны: nreal больше полного
+    // диапазона означало бы, что «реальными» объявлены несуществующие индексы.
+    if (nreal > ntotal)
+    {
+        throw std::runtime_error("ext_force: nreal > ntotal");
+    }
 
     // Параметры для силы отталкивания
     constexpr double rr0 = 1.25e-5;  // Пороговое расстояние
@@ -142,7 +162,7 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
                 }
             }
         }
-        if (contact_type != contact::Off && is_contact_material_pair(sys, i, j))
+        if (contact_type != contact::Off && is_contact_material_pair(sys, i, j, nreal))
         {
             std::array<double, dim> dx{};      // x_i - x_j
             double r2 = 0.0;

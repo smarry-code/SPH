@@ -214,7 +214,9 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // Внешние силы
     if (ex_force)
     {
-        ext_force(cfg, sys, dt, ntotal + nvirt, niac, pair_i, pair_j, exdvxdt, wb);
+        // Полный диапазон — ntotal + nvirt (по нему размерен exdvxdt), реальных
+        // из них — ntotal: контакт не должен видеть зеркальные частицы.
+        ext_force(cfg, sys, dt, ntotal + nvirt, ntotal, niac, pair_i, pair_j, exdvxdt, wb);
     }
     // Обновление длины сглаживания
     if (sle != 0)

@@ -259,7 +259,7 @@ void test_orchestrator_impulse_balance()
     std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
     const double dt = 1e-8;
 
-    ext_force(cfg, sys, dt, 2, 1, pair_i, pair_j, dvxdt, wb);
+    ext_force(cfg, sys, dt, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
 
     const double balance = dvxdt[0][0] * sys.mass[0] + dvxdt[0][1] * sys.mass[1];
     check(std::fabs(balance) <= 1e-12 * std::max(std::fabs(dvxdt[0][0] * sys.mass[0]), 1.0),
@@ -277,7 +277,7 @@ void test_orchestrator_sign()
         WorkBuffers wb;
         std::vector<size_t> pair_i{0}, pair_j{1};
         std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
 
         // i=0 слева от j=1: отталкивание => a[0] < 0 (влево), a[1] > 0 (вправо).
         check(dvxdt[0][0] < 0.0, "O2 знак ускорения частицы i (отталкивание)");
@@ -295,7 +295,7 @@ void test_orchestrator_filters()
         WorkBuffers wb;
         std::vector<size_t> pair_i{0}, pair_j{1};
         std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
         check(wb.contact_pair_count == 0, "O3 одинаковый материал -> pair_count==0");
         check(dvxdt[0][0] == 0.0 && dvxdt[0][1] == 0.0, "O3 одинаковый материал -> dvxdt==0");
     }
@@ -307,7 +307,7 @@ void test_orchestrator_filters()
         WorkBuffers wb;
         std::vector<size_t> pair_i{0}, pair_j{1};
         std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
         check(wb.contact_pair_count == 0, "O3 виртуальная частица -> pair_count==0");
     }
     // O3: itype == 0.
@@ -318,8 +318,84 @@ void test_orchestrator_filters()
         WorkBuffers wb;
         std::vector<size_t> pair_i{0}, pair_j{1};
         std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-        ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
         check(wb.contact_pair_count == 0, "O3 itype==0 -> pair_count==0");
+    }
+}
+
+void test_orchestrator_ghost_excluded()
+{
+    // O10: зеркальная (виртуальная) частица не образует контактной пары.
+    // Отличие от O3 «виртуальная частица»: там признаком служил itype < 0, а
+    // virt_part копирует itype оригинала БЕЗ смены знака, поэтому призрак по
+    // материалу неотличим от реальной частицы. Единственный признак — индекс:
+    // призраки лежат в [nreal, ntotal).
+    //
+    // Геометрия обеих веток одинакова и заведомо даёт проникание (p > 0),
+    // так что различие в результате вызвано ровно границей nreal.
+    const auto make_overlapping = []()
+    {
+        return make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0,
+                         /*itype0*/3, /*itype1*/4);
+    };
+
+    // Контроль: обе реальные -> контакт есть (иначе тест ниже проходил бы
+    // по любой причине, а не из-за фильтра по nreal).
+    {
+        ParticleSystem sys = make_overlapping();
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, /*ntotal*/2, /*nreal*/2, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 1, "O10 контроль: обе реальные -> pair_count==1");
+        check(dvxdt[0][0] != 0.0, "O10 контроль: обе реальные -> сила приложена");
+    }
+
+    // Частица 1 объявлена зеркальной (nreal == 1) -> пара отбрасывается целиком:
+    // ни силы, ни счётчиков, ни ограничителя шага.
+    {
+        ParticleSystem sys = make_overlapping();
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, /*ntotal*/2, /*nreal*/1, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.contact_pair_count == 0, "O10 призрак -> pair_count==0");
+        check(dvxdt[0][0] == 0.0 && dvxdt[0][1] == 0.0, "O10 призрак -> dvxdt==0");
+        check(wb.contact_max_delta == 0.0, "O10 призрак -> contact_max_delta не засорён");
+        check(wb.min_dt_contact == 1e30, "O10 призрак -> шаг не ограничивается");
+    }
+
+    // Тип 1 ставит ограничитель шага, поэтому засорение min_dt_contact
+    // фантомной парой проверяется отдельно именно на нём.
+    {
+        ParticleSystem sys = make_overlapping();
+        SimulationConfig cfg = make_cfg(contact::Pinball);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, 1e-8, /*ntotal*/2, /*nreal*/1, 1, pair_i, pair_j, dvxdt, wb);
+        check(wb.min_dt_contact == 1e30, "O10 призрак (тип 1) -> min_dt_contact==kNoLimit");
+    }
+
+    // Рассогласование вызывающей стороны диагностируется, а не молчит.
+    {
+        ParticleSystem sys = make_overlapping();
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        bool threw = false;
+        try
+        {
+            ext_force(cfg, sys, 1e-8, /*ntotal*/2, /*nreal*/3, 1, pair_i, pair_j, dvxdt, wb);
+        }
+        catch (const std::runtime_error&)
+        {
+            threw = true;
+        }
+        check(threw, "O10 nreal > ntotal -> исключение");
     }
 }
 
@@ -332,7 +408,7 @@ void test_orchestrator_no_penetration()
     WorkBuffers wb;
     std::vector<size_t> pair_i{0}, pair_j{1};
     std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
     check(wb.contact_pair_count == 0, "O4 p<=0 -> pair_count==0");
     check(wb.min_dt_contact == 1e30, "O4 p<=0 -> min_dt_contact==1e30");
 }
@@ -347,7 +423,7 @@ void test_orchestrator_type_off()
     WorkBuffers wb;
     std::vector<size_t> pair_i{0}, pair_j{1};
     std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
     check(wb.contact_pair_count == 0, "O5 type=0 -> pair_count==0");
     check(dvxdt[0][0] == 0.0 && dvxdt[0][1] == 0.0, "O5 type=0 -> dvxdt==0 бит-в-бит");
 }
@@ -369,7 +445,7 @@ void test_orchestrator_dt_limit_types_1_2()
         std::vector<size_t> pair_i{0}, pair_j{1};
         std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
         const double dt_applied = 1e-8;
-        ext_force(cfg, sys, dt_applied, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, dt_applied, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
 
         // Пересчёт ожидаемых величин по той же геометрии/свойствам, что в ext_force.
         const double r = std::fabs(x0 - x1);
@@ -402,7 +478,7 @@ void test_orchestrator_dt_limit_type_3()
     WorkBuffers wb;
     std::vector<size_t> pair_i{0}, pair_j{1};
     std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
     check(wb.min_dt_contact == 1e30, "O7 тип 3 -> min_dt_contact==kNoLimit");
 }
 
@@ -415,7 +491,7 @@ void test_orchestrator_diagnostics()
     WorkBuffers wb;
     std::vector<size_t> pair_i{0}, pair_j{1};
     std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-    ext_force(cfg, sys, 1e-8, 2, 1, pair_i, pair_j, dvxdt, wb);
+    ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
     const double expected_p = 0.5 * (h0 + h1) - std::fabs(x0 - x1);
     check(rel_close(wb.contact_max_delta, expected_p), "O8 contact_max_delta == p фактический");
 }
@@ -437,7 +513,7 @@ void test_orchestrator_dt_collapse_regression()
     bool all_finite = true;
     for (int iter = 0; iter < 64; ++iter)
     {
-        ext_force(cfg, sys, dt, 2, 1, pair_i, pair_j, dvxdt, wb);
+        ext_force(cfg, sys, dt, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
         if (!finite_dvxdt(dvxdt, 2)) { all_finite = false; break; }
 
         const double dt_cfl_model = 1e-7;  // фиксированный «CFL» верхний предел
@@ -464,6 +540,7 @@ int main()
     test_orchestrator_impulse_balance();
     test_orchestrator_sign();
     test_orchestrator_filters();
+    test_orchestrator_ghost_excluded();
     test_orchestrator_no_penetration();
     test_orchestrator_type_off();
     test_orchestrator_dt_limit_types_1_2();
