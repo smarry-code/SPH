@@ -57,13 +57,13 @@ list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
 
-# --- Тесты (лежат в корне проекта; подключают заголовки из include/) --------
+# --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
 enable_testing()
-add_executable(test_flat_grid test_flat_grid.cpp)
+add_executable(test_flat_grid tests/test_flat_grid.cpp)
 target_include_directories(test_flat_grid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME flat_grid_test COMMAND test_flat_grid)
 
-add_executable(test_pair_graph test_pair_graph.cpp)
+add_executable(test_pair_graph tests/test_pair_graph.cpp)
 target_include_directories(test_pair_graph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME pair_graph_test COMMAND test_pair_graph)
 # pair_graph.hpp использует OpenMP (спекулятивная блочно-параллельная окраска, фаза B1).
@@ -77,7 +77,7 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # --- Тест моста AoS <-> SoA (Этап 4.3.1): тождество gather/scatter. ---
-add_executable(test_particle_system test_particle_system.cpp)
+add_executable(test_particle_system tests/test_particle_system.cpp)
 target_include_directories(test_particle_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME particle_system_test COMMAND test_particle_system)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -87,7 +87,7 @@ endif()
 # --- Тест контактных сил (part_0.md, ADR-007): аналитика типов 1-3,
 #     баланс импульса, ограничитель шага. Линкуется с src/ext_force.cpp,
 #     чтобы покрыть и оркестратор.
-add_executable(test_contact test_contact.cpp src/ext_force.cpp)
+add_executable(test_contact tests/test_contact.cpp src/ext_force.cpp)
 target_include_directories(test_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME contact_test COMMAND test_contact)
 

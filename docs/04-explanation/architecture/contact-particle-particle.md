@@ -159,5 +159,5 @@ bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j)
 - [`contact_force.hpp`](../../../include/contact_force.hpp) — чистая математика
 - [`ext_force.cpp`](../../../src/ext_force.cpp) — оркестратор
 - [`buffers.hpp`](../../../include/buffers.hpp) — диагностика/ограничитель
-- `test_contact.cpp` (корень репозитория) — аналитические тесты и тесты
+- `tests/test_contact.cpp` — аналитические тесты и тесты
   оркестратора

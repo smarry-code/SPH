@@ -457,7 +457,7 @@ for (size_t i = 0; i < ntotal; ++i) {
 
 ## 8. Пошаговый пример
 
-Рассмотрим [`test_basic_3_particles()`](../../../test_flat_grid.cpp:19) из
+Рассмотрим [`test_basic_3_particles()`](../../../tests/test_flat_grid.cpp:19) из
 `test_flat_grid.cpp` — 3 частицы в 1D (`dim = 1`):
 
 | $i$ | $x_i$ | $h_i$ |
@@ -598,15 +598,15 @@ sequenceDiagram
 ## 12. Тестирование
 
 Корректность `FlatGrid` покрыта unit-тестами в
-[`test_flat_grid.cpp`](../../../test_flat_grid.cpp:1):
+[`test_flat_grid.cpp`](../../../tests/test_flat_grid.cpp:1):
 
 | Тест | Что проверяет |
 |---|---|
-| [`test_basic_3_particles()`](../../../test_flat_grid.cpp:19) | Разложение 3 частиц по разным ячейкам; `dx`, `origin`, `nx`, инвариант `offset[n_cells] == N` |
-| [`test_all_in_one_cell()`](../../../test_flat_grid.cpp:91) | Все частицы в одной ячейке; корректность `cell_range()` (3 частицы в одной ячейке) |
-| [`test_negative_coordinates()`](../../../test_flat_grid.cpp:129) | Отрицательные координаты; сдвиг `origin`, неотрицательные индексы ячеек |
-| [`test_empty()`](../../../test_flat_grid.cpp:165) | `ntotal == 0`: вырожденная сетка 1×1×1, пустой `sorted_idx` |
-| [`test_2d_case()`](../../../test_flat_grid.cpp:182) | Корректная обработка нескольких частиц, сумма `count == N` |
+| [`test_basic_3_particles()`](../../../tests/test_flat_grid.cpp:19) | Разложение 3 частиц по разным ячейкам; `dx`, `origin`, `nx`, инвариант `offset[n_cells] == N` |
+| [`test_all_in_one_cell()`](../../../tests/test_flat_grid.cpp:91) | Все частицы в одной ячейке; корректность `cell_range()` (3 частицы в одной ячейке) |
+| [`test_negative_coordinates()`](../../../tests/test_flat_grid.cpp:129) | Отрицательные координаты; сдвиг `origin`, неотрицательные индексы ячеек |
+| [`test_empty()`](../../../tests/test_flat_grid.cpp:165) | `ntotal == 0`: вырожденная сетка 1×1×1, пустой `sorted_idx` |
+| [`test_2d_case()`](../../../tests/test_flat_grid.cpp:182) | Корректная обработка нескольких частиц, сумма `count == N` |
 
 ---
 
@@ -631,4 +631,4 @@ sequenceDiagram
   [`linked_list.hpp`](../../../include/linked_list.hpp:1),
   [`linked_list.cpp`](../../../src/linked_list.cpp:1),
   [`particle_system.hpp`](../../../include/particle_system.hpp:1),
-  [`test_flat_grid.cpp`](../../../test_flat_grid.cpp:1)
+  [`test_flat_grid.cpp`](../../../tests/test_flat_grid.cpp:1)

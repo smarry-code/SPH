@@ -30,7 +30,7 @@ void eos_mi_grunaizen(const Materials& mats, size_t nmat,
 
 **Положительные:**
 
-- Изолируемое тестирование УРС (см. [`test_particle_system`](../../../test_particle_system.cpp));
+- Изолируемое тестирование УРС (см. [`test_particle_system`](../../../tests/test_particle_system.cpp));
 - Чёткое разделение: плотность — в `density.hpp`, УРС — в `eos.hpp`;
 - Возможность подстановки моделей состояния без изменения остального конвейера.
 

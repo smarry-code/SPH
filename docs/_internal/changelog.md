@@ -23,7 +23,7 @@
 - Контактные силы «частица-частица» (типы 1-3: пинбол Белицко, Свигл,
   импульсный) — `include/contact_force.hpp`, оркестратор в `ext_force.cpp`,
   ограничитель шага и диагностика в `WorkBuffers`, ключи конфигурации
-  `contact_force_type`/`contact_penalty_scale`, тесты `test_contact.cpp`
+  `contact_force_type`/`contact_penalty_scale`, тесты `tests/test_contact.cpp`
   (`contact_test`), [ADR-007](../04-explanation/decisions/adr-007-contact-force-types.md)
   и [описание архитектуры](../04-explanation/architecture/contact-particle-particle.md).
   По умолчанию контакт выключен (`contact_force_type = 0`), поведение
