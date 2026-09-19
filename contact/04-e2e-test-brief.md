@@ -7,7 +7,7 @@
 **Источник данных:** `Керамика/Карбид бора/BC1/`
 **Источник геометрии:** `src/input.cpp:490-596` — закомментированный блок внутри
 `shock_tube()`; переносится в тело теста.
-**Новые файлы:** `test_e2e_bc1.cpp`, `contact/e2e/bc1_reference.txt` (заготовка создана),
+**Новые файлы:** `tests/test_e2e_bc1.cpp`, `tests/data/bc1_reference.txt` (заготовка создана),
 цель CMake `test_e2e_bc1`.
 
 > Тест общего назначения: он проверяет весь конвейер, а не только контакт. Контактная
@@ -160,7 +160,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 
 ### 4.2 Формат эталонного файла
 
-Заготовка создана: [`contact/e2e/bc1_reference.txt`](e2e/bc1_reference.txt).
+Заготовка создана: [`tests/data/bc1_reference.txt`](../tests/data/bc1_reference.txt).
 Формат и порядок перегенерации описаны в её шапке.
 
 ### 4.3 Алгоритм сравнения
@@ -257,7 +257,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
       пользователя. **Проверить это явно — тест не должен иметь побочных эффектов
       в рабочем каталоге разработчика.**
 - [ ] Путь к эталону задаётся относительно каталога исходников через
-      `target_compile_definitions(... SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e")`,
+      `target_compile_definitions(... SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")`,
       не относительно CWD.
 - [ ] Вывод при падении: обе метрики (`rel_l2`, `max_abs_dev`), номер и время узла
       максимального расхождения, значения расчёта и эталона в этом узле. Без этого
@@ -269,7 +269,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 
 1. **E1** (решение по `dim`) → правка `param.hpp` + CMake. Без этого дальше нельзя.
 2. **E2** (решение по эталону: `log_*.txt` vs `BC1.txt`).
-3. Перенос геометрии в `test_e2e_bc1.cpp` с исправлениями §1.3; проверка числа частиц.
+3. Перенос геометрии в `tests/test_e2e_bc1.cpp` с исправлениями §1.3; проверка числа частиц.
 4. Прогон конвейера в smoke-режиме; убедиться, что расчёт вообще проходит.
 5. Генерация эталона (§4.2, инструкция в шапке заготовки) — **после** того, как
    расчёт признан корректным владельцем, не раньше: эталон фиксирует текущее
@@ -293,8 +293,8 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 ## 10. Статус реализации
 
 Решения **E1 = A, E2 = A, E3 = «зафиксировать тестом»** приняты владельцем.
-Реализовано: [`test_e2e_bc1.cpp`](../test_e2e_bc1.cpp), цель CMake `test_e2e_bc1`,
-заготовка [`e2e/bc1_reference_smoke.txt`](e2e/bc1_reference_smoke.txt).
+Реализовано: [`tests/test_e2e_bc1.cpp`](../tests/test_e2e_bc1.cpp), цель CMake `test_e2e_bc1`,
+заготовка [`tests/data/bc1_reference_smoke.txt`](../tests/data/bc1_reference_smoke.txt).
 
 ### Что сделано
 

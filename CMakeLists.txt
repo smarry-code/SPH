@@ -98,11 +98,13 @@ add_test(NAME contact_test COMMAND test_contact)
 # См. решение E1 и docs/04-explanation/decisions/adr-002-dim-constexpr.md.
 option(SPH_E2E_SLOW_TESTS "Регистрировать в ctest медленный полный прогон BC1 (метка slow)" OFF)
 
-add_executable(test_e2e_bc1 test_e2e_bc1.cpp ${SPH_PIPELINE_SOURCES})
+add_executable(test_e2e_bc1 tests/test_e2e_bc1.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_e2e_bc1 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# SPH_TEST_DATA_DIR — АБСОЛЮТНЫЙ путь от каталога исходников, а не от рабочего:
+# тест запускается из каталога сборки (ctest) и из временного каталога прогона.
 target_compile_definitions(test_e2e_bc1 PRIVATE
     SPH_DIM=2
-    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e")
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(test_e2e_bc1 PRIVATE -fexceptions)
 endif()

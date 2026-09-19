@@ -48,7 +48,7 @@
 #    Эталон фиксирует ТЕКУЩЕЕ поведение: если оно неверно, тест закрепит ошибку.
 # 2. Собрать цель test_e2e_bc1 (она компилируется с -DSPH_DIM=2, решение E1)
 #    и прогнать smoke-режим:
-#       ./build/test_e2e_bc1 --emit-reference > contact/e2e/bc1_reference_smoke.txt
+#       ./build/test_e2e_bc1 --emit-reference > tests/data/bc1_reference_smoke.txt
 #    (флаг --emit-reference печатает шапку + данные в этом формате; диагностика
 #     уходит в stderr и в файл не попадает)
 # 3. Вписать в шапку commit, дату и автора.

@@ -25,7 +25,7 @@
 //   --full          — полный кейс (delta_x = 2e-4, t_total = 3e-6) + контактные
 //                     сценарии §6;
 //   --emit-reference— напечатать эталон текущего режима в stdout (см. шапку
-//                     contact/e2e/bc1_reference.txt);
+//                     tests/data/bc1_reference.txt);
 //   --verbose       — не глушить вывод конвейера.
 #include <algorithm>
 #include <array>
@@ -54,7 +54,7 @@ static_assert(axis_sim, "test_e2e_bc1 требует axis_sim = true (осеси
 #ifndef SPH_TEST_DATA_DIR
 // Задаётся из CMake (target_compile_definitions). Фолбэк нужен только для
 // сборки вне CMake и заведомо неверен — тест сообщит об отсутствии эталона.
-#define SPH_TEST_DATA_DIR "contact/e2e"
+#define SPH_TEST_DATA_DIR "tests/data"
 #endif
 
 namespace fs = std::filesystem;
