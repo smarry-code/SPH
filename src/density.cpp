@@ -202,16 +202,6 @@ void con_density(const SimulationConfig& cfg, const ParticleSystem& sys, size_t 
                     Acc::add(drhodt[i], q_i);
                     Acc::add(drhodt[j], q_j);
                 }
-                if (axis_sim == true && dim == 2)
-                {
-                    // drhodt[i] += (prho[i] / prho[j]) * pmass[j] * (pvx[0][j] / px[0][j]) * w[k];
-                    // drhodt[j] += (prho[j] / prho[i]) * pmass[i] * (pvx[0][i] / px[0][i]) * w[k];
-                    double ax_i = (pvx[0][i] / px[0][i]);
-                    double ax_j = (pvx[0][j] / px[0][j]);
-                    Acc::add(drhodt[i], (-(ax_i)));
-                    Acc::add(drhodt[j], (-(ax_j)));
-                }
-    
     };
     // Единая параллельная область: одна команда потоков на весь цикл,
     // между цветами — только неявный барьер #pragma omp for (без fork-join).
@@ -239,6 +229,22 @@ void con_density(const SimulationConfig& cfg, const ParticleSystem& sys, size_t 
             {
                 body.template operator()<AccAtomic>(pair_i[k], pair_j[k], k);
             }
+        }
+    }
+
+    // Осесимметричная поправка к уравнению непрерывности.
+    // В цилиндрических координатах при осевой симметрии
+    //     div(v) = dv_r/dr + v_r/r + dv_z/dz,
+    // тогда как парная сумма выше даёт только плоскую часть (dv_r/dr + dv_z/dz).
+    // Недостающий член: drho/dt += -rho_i * v_r_i / r_i — он относится к ЧАСТИЦЕ,
+    // а не к паре, поэтому добавляется здесь, один раз на частицу.
+    // Та же форма и то же место (пер-частичный цикл) — у осевого члена энергии
+    // в int_force.cpp:620-624.
+    if (axis_sim == true && dim == 2)
+    {
+        for (size_t i = 0; i < ntotal; ++i)
+        {
+            drhodt[i] -= prho[i] * pvx[0][i] / px[0][i];
         }
     }
 }
