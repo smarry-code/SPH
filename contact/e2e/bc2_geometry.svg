@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 639" width="600" height="639" role="img" aria-label="Меридиональное сечение осесимметричной сборки BC1: ударник из полиуретана, две пластины карбида бора и окно из фторида лития">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 593 659" width="593" height="659" role="img" aria-label="Меридиональное сечение осесимметричной сборки BC2: ударник из полиуретана, две пластины карбида бора и окно из фторида лития">
 <style>
 svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
-      --axis:#b9b8b2; --dim:#8a8984;
+      --axis:#b9b8b2; --dim:#8a8984; --moni:#c2255c;
       --m-pu:#eb6834; --m-b4c:#2a78d6; --m-lif:#1baf7a;
       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
 @media (prefers-color-scheme: dark) {
   svg { --surface-1:#1a1a19; --text-primary:#ffffff; --text-secondary:#c3c2b7;
-        --axis:#5a5955; --dim:#6f6e69;
+        --axis:#5a5955; --dim:#6f6e69; --moni:#f06595;
         --m-pu:#d95926; --m-b4c:#3987e5; --m-lif:#199e70; }
 }
 .ttl { fill:var(--text-primary); font-size:15px; font-weight:600; }
@@ -16,10 +16,11 @@ svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
 .ax  { fill:var(--text-secondary); font-size:10.5px; }
 .lg  { fill:var(--text-primary); font-size:11px; }
 .vl  { font-size:11px; font-weight:600; }
+.mn  { fill:var(--moni); font-size:11px; font-weight:600; }
 </style>
 <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="context-stroke"/></marker></defs>
-<rect width="600" height="639" fill="var(--surface-1)"/>
-<text class="ttl" x="78" y="26">Геометрия кейса BC1 — меридиональное сечение</text>
+<rect width="593" height="659" fill="var(--surface-1)"/>
+<text class="ttl" x="78" y="26">Геометрия кейса BC2 — меридиональное сечение</text>
 <text class="sub" x="78" y="44">Осесимметричная постановка, показана половина r &gt; 0.</text>
 <text class="sub" x="78" y="60">Масштаб по обеим осям одинаковый; размеры в мм.</text>
 <rect x="78.0" y="104.0" width="54.0" height="393.8" fill="var(--m-pu)" fill-opacity="0.82" stroke="var(--m-pu)" stroke-width="1.5"/>
@@ -27,21 +28,25 @@ svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
 <text class="dm" x="105.0" y="513.8" text-anchor="middle">6</text>
 <line x1="87.0" y1="90.0" x2="123.0" y2="90.0" stroke="var(--m-pu)" stroke-width="2" marker-end="url(#ar)"/>
 <text class="vl" x="105.0" y="83.0" text-anchor="middle" fill="var(--m-pu)">2210 м/с</text>
-<rect x="133.8" y="186.3" width="33.5" height="311.4" fill="var(--m-b4c)" fill-opacity="0.82" stroke="var(--m-b4c)" stroke-width="1.5"/>
-<text class="lb" x="150.5" y="347.0" text-anchor="middle">2</text>
-<text class="dm" x="150.5" y="513.8" text-anchor="middle">3,717</text>
-<line x1="132.5" y1="172.3" x2="168.5" y2="172.3" stroke="var(--m-b4c)" stroke-width="2" marker-end="url(#ar)"/>
-<text class="vl" x="150.5" y="165.3" text-anchor="middle" fill="var(--m-b4c)">2210 м/с</text>
-<rect x="174.5" y="186.3" width="81.3" height="311.4" fill="var(--m-b4c)" fill-opacity="0.82" stroke="var(--m-b4c)" stroke-width="1.5"/>
-<text class="lb" x="215.1" y="347.0" text-anchor="middle">3</text>
-<text class="dm" x="215.1" y="513.8" text-anchor="middle">9,033</text>
-<rect x="257.5" y="269.1" width="226.8" height="228.6" fill="var(--m-lif)" fill-opacity="0.82" stroke="var(--m-lif)" stroke-width="1.5"/>
-<text class="lb" x="370.9" y="388.4" text-anchor="middle">4</text>
-<text class="dm" x="370.9" y="513.8" text-anchor="middle">25,2</text>
-<line x1="58" y1="497.8" x2="504.3" y2="497.8" stroke="var(--axis)" stroke-width="1.2" stroke-dasharray="10 4 2 4"/>
+<rect x="132.0" y="186.3" width="35.3" height="311.4" fill="var(--m-b4c)" fill-opacity="0.82" stroke="var(--m-b4c)" stroke-width="1.5"/>
+<text class="lb" x="149.6" y="347.0" text-anchor="middle">2</text>
+<text class="dm" x="149.6" y="513.8" text-anchor="middle">3,917</text>
+<line x1="131.6" y1="172.3" x2="167.6" y2="172.3" stroke="var(--m-b4c)" stroke-width="2" marker-end="url(#ar)"/>
+<text class="vl" x="149.6" y="165.3" text-anchor="middle" fill="var(--m-b4c)">2210 м/с</text>
+<rect x="167.3" y="186.3" width="81.3" height="311.4" fill="var(--m-b4c)" fill-opacity="0.82" stroke="var(--m-b4c)" stroke-width="1.5"/>
+<text class="lb" x="207.9" y="347.0" text-anchor="middle">3</text>
+<text class="dm" x="207.9" y="513.8" text-anchor="middle">9,033</text>
+<rect x="248.5" y="269.1" width="228.6" height="228.6" fill="var(--m-lif)" fill-opacity="0.82" stroke="var(--m-lif)" stroke-width="1.5"/>
+<text class="lb" x="362.9" y="388.4" text-anchor="middle">4</text>
+<text class="dm" x="362.9" y="513.8" text-anchor="middle">25,4</text>
+<line x1="58" y1="497.8" x2="497.2" y2="497.8" stroke="var(--axis)" stroke-width="1.2" stroke-dasharray="10 4 2 4"/>
 <text class="ax" x="54" y="501.8" text-anchor="end">r = 0</text>
-<text class="ax" x="508.3" y="501.8">z</text>
+<text class="ax" x="501.2" y="501.8">z</text>
 <text class="ax" x="26" y="300.9" text-anchor="middle" transform="rotate(-90 26 300.9)">r, мм</text>
+<circle cx="247.6" cy="496.9" r="4.5" fill="var(--moni)" stroke="var(--surface-1)" stroke-width="1.5"/>
+<line x1="247.6" y1="488.9" x2="247.6" y2="450.9" stroke="var(--moni)" stroke-width="1.2"/>
+<text class="mn" x="247.6" y="444.9" text-anchor="middle">монитор</text>
+<text class="mn" x="247.6" y="458.9" text-anchor="middle" style="font-weight:400;font-size:9.5px">на оси</text>
 <line x1="70" y1="407.8" x2="76" y2="407.8" stroke="var(--dim)" stroke-width="1"/>
 <text class="dm" x="66" y="411.1" text-anchor="end">10</text>
 <line x1="70" y1="317.8" x2="76" y2="317.8" stroke="var(--dim)" stroke-width="1"/>
@@ -50,17 +55,18 @@ svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
 <text class="dm" x="66" y="231.2" text-anchor="end">30</text>
 <line x1="70" y1="104.0" x2="76" y2="104.0" stroke="var(--dim)" stroke-width="1"/>
 <text class="dm" x="66" y="107.4" text-anchor="end">43,75</text>
-<line x1="488.3" y1="104.0" x2="498.3" y2="104.0" stroke="var(--dim)" stroke-width="1"/>
-<text class="dm" x="502.3" y="107.4">R = 43,75 (тело 1)</text>
-<line x1="488.3" y1="186.3" x2="498.3" y2="186.3" stroke="var(--dim)" stroke-width="1"/>
-<text class="dm" x="502.3" y="189.7">R = 34,6 (тела 2, 3)</text>
-<line x1="488.3" y1="269.1" x2="498.3" y2="269.1" stroke="var(--dim)" stroke-width="1"/>
-<text class="dm" x="502.3" y="272.5">R = 25,4 (тело 4)</text>
+<line x1="481.2" y1="104.0" x2="491.2" y2="104.0" stroke="var(--dim)" stroke-width="1"/>
+<text class="dm" x="495.2" y="107.4">R = 43,75 (тело 1)</text>
+<line x1="481.2" y1="186.3" x2="491.2" y2="186.3" stroke="var(--dim)" stroke-width="1"/>
+<text class="dm" x="495.2" y="189.7">R = 34,6 (тела 2, 3)</text>
+<line x1="481.2" y1="269.1" x2="491.2" y2="269.1" stroke="var(--dim)" stroke-width="1"/>
+<text class="dm" x="495.2" y="272.5">R = 25,4 (тело 4)</text>
 <rect x="78" y="534.75" width="12" height="12" rx="2" fill="var(--m-pu)" fill-opacity="0.82"/>
-<text class="lg" x="96" y="544.75">1 — полиуретан 626, itype 8, ρ₀ = 626</text>
+<text class="lg" x="96" y="544.75">1 — полиуретановая подложка, itype 8, ρ₀ = 640 кг/м³</text>
 <rect x="78" y="554.75" width="12" height="12" rx="2" fill="var(--m-b4c)" fill-opacity="0.82"/>
-<text class="lg" x="96" y="564.75">2, 3 — карбид бора B4C, itype 10, ρ₀ = 2510</text>
+<text class="lg" x="96" y="564.75">2, 3 — карбид бора B4C (Eagle Picher), itype 10, ρ₀ = 2517 кг/м³</text>
 <rect x="78" y="574.75" width="12" height="12" rx="2" fill="var(--m-lif)" fill-opacity="0.82"/>
-<text class="lg" x="96" y="584.75">4 — фторид лития LiF, itype 5, ρ₀ = 2638</text>
-<text class="dm" x="78" y="623">Числа под осью — толщина тела, мм. Зазоры между телами: 0,2 / 0,8 / 0,2 мм. Удар вдоль z слева направо</text>
+<text class="lg" x="96" y="584.75">4 — окно из фторида лития LiF, itype 5, ρ₀ = 2640 кг/м³</text>
+<text class="dm" x="78" y="627">Числа под осью — толщина тела, мм. Тела 1 и 2 летят как единый снаряд; тела 3 и 4 покоятся. Удар вдоль z слева направо.</text>
+<text class="dm" x="78" y="643">Тела в контакте: искусственных зазоров нет. Монитор — на оси, у тыльной поверхности тела 3 (граница с окном), как в опыте.</text>
 </svg>
