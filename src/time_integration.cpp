@@ -27,7 +27,8 @@ double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, si
     return min_dt;
 }
 // Основная функция временной интеграции
-void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x)
+void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x,
+                      RunGuard* guard)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
@@ -304,5 +305,14 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         std::ofstream file("log.txt", std::ios::app);
         file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
         file.close();
+
+        // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе
+        // шага крутится бесконечно: время задачи практически не растёт, а
+        // признаков зависания для ОС нет. Причина обрыва остаётся в guard.
+        if (guard != nullptr && guard->should_stop(dt, time, t_total))
+        {
+            std::cerr << guard->message() << std::endl;
+            break;
+        }
     }
 }

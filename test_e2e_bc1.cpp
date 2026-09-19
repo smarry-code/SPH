@@ -537,6 +537,9 @@ struct RunSettings
     bool   silence = true;
     bool   check_frames_flag = true;
     bool   keep_workdir = false;   // --keep-workdir: не удалять каталог прогона
+    // Бюджет времени на один прогон, с. Сторож (run_guard.hpp) обрывает расчёт
+    // и говорит, чего именно не хватило — времени или продвижения.
+    double wall_limit_s = 600.0;   // 10 минут
 };
 
 struct RunResult
@@ -549,6 +552,9 @@ struct RunResult
     double t_reached = 0.0;
     double dt_last = 0.0;
     size_t steps = 0;
+    // Исход сторожа: None — расчёт дошёл до t_total сам.
+    RunGuard::Reason guard_reason = RunGuard::Reason::None;
+    std::string guard_message;
     std::string workdir;           // каталог прогона (существует только при --keep-workdir)
 };
 
@@ -607,10 +613,17 @@ RunResult run_case(const RunSettings& rs)
     double dt = compute_cfl_timestep(cfg, sys, ntotal);
     double time = 0.0;
 
+    // Сторож: бюджет времени + детектор застоя. Потолок «шагов до финиша»
+    // 2e6 подобран так, чтобы не задевать здоровый расчёт (BC1 при dx = 2e-4
+    // финиширует за ~1.4e3 шагов), но ловить коллапс: при dt ~ 1e-12 остаток
+    // оценивается в ~2.6e6 шагов. Терпение 200 шагов — чтобы одиночный
+    // просадочный шаг не считался застоем.
+    RunGuard guard(rs.wall_limit_s, 2.0e6, 200);
+
     try
     {
         ScopedSilence silence(rs.silence);
-        time_integration(cfg, sys, ntotal, dt, time, rs.delta_x);
+        time_integration(cfg, sys, ntotal, dt, time, rs.delta_x, &guard);
     }
     catch (const std::exception& e)
     {
@@ -638,6 +651,11 @@ RunResult run_case(const RunSettings& rs)
     }
     res.t_reached = time;
     res.dt_last = dt;
+    res.guard_reason = guard.reason();
+    if (guard.triggered())
+    {
+        res.guard_message = guard.message();
+    }
 
     std::string err;
     res.curve = read_curve(wd.dir() / "log.txt", err);
@@ -717,6 +735,25 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
            << " (t_total = " << rs.t_total << "), последний dt = " << r.dt_last;
         note(os.str());
     }
+    // Сторож времени/застоя. Проверяется ПЕРВЫМ: если он сработал, все
+    // последующие проверки говорят об оборванном прогоне, и без этой строки
+    // причина обрыва из отчёта не видна.
+    if (r.guard_reason == RunGuard::Reason::WallClock)
+    {
+        check(false, "сторож: расчёт не уложился в бюджет времени (шаг здоров — "
+                     "не хватило именно времени)\n" + r.guard_message);
+    }
+    else if (r.guard_reason == RunGuard::Reason::Stalled)
+    {
+        check(false, "сторож: расчёт перестал продвигаться (коллапс шага — "
+                     "увеличение бюджета не поможет)\n" + r.guard_message);
+    }
+    else
+    {
+        note("сторож не срабатывал: расчёт завершился сам, в пределах бюджета "
+             + std::to_string(static_cast<long>(rs.wall_limit_s)) + " с");
+    }
+
     // §4.4: расчёт дошёл до t_total, а не оборвался раньше.
     check(r.t_reached >= rs.t_total, "§4.4 расчёт дошёл до t_total");
     check(r.steps > 0, "§4.4 выполнен хотя бы один шаг");
@@ -1090,7 +1127,10 @@ void print_usage()
         "  --full            полный кейс: delta_x = 2e-4, t_total = 3e-6 + сценарии §6\n"
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
         "  --verbose         не глушить вывод конвейера\n"
-        "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n");
+        "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n"
+        "  --time-limit=СЕК  бюджет времени на прогон (по умолчанию 600 = 10 мин;\n"
+        "                    0 — без ограничения). При исчерпании расчёт обрывается\n"
+        "                    с разбором: не хватило времени или коллапс шага\n");
 }
 
 } // namespace
@@ -1101,6 +1141,7 @@ int main(int argc, char** argv)
     bool emit = false;
     bool verbose = false;
     bool keep_workdir = false;
+    double wall_limit_s = 600.0;   // 10 минут на прогон
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -1108,6 +1149,19 @@ int main(int argc, char** argv)
         else if (a == "--emit-reference") emit = true;
         else if (a == "--verbose") verbose = true;
         else if (a == "--keep-workdir") keep_workdir = true;
+        else if (a.rfind("--time-limit=", 0) == 0)
+        {
+            try
+            {
+                wall_limit_s = std::stod(a.substr(std::strlen("--time-limit=")));
+            }
+            catch (const std::exception&)
+            {
+                std::fprintf(stderr, "Неверное значение --time-limit: %s\n", a.c_str());
+                return 2;
+            }
+            if (wall_limit_s < 0.0) wall_limit_s = 0.0;   // 0 — без ограничения
+        }
         else if (a == "-h" || a == "--help") { print_usage(); return 0; }
         else
         {
@@ -1126,6 +1180,7 @@ int main(int argc, char** argv)
     rs.t_total = full ? 3e-6 : 3e-7;
     rs.silence = !verbose;
     rs.keep_workdir = keep_workdir;
+    rs.wall_limit_s = wall_limit_s;
 
     if (emit)
     {

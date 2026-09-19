@@ -8,9 +8,16 @@
 #include "ppochnost.hpp"
 #include "buffers.hpp"
 #include "simulation_config.hpp"
+#include "run_guard.hpp"
 
 // Вычисление шага по времени из условия Куранта.
 double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal);
 
 // Основной цикл временной интеграции.
-void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x);
+// guard — необязательный сторож времени/застоя (см. run_guard.hpp). nullptr
+// (по умолчанию) — цикл идёт до t_total, как и прежде. Если сторож сработал,
+// цикл прерывается досрочно, а причина остаётся в самом guard: вызывающая
+// сторона обязана проверить guard->triggered() — сам по себе выход из
+// time_integration об успехе не свидетельствует.
+void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x,
+                      RunGuard* guard = nullptr);

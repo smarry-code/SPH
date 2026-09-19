@@ -116,7 +116,12 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # Smoke-режим (ТЗ §5): в прогоне ctest по умолчанию, цель по времени < 30 с.
-add_test(NAME e2e_bc1_smoke_test COMMAND test_e2e_bc1)
+# Два рубежа защиты от зависания, именно в таком порядке:
+#   --time-limit — внутренний сторож (run_guard.hpp). Срабатывает ПЕРВЫМ и даёт
+#                  разбор: не хватило времени или расчёт перестал продвигаться.
+#   TIMEOUT      — жёсткий рубеж CTest на случай, если откажет сам сторож
+#                  (например, зависание внутри одного шага, куда он не заглядывает).
+add_test(NAME e2e_bc1_smoke_test COMMAND test_e2e_bc1 --time-limit=120)
 set_tests_properties(e2e_bc1_smoke_test PROPERTIES LABELS "e2e" TIMEOUT 300)
 
 # Полный режим (ТЗ §5): минуты, поэтому по умолчанию НЕ регистрируется.
@@ -125,8 +130,8 @@ set_tests_properties(e2e_bc1_smoke_test PROPERTIES LABELS "e2e" TIMEOUT 300)
 #  CTest не умеет «зарегистрирован, но по умолчанию не запускается», поэтому
 #  регистрация гейтится опцией сборки.)
 if(SPH_E2E_SLOW_TESTS)
-    add_test(NAME e2e_bc1_full_test COMMAND test_e2e_bc1 --full)
-    set_tests_properties(e2e_bc1_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 7200)
+    add_test(NAME e2e_bc1_full_test COMMAND test_e2e_bc1 --full --time-limit=600)
+    set_tests_properties(e2e_bc1_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 900)
 endif()
 
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
