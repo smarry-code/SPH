@@ -6,8 +6,12 @@
 #include <stdexcept>
 #include <string>
 
-void virt_part(ParticleSystem& sys, size_t ntotal, size_t& nvirt)
+void virt_part(ParticleSystem& sys, size_t ntotal, size_t& nvirt, size_t maxn)
 {
+    // Запас под зеркальные частицы ограничен и полями частиц, и массивами
+    // производных: берём меньшее. maxn == 0 — вызывающая сторона не сообщила
+    // предел, тогда ориентируемся только на размер системы.
+    const size_t capacity = (maxn > 0 && maxn < sys.size()) ? maxn : sys.size();
 
     // Инициализация nvirt
     nvirt = 0;
@@ -18,14 +22,16 @@ void virt_part(ParticleSystem& sys, size_t ntotal, size_t& nvirt)
             if (sys.x[0][i] < 2 * sys.hsml[i])
             {
                 // Зеркальные частицы пишутся ЗА реальными, в запас [ntotal, maxn).
-                // Запас выделяет вызывающая сторона (main.cpp: maxn = ntotal*1.4).
-                // Без этой проверки переполнение было бы тихим выходом за границы.
+                // Граница — min(sys.size(), maxn): по sys.size() размерены поля
+                // частиц, по maxn — массивы производных в time_integration.
+                // Выход за меньшую из них — тихая порча памяти, поэтому
+                // проверяется именно она, а не одна из двух «по договорённости».
                 const size_t dst = ntotal + nvirt;
-                if (dst >= sys.size())
+                if (dst >= capacity)
                 {
                     throw std::runtime_error(
                         "virt_part: не хватает места под зеркальные частицы (нужен индекс "
-                        + std::to_string(dst) + ", размер системы " + std::to_string(sys.size())
+                        + std::to_string(dst) + ", доступно " + std::to_string(capacity)
                         + "); увеличьте запас maxn");
                 }
                 sys.inzializ_2d_symm_index(dst, i);

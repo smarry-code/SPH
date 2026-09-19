@@ -96,7 +96,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // проверяется там же, поэтому при dim == 1 вызов даёт nvirt = 0).
     if (virtual_part)
     {
-        virt_part(sys, ntotal, nvirt);
+        virt_part(sys, ntotal, nvirt, cfg.maxn);
     }
 
     // Рабочие массивы охватывают реальные И виртуальные частицы: все узлы

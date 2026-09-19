@@ -15,14 +15,14 @@
 //   3. Ни одного NaN/Inf в x, vx, rho, p на каждом сохранённом кадре; rho > 0,
 //      mass > 0 на всех кадрах (§4.4) — кадры читаются из sph_output_*.txt,
 //      которые пишет сам конвейер.
-//   4. Кривая vx[0][moni] сверяется с эталоном (§4.3): интерполяция на общую
+//   4. Кривая vx[1][moni] (осевая) сверяется с эталоном (§4.3): интерполяция на общую
 //      сетку, метрики rel_l2 и max_abs_dev.
 //   5. Известное ограничение D2=A: контакт не видит пару B4C<->B4C (§6).
 //   6. Отсутствие побочных эффектов в рабочем каталоге (§7).
 //
 // РЕЖИМЫ (§5):
 //   без аргументов  — smoke (delta_x = 8e-4, t_total = 3e-7), цель < 30 с;
-//   --full          — полный кейс (delta_x = 2e-4, t_total = 3e-6) + контактные
+//   --full          — полный кейс (delta_x = 2e-4, t_total из конфига) + контактные
 //                     сценарии §6;
 //   --emit-reference— напечатать эталон текущего режима в stdout (см. шапку
 //                     tests/data/bc2_reference.txt);
@@ -48,6 +48,7 @@
 #include "input.hpp"
 #include "time_integration.hpp"
 #include "ext_force.hpp"
+#include "int_force.hpp"   // urs() — диспетчер УРС для init_eos_state
 
 static_assert(dim == 2, "test_e2e_bc2 требует сборки с -DSPH_DIM=2 (решение E1, ТЗ §2)");
 static_assert(axis_sim, "test_e2e_bc2 требует axis_sim = true (осесимметричная постановка BC2)");
@@ -234,6 +235,21 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
     return g;
 }
 
+// Начальные p и c через штатный диспетчер УРС.
+// Без этого sys.c остаётся нулевым после inzializ_index, и самый первый
+// compute_cfl_timestep считает шаг как CFL*h/|v| — без скорости звука, то есть
+// примерно впятеро завышенным. Конвейер заполняет c только внутри int_force,
+// то есть уже ПОСЛЕ того, как этим шагом сделан первый полный шаг.
+// Диспетчер берётся общий с конвейером (int_force.hpp), чтобы соответствие
+// itype -> УРС не разъезжалось с продовым кодом.
+void init_eos_state(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal)
+{
+    for (size_t i = 0; i < ntotal; ++i)
+    {
+        urs(cfg.mats, sys, i);
+    }
+}
+
 // ===========================================================================
 // 2. Кривая и компаратор (ТЗ §4.3)
 // ===========================================================================
@@ -246,7 +262,7 @@ struct Curve
     bool empty() const { return t.empty(); }
 };
 
-// Чтение файла формата log.txt / эталона: три поля «время vx[0] itype»,
+// Чтение файла формата log.txt / эталона: три поля «время vx[1] itype»,
 // строки с '#' и пустые — комментарии. Возможен UTF-8 BOM в начале (его пишет
 // main.cpp в реальный log.txt).
 Curve read_curve(const fs::path& p, std::string& err)
@@ -642,6 +658,9 @@ RunResult run_case(const RunSettings& rs)
     // бессмысленен (в contact_force_type = 3 он вошёл бы в импульс первого
     // шага). Берём тот же критерий Куранта, которым конвейер пересчитывает
     // шаг дальше. Решение сверх E1-E3, зафиксировано здесь.
+    // Порядок важен: c заполняется УРС, и только потом считается шаг —
+    // иначе критерий Куранта остался бы без скорости звука (см. init_eos_state).
+    init_eos_state(cfg, sys, ntotal);
     double dt = compute_cfl_timestep(cfg, sys, ntotal);
     double time = 0.0;
 
@@ -865,7 +884,7 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
         double amp = 0.0;
         for (double v : r.curve.v) amp = std::max(amp, std::fabs(v));
         std::ostringstream os;
-        os << "max|vx[0][moni]| по расчёту = " << amp << " м/с"
+        os << "max|vx[1][moni]| по расчёту = " << amp << " м/с"
            << "; оценка времени смыкания слоёв 2/3 = "
            << (4.0 * rs.delta_x / 2210.0) << " с";
         note(os.str());
@@ -1019,8 +1038,8 @@ void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
     std::printf("# Эталон для end-to-end теста BC2 (удар по карбиду бора)\n");
     std::printf("#\n");
     std::printf("# СГЕНЕРИРОВАНО: test_e2e_bc2 %s--emit-reference\n", full ? "--full " : "");
-    std::printf("# Формат: <время, с>  <vx[0][moni_particle], м/с>  <itype[moni_particle]>\n");
-    std::printf("# (ровно формат time_integration.cpp:304-305 и BC2/log_*.txt)\n");
+    std::printf("# Формат: <время, с>  <vx[1][moni_particle], м/с>  <itype[moni_particle]>\n");
+    std::printf("# (ровно формат time_integration.cpp и BC2/log_*.txt)\n");
     std::printf("#\n");
     std::printf("# ПАРАМЕТРЫ ПОСТАНОВКИ\n");
     std::printf("#   режим:                 %s\n", full ? "full" : "smoke");
@@ -1041,7 +1060,7 @@ void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
     std::printf("#   rel_l2       < %g\n", kTolRelL2);
     std::printf("#   max_abs_dev  < %g м/с\n", kTolMaxDev);
     std::printf("#\n");
-    std::printf("# ДАННЫЕ (время  vx[0]  itype)\n");
+    std::printf("# ДАННЫЕ (время  vx[1]  itype)\n");
     for (size_t i = 0; i < r.curve.t.size(); ++i)
     {
         std::printf("%.17g %.17g %d\n", r.curve.t[i], r.curve.v[i], r.curve.itype[i]);
@@ -1110,7 +1129,7 @@ void check_against_reference(const RunResult& r, bool full)
     std::printf("  info : покрытие = %.1f %%, узлов сетки = %zu\n", c.coverage * 100.0, kNodes);
     if (c.ref_amplitude == 0.0)
     {
-        // Вырожденный эталон: на всём диапазоне vx[0][moni] тождественно нулевой.
+        // Вырожденный эталон: на всём диапазоне vx[1][moni] тождественно нулевой.
         // Сравнение формально проходит, но НИЧЕГО не проверяет. Для smoke-режима
         // это штатная ситуация: при t_total = 3e-7 волна до монитора не доходит
         // (ТЗ §5 требует от smoke только «конвейер не падает, нет NaN»).
@@ -1168,7 +1187,7 @@ void print_usage()
     std::printf(
         "Использование: test_e2e_bc2 [--full] [--emit-reference] [--verbose]\n"
         "  (без аргументов)  smoke-режим: delta_x = 8e-4, t_total = 3e-7\n"
-        "  --full            полный кейс: delta_x = 2e-4, t_total = 3e-6 + сценарии §6\n"
+        "  --full            полный кейс: delta_x = 2e-4, t_total из конфига + сценарии §6\n"
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
         "  --verbose         не глушить вывод конвейера\n"
         "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n"

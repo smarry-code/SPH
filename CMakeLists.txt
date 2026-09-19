@@ -132,8 +132,13 @@ set_tests_properties(e2e_bc2_smoke_test PROPERTIES LABELS "e2e" TIMEOUT 300)
 #  CTest не умеет «зарегистрирован, но по умолчанию не запускается», поэтому
 #  регистрация гейтится опцией сборки.)
 if(SPH_E2E_SLOW_TESTS)
-    add_test(NAME e2e_bc2_full_test COMMAND test_e2e_bc2 --full --time-limit=600)
-    set_tests_properties(e2e_bc2_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 900)
+    # --full делает ЧЕТЫРЕ прогона: базовый + три контактных сценария §6.
+    # --time-limit — бюджет НА ОДИН прогон, поэтому жёсткий рубеж CTest должен
+    # покрывать их сумму с запасом, иначе он срабатывает раньше сторожа и
+    # обещанный порядок («сторож первым, с разбором причины») нарушается:
+    # 4 x 300 с = 1200 с бюджета сторожа < 1800 с TIMEOUT.
+    add_test(NAME e2e_bc2_full_test COMMAND test_e2e_bc2 --full --time-limit=300)
+    set_tests_properties(e2e_bc2_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 1800)
 endif()
 
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.

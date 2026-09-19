@@ -3,6 +3,9 @@
 // Объявления — в density.hpp.
 #include "density.hpp"
 
+#include <stdexcept>
+#include <string>
+
 // Функция вычисления плотности через SPH-суммирование
 void sum_density(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, size_t niac, const std::vector<size_t>& pair_i, const std::vector<size_t>& pair_j, const std::vector<double>& w)
 {
@@ -244,6 +247,22 @@ void con_density(const SimulationConfig& cfg, const ParticleSystem& sys, size_t 
     {
         for (size_t i = 0; i < ntotal; ++i)
         {
+            // Здесь ntotal = ntotal + nvirt: диапазон включает зеркальные
+            // частицы, у которых r < 0 ПО ПОСТРОЕНИЮ, и для них член корректен
+            // (v_r и r меняют знак вместе, отношение сохраняется). Поэтому
+            // проверяется только истинная особенность r == 0: деление дало бы
+            // Inf, который разошёлся бы по полям и проявился много позже и
+            // далеко от причины. Клампы, удерживавшие осевые частицы
+            // (time_integration.cpp, ветка sys.axis), закомментированы,
+            // поэтому это состояние достижимо. Падаем в точке возникновения.
+            if (px[0][i] == 0.0)
+            {
+                throw std::runtime_error(
+                    "con_density: частица " + std::to_string(i) + " с r = "
+                    + std::to_string(px[0][i]) + " == 0 (itype "
+                    + std::to_string(sys.itype[i])
+                    + "): осевой член неразрывности не определён");
+            }
             drhodt[i] -= prho[i] * pvx[0][i] / px[0][i];
         }
     }
