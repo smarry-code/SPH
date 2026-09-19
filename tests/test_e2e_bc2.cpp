@@ -37,6 +37,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -1067,6 +1068,264 @@ void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
     }
 }
 
+// ===========================================================================
+// 7a. График «расчёт против эталона» (--emit-plot)
+// ===========================================================================
+//
+// Рисуется из тех же данных, что уже лежат в памяти теста: r.curve — кривая
+// прогона, эталон — reference_path(full). Отдельного разбора файлов и внешнего
+// скрипта не требуется, поэтому график не может разойтись с тем, что проверил
+// компаратор.
+//
+// Включается ТОЛЬКО флагом --emit-plot=<путь>. По умолчанию выключено
+// намеренно: тест следит за отсутствием побочных эффектов в рабочем каталоге
+// (§7, check_no_side_effects), обязан работать на checkout только для чтения и
+// запускаться параллельно. Запись в дерево исходников — осознанное действие
+// владельца, а не следствие прогона тестов.
+
+// Число в русской типографике: запятая как десятичный разделитель и неразрывные
+// пробелы по три разряда. График — часть русскоязычного отчёта, и «0.2 мм»
+// рядом с «0,2 мм» в тексте выглядит как разные величины.
+std::string ru_num(double value, int precision)
+{
+    std::ostringstream s;
+    s.setf(std::ios::fixed);
+    s.precision(precision);
+    s << value;
+    std::string out = s.str();
+
+    const size_t dot = out.find('.');
+    std::string head = (dot == std::string::npos) ? out : out.substr(0, dot);
+    const std::string tail = (dot == std::string::npos) ? std::string() : out.substr(dot + 1);
+
+    const bool negative = !head.empty() && head[0] == '-';
+    if (negative) head.erase(0, 1);
+    for (size_t pos = head.size(); pos > 3;)
+    {
+        pos -= 3;
+        head.insert(pos, " ");   // неразрывный пробел
+    }
+    if (negative) head.insert(0, "-");
+
+    return tail.empty() ? head : head + "," + tail;
+}
+
+// Согласование существительного с числом: 1 частица, 2 частицы, 5 частиц.
+// Нужно потому, что ntotal и число шагов меняются от прогона к прогону, и
+// зашитая форма («34 163 частицы») при другом delta_x станет неверной.
+const char* ru_plural(size_t n, const char* one, const char* few, const char* many)
+{
+    const size_t mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 14) return many;
+    switch (n % 10)
+    {
+        case 1:          return one;
+        case 2: case 3:
+        case 4:          return few;
+        default:         return many;
+    }
+}
+
+// Прореживание: на N интервалов, в каждом сохраняются первая точка и точки
+// минимума/максимума. Полка и пики выживают, файл не раздувается.
+Curve thin_curve(const Curve& c, size_t buckets = 500)
+{
+    if (c.t.size() <= buckets) return c;
+    Curve out;
+    const double t0 = c.t.front(), t1 = c.t.back();
+    const double step = (t1 - t0) / static_cast<double>(buckets);
+    if (!(step > 0.0)) return c;
+
+    size_t k = 0;
+    double edge = t0 + step;
+    while (k < c.t.size())
+    {
+        size_t lo = k, hi = k, first = k;
+        while (k < c.t.size() && c.t[k] <= edge)
+        {
+            if (c.v[k] < c.v[lo]) lo = k;
+            if (c.v[k] > c.v[hi]) hi = k;
+            ++k;
+        }
+        if (k == first)   // ни одна точка не попала в интервал — двигаем границу
+        {
+            edge += step;
+            continue;
+        }
+        std::array<size_t, 3> pick{first, lo, hi};
+        std::sort(pick.begin(), pick.end());
+        size_t prev = static_cast<size_t>(-1);
+        for (size_t idx : pick)
+        {
+            if (idx == prev) continue;
+            prev = idx;
+            out.t.push_back(c.t[idx]);
+            out.v.push_back(c.v[idx]);
+            out.itype.push_back(c.itype[idx]);
+        }
+        edge += step;
+    }
+    // Последняя точка кривой должна попасть на график всегда.
+    if (!out.t.empty() && out.t.back() != c.t.back())
+    {
+        out.t.push_back(c.t.back());
+        out.v.push_back(c.v.back());
+        out.itype.push_back(c.itype.back());
+    }
+    return out;
+}
+
+void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
+{
+    std::printf("\n[график] %s\n", out_path.string().c_str());
+
+    if (r.curve.empty())
+    {
+        std::printf("  info : кривая расчёта пуста, график не построен\n");
+        return;
+    }
+
+    std::string err;
+    Curve ref;
+    const fs::path ref_path = reference_path(full);
+    if (fs::exists(ref_path))
+    {
+        ref = read_curve(ref_path, err);
+        if (!err.empty())
+        {
+            std::printf("  info : эталон не прочитан (%s), рисуется только расчёт\n", err.c_str());
+            ref = Curve{};
+        }
+    }
+    else
+    {
+        std::printf("  info : эталона нет (%s), рисуется только расчёт\n", ref_path.string().c_str());
+    }
+
+    const Curve calc = thin_curve(r.curve);
+
+    // Пределы осей. Потолок по Y — ближайшее сверху кратное 300, чтобы линии
+    // сетки попадали на круглые значения и кривая не упиралась в рамку.
+    double vmax = 0.0, tmax = 0.0;
+    for (size_t i = 0; i < calc.t.size(); ++i) { vmax = std::max(vmax, calc.v[i]); tmax = std::max(tmax, calc.t[i]); }
+    for (size_t i = 0; i < ref.t.size();  ++i) { vmax = std::max(vmax, ref.v[i]);  tmax = std::max(tmax, ref.t[i]);  }
+    const double kGrid = 300.0;
+    double ymax = std::ceil(std::max(vmax, 1.0) * 1.08 / kGrid) * kGrid;
+    const double xmax_us = std::max(tmax * 1e6, 1e-9) * 1.02;
+
+    constexpr double W = 880.0, H = 470.0;
+    constexpr double ML = 68.0, MR = 24.0, MT = 58.0, MB = 56.0;
+    const double PW = W - ML - MR, PH = H - MT - MB;
+
+    const auto sx = [&](double t_us) { return ML + t_us / xmax_us * PW; };
+    const auto sy = [&](double v) { return MT + PH - std::min(std::max(v, 0.0), ymax) / ymax * PH; };
+
+    std::ostringstream os;
+    os.setf(std::ios::fixed);
+    const auto path_of = [&](const Curve& c)
+    {
+        std::ostringstream d;
+        d.setf(std::ios::fixed);
+        d.precision(1);
+        for (size_t i = 0; i < c.t.size(); ++i)
+        {
+            d << (i == 0 ? 'M' : 'L') << sx(c.t[i] * 1e6) << ',' << sy(c.v[i]) << ' ';
+        }
+        return d.str();
+    };
+
+    os << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 880 470\" width=\"880\" height=\"470\" "
+          "role=\"img\" aria-label=\"Осевая скорость частицы-монитора BC2: расчёт и приборный эталон\">\n";
+    // Палитра задаётся токенами на :root-уровне svg и переопределяется для
+    // тёмной темы, поэтому график читается в обеих.
+    os << "<style>\n"
+          "svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;\n"
+          "      --grid:#e4e3df; --axis:#b9b8b2; --calc:#2a78d6; --ref:#0b0b0b;\n"
+          "      font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif; }\n"
+          "@media (prefers-color-scheme: dark) {\n"
+          "  svg { --surface-1:#1a1a19; --text-primary:#ffffff; --text-secondary:#c3c2b7;\n"
+          "        --grid:#333330; --axis:#5a5955; --calc:#3987e5; --ref:#ffffff; }\n"
+          "}\n"
+          ".ttl { fill:var(--text-primary); font-size:15px; font-weight:600; }\n"
+          ".sub { fill:var(--text-secondary); font-size:11.5px; }\n"
+          ".axl { fill:var(--text-secondary); font-size:11px; }\n"
+          ".tik { fill:var(--text-secondary); font-size:10.5px; }\n"
+          ".lbl { font-size:11px; font-weight:600; }\n"
+          ".ln  { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }\n"
+          "</style>\n";
+    os.precision(1);
+    os << "<rect width=\"880\" height=\"470\" fill=\"var(--surface-1)\"/>\n";
+    os << "<text class=\"ttl\" x=\"" << ML << "\" y=\"24\">Осевая скорость частицы-монитора, кейс BC2</text>\n";
+    os << "<text class=\"sub\" x=\"" << ML << "\" y=\"41\">"
+       << "Тыльная поверхность неподвижной пластины B4C, r = 12,5 мм. Расчёт: delta_x = "
+       << ru_num(r.geom.delta_x * 1e3, 1) << " мм, "
+       << ru_num(static_cast<double>(r.geom.ntotal), 0) << " "
+       << ru_plural(r.geom.ntotal, "частица", "частицы", "частиц") << ", "
+       << ru_num(static_cast<double>(r.steps), 0) << " "
+       << ru_plural(r.steps, "шаг", "шага", "шагов") << "</text>\n";
+
+    for (double v = 0.0; v <= ymax + 1e-9; v += kGrid)
+    {
+        const double y = sy(v);
+        os << "<line x1=\"" << ML << "\" y1=\"" << y << "\" x2=\"" << (ML + PW) << "\" y2=\"" << y
+           << "\" stroke=\"var(--grid)\" stroke-width=\"1\"/>\n";
+        os << "<text class=\"tik\" x=\"" << (ML - 10) << "\" y=\"" << (y + 3.6)
+           << "\" text-anchor=\"end\">" << ru_num(v, 0) << "</text>\n";
+    }
+    for (double t = 0.0; t <= xmax_us + 1e-9; t += 0.5)
+    {
+        os << "<text class=\"tik\" x=\"" << sx(t) << "\" y=\"" << (MT + PH + 18)
+           << "\" text-anchor=\"middle\">" << ru_num(t, 1) << "</text>\n";
+    }
+    os << "<line x1=\"" << ML << "\" y1=\"" << (MT + PH) << "\" x2=\"" << (ML + PW) << "\" y2=\"" << (MT + PH)
+       << "\" stroke=\"var(--axis)\" stroke-width=\"1\"/>\n";
+    os << "<text class=\"axl\" x=\"" << (ML + PW / 2) << "\" y=\"" << (H - 14)
+       << "\" text-anchor=\"middle\">время, мкс</text>\n";
+    os << "<text class=\"axl\" x=\"18\" y=\"" << (MT + PH / 2) << "\" text-anchor=\"middle\" "
+       << "transform=\"rotate(-90 18 " << (MT + PH / 2) << ")\">осевая скорость, м/с</text>\n";
+
+    if (!ref.empty())
+    {
+        os << "<path class=\"ln\" d=\"" << path_of(ref)
+           << "\" stroke=\"var(--ref)\" stroke-dasharray=\"6 4\" opacity=\"0.85\"/>\n";
+    }
+    os << "<path class=\"ln\" d=\"" << path_of(calc) << "\" stroke=\"var(--calc)\" stroke-width=\"2.5\"/>\n";
+
+    const double lx = ML + 18, ly = MT + 16;
+    os << "<line x1=\"" << lx << "\" y1=\"" << ly << "\" x2=\"" << (lx + 26) << "\" y2=\"" << ly
+       << "\" stroke=\"var(--calc)\" stroke-width=\"2.5\"/>\n";
+    os << "<text class=\"lbl\" x=\"" << (lx + 33) << "\" y=\"" << (ly + 4) << "\" fill=\"var(--calc)\">расчёт</text>\n";
+    if (!ref.empty())
+    {
+        os << "<line x1=\"" << lx << "\" y1=\"" << (ly + 19) << "\" x2=\"" << (lx + 26) << "\" y2=\"" << (ly + 19)
+           << "\" stroke=\"var(--ref)\" stroke-width=\"2\" stroke-dasharray=\"6 4\" opacity=\"0.85\"/>\n";
+        os << "<text class=\"lbl\" x=\"" << (lx + 33) << "\" y=\"" << (ly + 23)
+           << "\" fill=\"var(--text-primary)\">эталон (прибор)</text>\n";
+    }
+    os << "</svg>\n";
+
+    std::error_code ec;
+    if (out_path.has_parent_path()) fs::create_directories(out_path.parent_path(), ec);
+    std::ofstream f(out_path, std::ios::binary | std::ios::trunc);
+    if (!f)
+    {
+        std::printf("  FAIL : не удалось открыть файл для записи графика\n");
+        ++failures;
+        return;
+    }
+    const std::string svg = os.str();
+    f << svg;
+    f.close();
+    if (!f)
+    {
+        std::printf("  FAIL : ошибка записи графика\n");
+        ++failures;
+        return;
+    }
+    std::printf("  ok   : график записан (%zu точек расчёта, %zu эталона, %zu байт)\n",
+                calc.t.size(), ref.t.size(), svg.size());
+}
+
 void check_against_reference(const RunResult& r, bool full)
 {
     // Эталон — приборная запись, начинающаяся в 1.51 мкс. Smoke считает до
@@ -1191,6 +1450,11 @@ void print_usage()
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
         "  --verbose         не глушить вывод конвейера\n"
         "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n"
+        "  --emit-plot=<f>   записать SVG «расчёт против эталона» в файл f.\n"
+        "                    По умолчанию выключено: тест не оставляет побочных\n"
+        "                    эффектов (§7) и должен работать на checkout только\n"
+        "                    для чтения. Готовая цель сборки: cmake --build build\n"
+        "                    --target bc2_plot\n"
         "  --time-limit=СЕК  бюджет времени на прогон (по умолчанию 600 = 10 мин;\n"
         "                    0 — без ограничения). При исчерпании расчёт обрывается\n"
         "                    с разбором: не хватило времени или коллапс шага\n");
@@ -1204,6 +1468,7 @@ int main(int argc, char** argv)
     bool emit = false;
     bool verbose = false;
     bool keep_workdir = false;
+    fs::path plot_path;            // пуст — график не строится (см. emit_plot)
     double wall_limit_s = 600.0;   // 10 минут на прогон
     for (int i = 1; i < argc; ++i)
     {
@@ -1212,6 +1477,20 @@ int main(int argc, char** argv)
         else if (a == "--emit-reference") emit = true;
         else if (a == "--verbose") verbose = true;
         else if (a == "--keep-workdir") keep_workdir = true;
+        else if (a.rfind("--emit-plot=", 0) == 0)
+        {
+            plot_path = a.substr(std::strlen("--emit-plot="));
+            if (plot_path.empty())
+            {
+                std::fprintf(stderr, "--emit-plot= требует путь к файлу\n");
+                return 2;
+            }
+        }
+        else if (a == "--emit-plot")
+        {
+            std::fprintf(stderr, "--emit-plot требует путь: --emit-plot=<файл.svg>\n");
+            return 2;
+        }
         else if (a.rfind("--time-limit=", 0) == 0)
         {
             try
@@ -1301,6 +1580,8 @@ int main(int argc, char** argv)
         std::printf("\n[§4.4] Здоровье расчёта\n");
         check_run_health(r, rs);
         check_against_reference(r, full);
+        // После сверки: график строится из той же кривой, что её прошла.
+        if (!plot_path.empty()) emit_plot(r, full, plot_path);
     }
 
     if (r.ok)

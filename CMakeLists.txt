@@ -141,6 +141,32 @@ if(SPH_E2E_SLOW_TESTS)
     set_tests_properties(e2e_bc2_full_test PROPERTIES LABELS "slow;e2e" TIMEOUT 1800)
 endif()
 
+# Перестройка графика для отчёта contact/06-e2e-case.md:
+#     cmake --build build --target bc2_plot
+# Полный прогон (минуты) + запись SVG из кривой, которую только что проверил
+# компаратор, поэтому график не может разойтись с приведёнными в отчёте метриками.
+#
+# Почему отдельная цель, а не часть прогона тестов: запись в дерево исходников —
+# побочный эффект. Тест обязан его не иметь (он это сам и проверяет, §7
+# check_no_side_effects), обязан работать на checkout только для чтения и
+# допускать параллельный ctest. Поэтому --emit-plot выключен по умолчанию,
+# ни одна зарегистрированная ctest-цель его не передаёт, а обновление картинки
+# остаётся осознанным действием владельца.
+set(SPH_BC2_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e/bc2_monitor_velocity.svg"
+    CACHE FILEPATH "Куда цель bc2_plot записывает график BC2")
+# Прогон идёт через cmake -P: цель должна выжить при неудаче теста по существу
+# расчёта, если график при этом записан (подробности — в cmake/bc2_plot.cmake).
+add_custom_target(bc2_plot
+    COMMAND ${CMAKE_COMMAND}
+            -DSPH_PLOT_EXE=$<TARGET_FILE:test_e2e_bc2>
+            "-DSPH_PLOT_OUT=${SPH_BC2_PLOT}"
+            -DSPH_PLOT_TIME_LIMIT=300
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/bc2_plot.cmake"
+    DEPENDS test_e2e_bc2
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMENT "Полный прогон BC2 и перестройка ${SPH_BC2_PLOT}"
+    USES_TERMINAL VERBATIM)
+
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
 add_executable(bench_color bench_color.cpp)
 target_include_directories(bench_color PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
