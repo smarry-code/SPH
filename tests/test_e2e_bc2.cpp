@@ -100,9 +100,14 @@ void note(const std::string& what)
 //     целочисленные счётчики: число частиц больше не зависит от накопленной
 //     ошибки округления double на границе диапазона;
 //   - `moni_particle = 12973` (глобал, которого больше нет) заменён на
-//     геометрическое правило, воспроизводящее тот же индекс при delta_x = 2e-4
-//     и осмысленное при любом другом шаге (см. pick_moni_particle);
+//     геометрическое правило (см. pick_moni_particle);
 //   - sys.axis заполняется после resize (std::vector<char>, bool-семантика).
+//
+// Приведение постановки к статье-источнику эталона (Grady & Moody,
+// SAND96-0551, опыт BC2 = оригинальный тест CE6): узлы по центрам ячеек со
+// своим шагом в каждом слое, контактная сборка без зазоров, монитор на оси,
+// плотности и упругие константы B4C марки Eagle Picher. Подробности — в
+// комментариях к bc2_layers, cell_count и pick_moni_particle.
 
 struct LayerSpec
 {
@@ -124,62 +129,81 @@ struct Bc2Geometry
     std::array<size_t, 4> layer_count{};
     std::array<size_t, 4> layer_nr{};
     std::array<size_t, 4> layer_nz{};
+    // Фактические шаги решётки внутри слоя. Отличаются от delta_x, потому что
+    // слой разбивается на ЦЕЛОЕ число ячеек, а его номинальная толщина в общем
+    // случае не кратна delta_x (слой 2: 3.917 мм при delta_x = 0.2 мм).
+    std::array<double, 4> layer_dr{};
+    std::array<double, 4> layer_dz{};
 };
 
-// Число узлов сетки lo, lo+dx, ... <= hi.
-// Относительный допуск 1e-9 нужен там, где (hi-lo)/dx — целое в точной
-// арифметике (слой 4 по z даёт ровно 126.0): без него узел на границе то
-// попадает, то не попадает в диапазон в зависимости от округления.
-size_t grid_count(double lo, double hi, double dx)
+// Разбиение отрезка длиной L на целое число ячеек, ближайшее к L/dx.
+// Узлы ставятся по ЦЕНТРАМ ячеек: lo + (i + 0.5)*d, i = 0..n-1, d = L/n.
+// Зачем именно центры ячеек:
+//   - слой воспроизводит свою НОМИНАЛЬНУЮ толщину точно (узловая схема
+//     lo + i*dx отбрасывала хвост короче dx: слой 2 при dx = 0.2 мм давал
+//     3.600 мм вместо 3.917 мм — на 8 % короче, то есть короче был и
+//     нагружающий импульс);
+//   - соседние слои получаются в КОНТАКТЕ без искусственных зазоров:
+//     последний узел слоя и первый узел следующего отстоят ровно на шаг
+//     решётки, то есть ровно так же, как два соседних узла внутри слоя.
+size_t cell_count(double L, double dx)
 {
-    if (hi < lo) return 0;
-    const double n = std::floor((hi - lo) / dx + 1.0 + 1e-9);
-    return n <= 0.0 ? 0u : static_cast<size_t>(n);
+    if (!(L > 0.0) || !(dx > 0.0)) return 1;
+    const long n = std::lround(L / dx);
+    return n < 1 ? 1u : static_cast<size_t>(n);
 }
 
-std::array<LayerSpec, 4> bc2_layers(double dx)
+std::array<LayerSpec, 4> bc2_layers()
 {
-    // Опорные плоскости (ТЗ §1.1) — как в оригинальном блоке input.cpp.
+    // Опорные плоскости. Толщины и радиусы подтверждены статьёй-источником
+    // эталона: Grady & Moody, SAND96-0551, «Shock Compression Profiles in
+    // Ceramics» (1996), опыт BC2 (в статье — тест CE6).
+    //
+    // ВНИМАНИЕ: постановка ниже СОЗНАТЕЛЬНО расходится с закомментированным
+    // блоком в src/input.cpp:490-596, из которого она когда-то была перенесена.
+    // Блок в input.cpp не изменяется (ТЗ §1.4) и остаётся историческим
+    // свидетельством, а не источником истины. Расхождения и их основание:
+    //   - зазоры между слоями (+dx, +4dx, +5dx) УБРАНЫ: по статье сборка
+    //     контактная, зазоров не задано, а прежние зазоры к тому же зависели
+    //     от разрешения сетки (0.2 мм при dx = 0.2 мм против 0.8 мм при
+    //     dx = 0.8 мм) — то есть постановка менялась вместе с сеткой;
+    //   - плотности приведены к статье: подложка 626 -> 640, B4C 2510 -> 2517,
+    //     LiF 2638 -> 2640 кг/м^3;
+    //   - летящая пластина B4C даёт ровно 3.917 мм (см. cell_count), тогда как
+    //     узловая схема оригинала обрезала её до 3.600 мм.
     const double Z1 = 0.006;
     const double Z2 = Z1 + 0.003917;   // 0.009917
     const double Z3 = Z2 + 0.009033;   // 0.018950
     const double Z4 = Z3 + 0.0254;     // 0.044350
     return std::array<LayerSpec, 4>{{
-        // r_hi,     z_lo,          z_hi,            itype, rho,  vz,     name
-        {0.04375,  0.0,           0.006,             8,   626.0, 2210.0, "ударник (полиуретан 626)"},
-        {0.0346,   Z1 + dx,       Z2,               10,  2510.0, 2210.0, "керамика летящая (B4C)"},
-        {0.0346,   Z2 + 4.0 * dx, Z3 + 4.0 * dx,    10,  2510.0,    0.0, "керамика покоящаяся (B4C)"},
-        {0.0254,   Z3 + 5.0 * dx, Z4 + 4.0 * dx,     5,  2638.0,    0.0, "окно (LiF)"},
+        // r_hi,     z_lo,  z_hi,  itype, rho,     vz,     name
+        {0.04375,  0.0,   Z1,      8,    640.0, 2210.0, "ударник (полиуретан 626)"},
+        {0.0346,   Z1,    Z2,     10,   2517.0, 2210.0, "керамика летящая (B4C)"},
+        {0.0346,   Z2,    Z3,     10,   2517.0,    0.0, "керамика покоящаяся (B4C)"},
+        {0.0254,   Z3,    Z4,      5,   2640.0,    0.0, "окно (LiF)"},
     }};
 }
 
 // Точка съёма эталонной кривой.
-// В оригинале был литерал moni_particle = 12973. Разбор индекса при
-// delta_x = 2e-4: слой 3 начинается с 10076, n_z = 46, значит
-// 12973 = 10076 + 62*46 + 45 — это последний узел по z (тыльная поверхность
-// покоящейся керамики, граница с окном) на радиусе r = 62.5*dx = 0.0125 м.
-// Правило ниже воспроизводит именно эту точку и остаётся осмысленным при
-// любом delta_x (иначе в smoke-режиме индекс 12973 просто вне диапазона).
-constexpr double kMoniRadius = 0.0125;
-
+// Статья (SAND96-0551, BC2 = CE6) фиксирует место измерения: «at the center of
+// the ceramic/window interface», то есть НА ОСИ. Поэтому берётся внутренний
+// столбец решётки, ir = 0 (r = 0.5*dr), и последний узел по z в слое 3 —
+// тыльная поверхность покоящейся керамики, граница с окном.
+//
+// Прежнее правило искало столбец, ближайший к r = 12.5 мм: так был устроен
+// литерал moni_particle = 12973 из оригинального блока input.cpp. Это не
+// «центр интерфейса», а точка на половине радиуса; статья такой точки не
+// упоминает. Ось — самая шумная зона осесимметричного SPH, но выбор диктует
+// постановка эксперимента, а не удобство численной кривой.
 size_t pick_moni_particle(const Bc2Geometry& g)
 {
-    const size_t n_r = g.layer_nr[2];
     const size_t n_z = g.layer_nz[2];
-    size_t best_ir = 0;
-    double best_err = 1e300;
-    for (size_t ir = 0; ir < n_r; ++ir)
-    {
-        const double r = (0.5 + static_cast<double>(ir)) * g.delta_x;
-        const double err = std::fabs(r - kMoniRadius);
-        if (err < best_err) { best_err = err; best_ir = ir; }
-    }
-    return g.layer_begin[2] + best_ir * n_z + (n_z - 1);
+    return g.layer_begin[2] + (n_z - 1);
 }
 
 Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
 {
-    const auto layers = bc2_layers(delta_x);
+    const auto layers = bc2_layers();
 
     Bc2Geometry g;
     g.delta_x = delta_x;
@@ -188,10 +212,12 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
     size_t total = 0;
     for (size_t L = 0; L < layers.size(); ++L)
     {
-        const size_t n_r = grid_count(0.5 * delta_x, layers[L].r_hi, delta_x);
-        const size_t n_z = grid_count(layers[L].z_lo, layers[L].z_hi, delta_x);
+        const size_t n_r = cell_count(layers[L].r_hi, delta_x);
+        const size_t n_z = cell_count(layers[L].z_hi - layers[L].z_lo, delta_x);
         g.layer_nr[L] = n_r;
         g.layer_nz[L] = n_z;
+        g.layer_dr[L] = layers[L].r_hi / static_cast<double>(n_r);
+        g.layer_dz[L] = (layers[L].z_hi - layers[L].z_lo) / static_cast<double>(n_z);
         g.layer_begin[L] = total;
         g.layer_count[L] = n_r * n_z;
         total += n_r * n_z;
@@ -206,13 +232,15 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
     for (size_t L = 0; L < layers.size(); ++L)
     {
         const LayerSpec& s = layers[L];
+        const double dr = g.layer_dr[L];
+        const double dz = g.layer_dz[L];
         for (size_t ir = 0; ir < g.layer_nr[L]; ++ir)
         {
-            const double r = (0.5 + static_cast<double>(ir)) * delta_x;
+            const double r = (0.5 + static_cast<double>(ir)) * dr;
             for (size_t iz = 0; iz < g.layer_nz[L]; ++iz)
             {
-                const double z = s.z_lo + static_cast<double>(iz) * delta_x;
-                sys.axis[k]  = (std::fabs(r) <= 0.5 * delta_x) ? 1 : 0;
+                const double z = s.z_lo + (0.5 + static_cast<double>(iz)) * dz;
+                sys.axis[k]  = (std::fabs(r) <= 0.5 * dr) ? 1 : 0;
                 sys.hsml[k]  = 2.0 * delta_x;
                 sys.u[k]     = 0.0;
                 sys.p[k]     = 0.0;
@@ -226,7 +254,10 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
                 // Плоская формула массы — из раскомментированной строки
                 // оригинала. Два осесимметричных варианта там закомментированы
                 // и намеренно не переносятся (менять постановку — не задача теста).
-                sys.mass[k]  = s.rho * delta_x * delta_x;
+                // Шаги берутся фактические, по слою: при dr != dz != delta_x
+                // произведение delta_x*delta_x дало бы массу, не отвечающую
+                // занимаемой частицей ячейке.
+                sys.mass[k]  = s.rho * dr * dz;
                 ++k;
             }
         }
@@ -733,32 +764,48 @@ RunResult run_case(const RunSettings& rs)
 
 void report_geometry(const Bc2Geometry& g, bool full)
 {
-    const auto layers = bc2_layers(g.delta_x);
+    const auto layers = bc2_layers();
     for (size_t L = 0; L < 4; ++L)
     {
         std::ostringstream os;
         os << "слой " << (L + 1) << " (" << layers[L].name << "): "
            << g.layer_nr[L] << " x " << g.layer_nz[L] << " = " << g.layer_count[L]
-           << ", [" << g.layer_begin[L] << ", " << (g.layer_begin[L] + g.layer_count[L]) << ")";
+           << ", [" << g.layer_begin[L] << ", " << (g.layer_begin[L] + g.layer_count[L]) << ")"
+           << ", dr = " << (g.layer_dr[L] * 1e3) << " мм, dz = " << (g.layer_dz[L] * 1e3) << " мм"
+           << ", толщина = " << (static_cast<double>(g.layer_nz[L]) * g.layer_dz[L] * 1e3) << " мм";
         note(os.str());
     }
     {
         std::ostringstream os;
-        os << "ntotal = " << g.ntotal << ", moni_particle = " << g.moni_particle;
+        os << "ntotal = " << g.ntotal << ", moni_particle = " << g.moni_particle
+           << ", r(moni) = " << (0.5 * g.layer_dr[2] * 1e3) << " мм (ось)";
         note(os.str());
+    }
+
+    // Ключевая величина постановки: толщина ЛЕТЯЩЕЙ пластины B4C задаёт
+    // длительность нагружающего импульса (статья: 3.917 мм). Узловая схема
+    // до приведения к статье давала здесь 3.600 мм.
+    {
+        const double h2_mm = static_cast<double>(g.layer_nz[1]) * g.layer_dz[1] * 1e3;
+        std::ostringstream os;
+        os << "толщина слоя 2 (летящая B4C) = " << std::setprecision(10) << h2_mm
+           << " мм (статья: 3.917 мм)";
+        check(std::fabs(h2_mm - 3.917) < 1e-9, os.str());
     }
 
     if (full)
     {
         // §1.2: ожидаемое число частиц при delta_x = 2e-4.
-        check(g.layer_count[0] == 6789,  "§1.2 слой 1 = 6789 частиц");
-        check(g.layer_count[1] == 3287,  "§1.2 слой 2 = 3287 частиц");
-        check(g.layer_count[2] == 7958,  "§1.2 слой 3 = 7958 частиц");
+        // Числа пересчитаны после перехода на узлы по центрам ячеек и снятия
+        // зазоров между слоями (прежние: 6789 / 3287 / 7958 / 16129,
+        // ntotal = 34163, moni = 12973 — они отвечали постановке с зазорами
+        // и обрезанной летящей пластиной).
+        check(g.layer_count[0] == 6570,  "§1.2 слой 1 = 6570 частиц");
+        check(g.layer_count[1] == 3460,  "§1.2 слой 2 = 3460 частиц");
+        check(g.layer_count[2] == 7785,  "§1.2 слой 3 = 7785 частиц");
         check(g.layer_count[3] == 16129, "§1.2 слой 4 = 16129 частиц");
-        check(g.ntotal == 34163,         "§1.2 ntotal = 34163");
-        // Целочисленный счётчик (§1.3) обязан дать тот же moni, что литерал
-        // 12973 в оригинальном блоке.
-        check(g.moni_particle == 12973,  "§1.3 moni_particle = 12973 (как в оригинале)");
+        check(g.ntotal == 33944,         "§1.2 ntotal = 33944");
+        check(g.moni_particle == 10074,  "§1.3 moni_particle = 10074 (ось, тыл слоя 3)");
     }
     else
     {
@@ -766,11 +813,11 @@ void report_geometry(const Bc2Geometry& g, bool full)
         // правилом при delta_x = 8e-4 и зафиксированы, чтобы изменение
         // геометрии не прошло незамеченным.
         check(g.layer_count[0] == 440, "smoke слой 1 = 440 частиц");
-        check(g.layer_count[1] == 172, "smoke слой 2 = 172 частицы");
-        check(g.layer_count[2] == 516, "smoke слой 3 = 516 частиц");
-        check(g.layer_count[3] == 992, "smoke слой 4 = 992 частиц");
-        check(g.ntotal == 2120,        "smoke ntotal = 2120");
-        check(g.moni_particle == 803,  "smoke moni_particle = 803");
+        check(g.layer_count[1] == 215, "smoke слой 2 = 215 частиц");
+        check(g.layer_count[2] == 473, "smoke слой 3 = 473 частицы");
+        check(g.layer_count[3] == 1024, "smoke слой 4 = 1024 частицы");
+        check(g.ntotal == 2152,        "smoke ntotal = 2152");
+        check(g.moni_particle == 665,  "smoke moni_particle = 665");
     }
 
     // moni обязан попасть в слой 3 (покоящаяся керамика) — §1.2.
@@ -877,17 +924,22 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
 
     // Амплитуда снятой кривой. Если она нулевая — волна до монитора не дошла,
     // и сверка с эталоном (§4.3) вырождается в сравнение нулей. Для smoke это
-    // штатно: зазор между слоями 2 и 3 равен 4*delta_x, время его закрытия
-    // 4*delta_x/2210 (при delta_x = 8e-4 это 1.4e-6 с, то есть больше
-    // smoke-t_total = 3e-7 с).
+    // штатно: сборка контактная, удар происходит при t = 0, но волне нужно
+    // пройти покоящуюся керамику (9.033 мм) до монитора на её тыльной
+    // поверхности. При продольной скорости звука в B4C ~1.4e4 м/с это ~6.4e-7 с,
+    // то есть больше smoke-t_total = 3e-7 с.
     if (!r.curve.empty())
     {
         double amp = 0.0;
         for (double v : r.curve.v) amp = std::max(amp, std::fabs(v));
+        // Продольная скорость звука в B4C по упругим константам Eagle Picher
+        // (materials.hpp): sqrt((K + 4G/3)/rho) = sqrt((230.5e9 + 4*199.4e9/3)/2517).
+        constexpr double kCl_B4C = 14043.0;   // м/с
+        constexpr double kCeramicThickness = 0.009033;   // м, покоящаяся керамика
         std::ostringstream os;
         os << "max|vx[1][moni]| по расчёту = " << amp << " м/с"
-           << "; оценка времени смыкания слоёв 2/3 = "
-           << (4.0 * rs.delta_x / 2210.0) << " с";
+           << "; оценка времени прихода волны к монитору = "
+           << (kCeramicThickness / kCl_B4C) << " с";
         note(os.str());
     }
 
@@ -911,7 +963,7 @@ void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
     // (а) доказательство на самой геометрии: слои 2 и 3 целиком itype = 10,
     //     поэтому критерий itype[i] != itype[j] не может сработать ни на одной
     //     паре между ними — независимо от их положений на любом шаге.
-    const auto layers = bc2_layers(g.delta_x);
+    const auto layers = bc2_layers();
     check(layers[1].itype == 10 && layers[2].itype == 10,
           "§6 слои 2 и 3 — оба itype = 10, критерий D2=A между ними неприменим");
 
@@ -932,7 +984,7 @@ void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
         {
             sys.hsml[i] = h;
             sys.mass[i] = 1e-3;
-            sys.rho[i] = 2510.0;
+            sys.rho[i] = 2517.0;   // B4C по статье (см. bc2_layers)
             sys.c[i] = 1e4;
             sys.x[0][i] = 0.0;
             sys.x[1][i] = 0.0;
@@ -1257,7 +1309,8 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
     os << "<rect width=\"880\" height=\"470\" fill=\"var(--surface-1)\"/>\n";
     os << "<text class=\"ttl\" x=\"" << ML << "\" y=\"24\">Осевая скорость частицы-монитора, кейс BC2</text>\n";
     os << "<text class=\"sub\" x=\"" << ML << "\" y=\"41\">"
-       << "Тыльная поверхность неподвижной пластины B4C, r = 12,5 мм. Расчёт: delta_x = "
+       << "Тыльная поверхность неподвижной пластины B4C, r = "
+       << ru_num(0.5 * r.geom.layer_dr[2] * 1e3, 2) << " мм (ось). Расчёт: delta_x = "
        << ru_num(r.geom.delta_x * 1e3, 1) << " мм, "
        << ru_num(static_cast<double>(r.geom.ntotal), 0) << " "
        << ru_plural(r.geom.ntotal, "частица", "частицы", "частиц") << ", "

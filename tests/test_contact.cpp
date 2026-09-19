@@ -34,9 +34,12 @@ void check(bool cond, const char* what)
 void test_shear_modulus_registry()
 {
     Materials m;
-    // M1: itype 4, 10, 11 -> 26e9, 197e9, 1.165e11
+    // M1: itype 4, 10, 11 -> 26e9, 199.4e9, 1.165e11
+    // Для itype 10 (B4C) значение обновлено вместе с materials.hpp: упругие
+    // константы приведены к марке Eagle Picher (SAND96-0551), G = 197e9 ->
+    // 199.4e9. Проверка здесь — про диспетчеризацию по itype, а не про физику.
     check(rel_close(shear_modulus_by_itype(m, 4), 26e9), "M1 itype 4 -> 26e9");
-    check(rel_close(shear_modulus_by_itype(m, 10), 197e9), "M1 itype 10 -> 197e9");
+    check(rel_close(shear_modulus_by_itype(m, 10), 199.4e9), "M1 itype 10 -> 199.4e9");
     check(rel_close(shear_modulus_by_itype(m, 11), 1.165e11), "M1 itype 11 -> 1.165e11");
 
     // M2: itype 1, 2, 12, 99, -3 -> 0.0 (без выхода за границы массивов)
