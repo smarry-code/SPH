@@ -3,6 +3,9 @@
 // Объявление — в virt_part.hpp.
 #include "virt_part.hpp"
 
+#include <stdexcept>
+#include <string>
+
 void virt_part(ParticleSystem& sys, size_t ntotal, size_t& nvirt)
 {
 
@@ -14,7 +17,18 @@ void virt_part(ParticleSystem& sys, size_t ntotal, size_t& nvirt)
         {
             if (sys.x[0][i] < 2 * sys.hsml[i])
             {
-                sys.inzializ_2d_symm_index(nvirt + ntotal, i);
+                // Зеркальные частицы пишутся ЗА реальными, в запас [ntotal, maxn).
+                // Запас выделяет вызывающая сторона (main.cpp: maxn = ntotal*1.4).
+                // Без этой проверки переполнение было бы тихим выходом за границы.
+                const size_t dst = ntotal + nvirt;
+                if (dst >= sys.size())
+                {
+                    throw std::runtime_error(
+                        "virt_part: не хватает места под зеркальные частицы (нужен индекс "
+                        + std::to_string(dst) + ", размер системы " + std::to_string(sys.size())
+                        + "); увеличьте запас maxn");
+                }
+                sys.inzializ_2d_symm_index(dst, i);
                 nvirt++;
             }
         }

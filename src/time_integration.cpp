@@ -39,22 +39,29 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
     const size_t print_step = cfg.print_step;
     const double save_t = cfg.save_t;
     const size_t moni_particle = cfg.moni_particle;
-    // Инициализация переменных
-    std::vector<std::vector<double>> av(dim, std::vector<double>(ntotal, 0.0));
-    std::vector<std::vector<double>> dx(dim, std::vector<double>(ntotal, 0.0));
-    std::vector<std::vector<double>> dvx(dim, std::vector<double>(ntotal, 0.0)); // Полное ускорение
-    std::vector<double> du(ntotal, 0.0);  // Скорость изменения удельной внутренней
-    std::vector<double> drho(ntotal, 0.0);
-    std::vector<double> ds(ntotal, 0.0);
-    std::vector<double> t(ntotal, 0.0);
-    std::vector<double> tdsdt(ntotal, 0.0);
+    // Инициализация переменных.
+    // Массивы производных охватывают реальные И виртуальные частицы: single_step
+    // вызывает узлы конвейера с ntotal + nvirt, и int_force/art_visc/av_vel
+    // индексируют эти массивы всем диапазоном. Число зеркальных частиц
+    // определяется каждый шаг заново, поэтому берётся запас maxn — он для того
+    // и заводится (main.cpp: maxn = ntotal * 1.4 «под возможные виртуальные
+    // частицы»). Интегрируются по-прежнему только реальные частицы [0, ntotal).
+    const size_t nbuf = (cfg.maxn > ntotal) ? cfg.maxn : ntotal;
+    std::vector<std::vector<double>> av(dim, std::vector<double>(nbuf, 0.0));
+    std::vector<std::vector<double>> dx(dim, std::vector<double>(nbuf, 0.0));
+    std::vector<std::vector<double>> dvx(dim, std::vector<double>(nbuf, 0.0)); // Полное ускорение
+    std::vector<double> du(nbuf, 0.0);  // Скорость изменения удельной внутренней
+    std::vector<double> drho(nbuf, 0.0);
+    std::vector<double> ds(nbuf, 0.0);
+    std::vector<double> t(nbuf, 0.0);
+    std::vector<double> tdsdt(nbuf, 0.0);
 
-    std::vector<double> dsxx(ntotal, 0.0);
-    std::vector<double> dsyy(ntotal, 0.0);
-    std::vector<double> dszz(ntotal, 0.0);
-    std::vector<double> dsxy(ntotal, 0.0);
-    std::vector<double> dsyz(ntotal, 0.0);
-    std::vector<double> dsxz(ntotal, 0.0);
+    std::vector<double> dsxx(nbuf, 0.0);
+    std::vector<double> dsyy(nbuf, 0.0);
+    std::vector<double> dszz(nbuf, 0.0);
+    std::vector<double> dsxy(nbuf, 0.0);
+    std::vector<double> dsyz(nbuf, 0.0);
+    std::vector<double> dsxz(nbuf, 0.0);
 
     std::vector<double> sxx_min(ntotal, 0.0);
     std::vector<double> syy_min(ntotal, 0.0);

@@ -83,28 +83,40 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     const int coloring_niac_threshold = cfg.coloring_niac_threshold;
     const size_t print_step = cfg.print_step;
 
-    // Инициализация массивов без виртуальных частиц
-    std::vector<double> avdudt(ntotal, 0.0);
-    std::vector<double> ahdudt(ntotal, 0.0);
-    std::vector<std::vector<double>> indvxdt(dim, std::vector<double>(ntotal, 0.0));
-    std::vector<std::vector<double>> ardvxdt(dim, std::vector<double>(ntotal, 0.0));
-    std::vector<std::vector<double>> exdvxdt(dim, std::vector<double>(ntotal, 0.0));
+    size_t niac = 0;
+    size_t nvirt = 0;
+    double s1, s2 = 0.0;
+
+    // Генерация виртуальных (зеркальных) частиц у оси симметрии — ДО выделения
+    // рабочих массивов, потому что их размер зависит от nvirt.
+    // При axis_sim && dim == 2 приосевой столбец иначе считается с неполным
+    // носителем ядра: соседей со стороны r < 0 нет, и осевой член rho*v_r/r
+    // в уравнении неразрывности (density.cpp) ничем не уравновешен.
+    // Отбор и зеркалирование — внутри virt_part (условие axis_sim && dim == 2
+    // проверяется там же, поэтому при dim == 1 вызов даёт nvirt = 0).
+    if (virtual_part)
+    {
+        virt_part(sys, ntotal, nvirt);
+    }
+
+    // Рабочие массивы охватывают реальные И виртуальные частицы: все узлы
+    // конвейера ниже вызываются с ntotal + nvirt и индексируют массивы этим
+    // диапазоном. Пока virt_part был отключён, nvirt был тождественно нулём и
+    // размера ntotal хватало; с его восстановлением ntotal привёл бы к выходу
+    // за границы во всех потребителях сразу.
+    const size_t nall = ntotal + nvirt;
+    std::vector<double> avdudt(nall, 0.0);
+    std::vector<double> ahdudt(nall, 0.0);
+    std::vector<std::vector<double>> indvxdt(dim, std::vector<double>(nall, 0.0));
+    std::vector<std::vector<double>> ardvxdt(dim, std::vector<double>(nall, 0.0));
+    std::vector<std::vector<double>> exdvxdt(dim, std::vector<double>(nall, 0.0));
 
     std::vector<size_t> pair_i(max_interaction);
     std::vector<size_t> pair_j(max_interaction);
     std::vector<double> w(max_interaction);
     std::vector<std::vector<double>> dwdx(dim, std::vector<double>(max_interaction, 0.0));
-    std::vector<int> ns(ntotal, 0);
-    std::vector<double> eta(ntotal, 0.0);
-    size_t niac = 0;
-    size_t nvirt = 0;
-    double s1, s2 = 0.0;
-    // Генерация виртуальных частиц
-    /*if (axis_sim == true && dim == 2)
-    {
-        virt_part(sys, itimestep, ntotal, nvirt);
-    }*/
-    //virt_part(sys, ntotal, nvirt);
+    std::vector<int> ns(nall, 0);
+    std::vector<double> eta(nall, 0.0);
     // Поиск соседей
     if (nnps == 1)
     {
