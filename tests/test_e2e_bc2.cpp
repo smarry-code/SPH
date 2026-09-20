@@ -25,10 +25,23 @@
 //   5. Известное ограничение D2=A: контакт не видит пару B4C<->B4C (§6).
 //   6. Отсутствие побочных эффектов в рабочем каталоге (§7).
 //
+// ОДИН ПРОГОН — ОДИН ТИП КОНТАКТА (--contact-type=0..3).
+// Раньше один запуск делал базовый прогон и следом три сценария §6, и обрыв
+// любого из них останавливал разбор остальных, а в отчёте ctest всё это было
+// одним тестом: по «провален» нельзя было сказать, что именно сломалось.
+// Теперь тип выбирается аргументом, а перебор делает НАБОР тестов — по одному
+// на тип. Каждый падает и читается независимо.
+//   contact_force_type = 0 — базовая постановка, только она сверяется с
+//     приборным эталоном (§4.3);
+//   1..3 — контактные сценарии §6, с них ТЗ требует лишь устойчивости.
+//
+// СВОДНЫЙ ГРАФИК. Четыре типа — четыре процесса, поэтому в одном из них все
+// кривые не собрать. Каждый прогон выгружает свою кривую (--emit-curve), а
+// --plot-from рисует их вместе, уже без расчёта. Готовая цель: bc2_plot.
+//
 // РЕЖИМЫ (§5):
 //   без аргументов  — smoke (delta_x = 8e-4, t_total = 3e-7), цель < 30 с;
-//   --full          — полный кейс (delta_x = 2e-4, t_total из конфига) + контактные
-//                     сценарии §6;
+//   --full          — полный кейс (delta_x = 2e-4, t_total из конфига);
 //   --emit-reference— напечатать эталон текущего режима в stdout (см. шапку
 //                     tests/data/bc2_reference.txt);
 //   --verbose       — не глушить вывод конвейера.
@@ -54,6 +67,7 @@
 #include "input.hpp"
 #include "time_integration.hpp"
 #include "ext_force.hpp"
+#include "contact_force.hpp"   // contact::Off и имена типов контактной силы
 #include "int_force.hpp"   // urs() — диспетчер УРС для init_eos_state
 
 static_assert(dim == 2, "test_e2e_bc2 требует сборки с -DSPH_DIM=2 (решение E1, ТЗ §2)");
@@ -1124,7 +1138,10 @@ void check_run_health(const RunResult& r, const RunSettings& rs)
 // Тест-документация, а НЕ проверка исправления. Когда будет реализовано
 // D2=B (идентификатор тела в ParticleSystem), ожидания ниже инвертируются:
 // пара «одинаковый материал, разные тела» обязана стать контактной.
-void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
+// Проверяется ограничение ТОГО типа контакта, за который отвечает этот прогон.
+// Прежде функция перебирала типы 1..3 сама; теперь перебор делает набор тестов,
+// по одному прогону на тип, и дублировать его внутри незачем.
+void test_known_limitation_b4c_b4c(const Bc2Geometry& g, int contact_type)
 {
     std::printf("\n[§6] Известное ограничение D2=A: контакт не различает два тела одного материала\n");
 
@@ -1137,9 +1154,15 @@ void test_known_limitation_b4c_b4c(const Bc2Geometry& g)
 
     // (б) операционное подтверждение на ext_force: две перекрывающиеся
     //     частицы B4C дают ноль контактных пар, те же частицы с разными
-    //     материалами — одну.
-    for (int type = 1; type <= 3; ++type)
+    //     материалами — одну. При contact_force_type = 0 контакта нет вовсе,
+    //     и проверять на нём нечего.
+    if (contact_type == contact::Off)
     {
+        note("§6 contact_force_type = 0: контакт выключен, операционная проверка неприменима");
+    }
+    else
+    {
+        const int type = contact_type;
         SimulationConfig cfg;
         cfg.apply_defaults();
         cfg.contact_force_type = type;
@@ -1248,6 +1271,14 @@ void check_no_side_effects(const fs::path& cwd, const DirSnapshot& before)
 // ===========================================================================
 // 7. Эталон
 // ===========================================================================
+
+// Шаг решётки режима. Отдельной функцией, потому что его спрашивают из двух
+// мест: настройка прогона и сборка сводного графика, где расчёта нет, а
+// геометрия всё равно нужна для подписи. Разъехаться они не должны.
+double case_delta_x(bool full)
+{
+    return full ? 2e-4 : 8e-4;
+}
 
 fs::path reference_path(bool full)
 {
@@ -1401,13 +1432,118 @@ Curve thin_curve(const Curve& c, size_t buckets = 500)
     return out;
 }
 
-void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
+// Серия графика — кривая одного сценария контакта.
+//
+// Сценарии разнесены по ОТДЕЛЬНЫМ прогонам теста (по одному на
+// contact_force_type), поэтому в одном процессе все четыре кривые не живут.
+// Каждый прогон выгружает свою кривую в файл (--emit-curve), а рисование —
+// отдельный дешёвый шаг без расчёта (--plot-from). Связь «график не расходится
+// с метриками отчёта» сохраняется: в файл пишется ровно тот объект Curve,
+// который проверил компаратор, без пересчёта и без повторного чтения log.txt.
+struct PlotSeries
+{
+    Curve  curve;
+    int    type    = 0;      // contact_force_type
+    bool   aborted = false;  // прогон не дошёл до t_total
+    size_t steps   = 0;
+};
+
+// Имя файла выгрузки внутри каталога обмена. Фиксировано, потому что по нему
+// --plot-from собирает серии, не получая списка файлов.
+fs::path curve_dump_path(const fs::path& dir, int type)
+{
+    return dir / ("bc2_curve_" + std::to_string(type) + ".txt");
+}
+
+// Формат — тот же, что у эталона и log.txt: <время> <скорость> <itype>.
+// Признаки прогона идут заголовочными комментариями, которые read_curve
+// пропускает, а load_series читает.
+bool write_curve_dump(const PlotSeries& s, const fs::path& path, std::string& err)
+{
+    std::error_code ec;
+    if (path.has_parent_path()) fs::create_directories(path.parent_path(), ec);
+    std::ofstream f(path, std::ios::trunc);
+    if (!f)
+    {
+        err = "не удалось открыть " + path.string();
+        return false;
+    }
+    f << "# Кривая BC2 для сводного графика (см. --plot-from)\n"
+      << "# contact_force_type = " << s.type << "\n"
+      << "# steps = " << s.steps << "\n"
+      << "# aborted = " << (s.aborted ? 1 : 0) << "\n"
+      << "# Формат: <время, с>  <vx[1][moni_particle], м/с>  <itype[moni_particle]>\n";
+    f.precision(12);
+    for (size_t i = 0; i < s.curve.t.size(); ++i)
+    {
+        f << s.curve.t[i] << ' ' << s.curve.v[i] << ' ' << s.curve.itype[i] << '\n';
+    }
+    f.close();
+    if (!f)
+    {
+        err = "ошибка записи " + path.string();
+        return false;
+    }
+    return true;
+}
+
+// Разбор одного числа из строки вида "# ключ = значение".
+bool header_value(const std::string& line, const char* key, long long& out)
+{
+    const std::string pat = std::string("# ") + key + " = ";
+    if (line.rfind(pat, 0) != 0) return false;
+    try { out = std::stoll(line.substr(pat.size())); }
+    catch (const std::exception&) { return false; }
+    return true;
+}
+
+bool load_series(const fs::path& path, PlotSeries& out, std::string& err)
+{
+    out.curve = read_curve(path, err);
+    if (!err.empty()) return false;
+    if (out.curve.empty())
+    {
+        err = "в " + path.string() + " нет точек кривой";
+        return false;
+    }
+    std::ifstream f(path);
+    std::string line;
+    long long v = 0;
+    while (std::getline(f, line))
+    {
+        if (!line.empty() && line[0] != '#') break;
+        if (header_value(line, "contact_force_type", v)) out.type = static_cast<int>(v);
+        else if (header_value(line, "steps", v))         out.steps = static_cast<size_t>(v);
+        else if (header_value(line, "aborted", v))       out.aborted = (v != 0);
+    }
+    return true;
+}
+
+// Названия типов для легенды. Короткие: легенда идёт в одну строку.
+const char* contact_type_name(int type)
+{
+    switch (type)
+    {
+        case 0:  return "выключен";
+        case 1:  return "Пинбол";
+        case 2:  return "Свигл";
+        case 3:  return "импульс";
+        default: return "?";
+    }
+}
+
+// Геометрия передаётся отдельно от прогона: в режиме --plot-from расчёта нет
+// вовсе, а подпись графика всё равно обязана назвать разрешение и число частиц.
+void emit_plot(const Bc2Geometry& geom, const std::vector<PlotSeries>& series,
+               bool full, const fs::path& out_path)
 {
     std::printf("\n[график] %s\n", out_path.string().c_str());
 
-    if (r.curve.empty())
+    bool any_curve = false;
+    for (const PlotSeries& s : series) any_curve = any_curve || !s.curve.empty();
+    if (!any_curve)
     {
-        std::printf("  info : кривая расчёта пуста, график не построен\n");
+        std::printf("  info : кривых расчёта нет, график не построен\n");
         return;
     }
 
@@ -1428,19 +1564,51 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
         std::printf("  info : эталона нет (%s), рисуется только расчёт\n", ref_path.string().c_str());
     }
 
-    const Curve calc = thin_curve(r.curve);
+    std::vector<PlotSeries> plot = series;
+    for (PlotSeries& s : plot) s.curve = thin_curve(s.curve);
+
+    // Стиль серии. Одного цвета мало: типы 0 и 1 на этом кейсе совпадают до
+    // четвёртой значащей цифры, и сплошная линия, нарисованная позже, закрывает
+    // раннюю целиком — легенда обещала бы четыре кривые, а на поле их было бы
+    // три. Поэтому к цвету добавлены штрих и толщина: нижняя сплошная
+    // просматривается сквозь пунктир верхней. Побочно это даёт второй признак
+    // помимо цвета, что нужно и при цветовой слепоте.
+    // Ключ — ТИП, а не место в списке: если какого-то типа нет (прогон не
+    // делали), остальные не должны сменить штрих. Ровно та же причина, по
+    // которой цвет берётся из типа.
+    struct SeriesStyle { double width; const char* dash; };
+    const auto style_of = [](int type) -> SeriesStyle
+    {
+        switch (type & 3)
+        {
+            case 0:  return {3.0, ""};
+            case 1:  return {2.4, "9 6"};
+            case 2:  return {2.0, ""};
+            default: return {2.2, "2.5 4"};
+        }
+    };
 
     // Пределы осей. Потолок по Y — ближайшее сверху кратное 300, чтобы линии
     // сетки попадали на круглые значения и кривая не упиралась в рамку.
     double vmax = 0.0, tmax = 0.0;
-    for (size_t i = 0; i < calc.t.size(); ++i) { vmax = std::max(vmax, calc.v[i]); tmax = std::max(tmax, calc.t[i]); }
+    for (const PlotSeries& s : plot)
+    {
+        for (size_t i = 0; i < s.curve.t.size(); ++i)
+        {
+            vmax = std::max(vmax, s.curve.v[i]);
+            tmax = std::max(tmax, s.curve.t[i]);
+        }
+    }
     for (size_t i = 0; i < ref.t.size();  ++i) { vmax = std::max(vmax, ref.v[i]);  tmax = std::max(tmax, ref.t[i]);  }
     const double kGrid = 300.0;
     double ymax = std::ceil(std::max(vmax, 1.0) * 1.08 / kGrid) * kGrid;
     const double xmax_us = std::max(tmax * 1e6, 1e-9) * 1.02;
 
+    // Поле справа расширено под прямые подписи кривых: в светлой теме аква и
+    // жёлтый идут ниже 3:1 к фону, и подпись у конца кривой — обязательная
+    // страховка, а не украшение. Сверху добавлено место под строку легенды.
     constexpr double W = 880.0, H = 470.0;
-    constexpr double ML = 68.0, MR = 24.0, MT = 58.0, MB = 56.0;
+    constexpr double ML = 68.0, MR = 104.0, MT = 84.0, MB = 56.0;
     const double PW = W - ML - MR, PH = H - MT - MB;
 
     const auto sx = [&](double t_us) { return ML + t_us / xmax_us * PW; };
@@ -1461,22 +1629,26 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
     };
 
     os << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 880 470\" width=\"880\" height=\"470\" "
-          "role=\"img\" aria-label=\"Осевая скорость частицы-монитора BC2: расчёт и приборный эталон\">\n";
+          "role=\"img\" aria-label=\"Осевая скорость частицы-монитора BC2: расчёт при "
+          "contact_force_type 0-3 и приборный эталон\">\n";
     // Палитра задаётся токенами на :root-уровне svg и переопределяется для
     // тёмной темы, поэтому график читается в обеих.
     os << "<style>\n"
           "svg { --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;\n"
-          "      --grid:#e4e3df; --axis:#b9b8b2; --calc:#2a78d6; --ref:#0b0b0b;\n"
+          "      --grid:#e4e3df; --axis:#b9b8b2; --ref:#0b0b0b;\n"
+          "      --s0:#2a78d6; --s1:#eb6834; --s2:#1baf7a; --s3:#eda100;\n"
           "      font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif; }\n"
           "@media (prefers-color-scheme: dark) {\n"
           "  svg { --surface-1:#1a1a19; --text-primary:#ffffff; --text-secondary:#c3c2b7;\n"
-          "        --grid:#333330; --axis:#5a5955; --calc:#3987e5; --ref:#ffffff; }\n"
+          "        --grid:#333330; --axis:#5a5955; --ref:#ffffff;\n"
+          "        --s0:#3987e5; --s1:#d95926; --s2:#199e70; --s3:#c98500; }\n"
           "}\n"
           ".ttl { fill:var(--text-primary); font-size:15px; font-weight:600; }\n"
           ".sub { fill:var(--text-secondary); font-size:11.5px; }\n"
           ".axl { fill:var(--text-secondary); font-size:11px; }\n"
           ".tik { fill:var(--text-secondary); font-size:10.5px; }\n"
-          ".lbl { font-size:11px; font-weight:600; }\n"
+          ".lbl { fill:var(--text-primary); font-size:11px; font-weight:600; }\n"
+          ".leg { fill:var(--text-secondary); font-size:11px; }\n"
           ".ln  { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }\n"
           "</style>\n";
     os.precision(1);
@@ -1484,12 +1656,45 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
     os << "<text class=\"ttl\" x=\"" << ML << "\" y=\"24\">Осевая скорость частицы-монитора, кейс BC2</text>\n";
     os << "<text class=\"sub\" x=\"" << ML << "\" y=\"41\">"
        << "Тыльная поверхность неподвижной пластины B4C, r = "
-       << ru_num(0.5 * r.geom.layer_dr[2] * 1e3, 2) << " мм (ось). Расчёт: delta_x = "
-       << ru_num(r.geom.delta_x * 1e3, 1) << " мм, "
-       << ru_num(static_cast<double>(r.geom.ntotal), 0) << " "
-       << ru_plural(r.geom.ntotal, "частица", "частицы", "частиц") << ", "
-       << ru_num(static_cast<double>(r.steps), 0) << " "
-       << ru_plural(r.steps, "шаг", "шага", "шагов") << "</text>\n";
+       << ru_num(0.5 * geom.layer_dr[2] * 1e3, 2) << " мм (ось). Расчёт: delta_x = "
+       << ru_num(geom.delta_x * 1e3, 1) << " мм, "
+       << ru_num(static_cast<double>(geom.ntotal), 0) << " "
+       << ru_plural(geom.ntotal, "частица", "частицы", "частиц")
+       << ". Крестик — прогон оборван до t_total.</text>\n";
+
+    // Легенда — строкой над полем, колонки с постоянным шагом. Текст носит
+    // текстовые токены, цвет несёт только штрих слева от подписи, поэтому
+    // идентичность не держится на одном цвете.
+    {
+        constexpr double kLegY = 62.0, kLegPitch = 132.0, kLegRule = 22.0, kLegGap = 6.0;
+        // Штрих и толщина в легенде — ровно те же, что у кривой на поле:
+        // иначе легенда опознаёт серию не по тому признаку, по которому её
+        // приходится узнавать на графике.
+        const auto legend_entry = [&](double lx, const std::string& stroke,
+                                      const SeriesStyle& st, bool faded,
+                                      const std::string& text)
+        {
+            os << "<line x1=\"" << lx << "\" y1=\"" << kLegY
+               << "\" x2=\"" << (lx + kLegRule) << "\" y2=\"" << kLegY
+               << "\" stroke=\"" << stroke << "\" stroke-width=\"" << st.width << "\"";
+            if (st.dash[0] != '\0') os << " stroke-dasharray=\"" << st.dash << "\"";
+            if (faded) os << " opacity=\"0.85\"";
+            os << "/>\n";
+            os << "<text class=\"leg\" x=\"" << (lx + kLegRule + kLegGap)
+               << "\" y=\"" << (kLegY + 3.8) << "\">" << text << "</text>\n";
+        };
+        double lx = ML;
+        for (size_t i = 0; i < plot.size(); ++i)
+        {
+            std::ostringstream t;
+            t << "тип " << plot[i].type << " — " << contact_type_name(plot[i].type);
+            legend_entry(lx, "var(--s" + std::to_string(plot[i].type) + ")",
+                         style_of(plot[i].type), false, t.str());
+            lx += kLegPitch;
+        }
+        if (!ref.empty()) legend_entry(lx, "var(--ref)", SeriesStyle{2.0, "6 4"}, true,
+                                       "эталон (прибор)");
+    }
 
     for (double v = 0.0; v <= ymax + 1e-9; v += kGrid)
     {
@@ -1516,18 +1721,78 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
         os << "<path class=\"ln\" d=\"" << path_of(ref)
            << "\" stroke=\"var(--ref)\" stroke-dasharray=\"6 4\" opacity=\"0.85\"/>\n";
     }
-    os << "<path class=\"ln\" d=\"" << path_of(calc) << "\" stroke=\"var(--calc)\" stroke-width=\"2.5\"/>\n";
-
-    const double lx = ML + 18, ly = MT + 16;
-    os << "<line x1=\"" << lx << "\" y1=\"" << ly << "\" x2=\"" << (lx + 26) << "\" y2=\"" << ly
-       << "\" stroke=\"var(--calc)\" stroke-width=\"2.5\"/>\n";
-    os << "<text class=\"lbl\" x=\"" << (lx + 33) << "\" y=\"" << (ly + 4) << "\" fill=\"var(--calc)\">расчёт</text>\n";
-    if (!ref.empty())
+    // Кривые расчёта: стиль — из style_of, тот же, что в легенде.
+    for (size_t i = 0; i < plot.size(); ++i)
     {
-        os << "<line x1=\"" << lx << "\" y1=\"" << (ly + 19) << "\" x2=\"" << (lx + 26) << "\" y2=\"" << (ly + 19)
-           << "\" stroke=\"var(--ref)\" stroke-width=\"2\" stroke-dasharray=\"6 4\" opacity=\"0.85\"/>\n";
-        os << "<text class=\"lbl\" x=\"" << (lx + 33) << "\" y=\"" << (ly + 23)
-           << "\" fill=\"var(--text-primary)\">эталон (прибор)</text>\n";
+        if (plot[i].curve.empty()) continue;
+        const SeriesStyle st = style_of(plot[i].type);
+        os << "<path class=\"ln\" d=\"" << path_of(plot[i].curve)
+           << "\" stroke=\"var(--s" << plot[i].type << ")\" stroke-width=\"" << st.width << "\"";
+        if (st.dash[0] != '\0') os << " stroke-dasharray=\"" << st.dash << "\"";
+        os << "/>\n";
+    }
+
+    // Прямые подписи у концов кривых с разведением по вертикали: цвет в
+    // светлой теме ниже 3:1 у двух слотов, и подпись — обязательная страховка.
+    struct EndLabel
+    {
+        double y_end;     // конец кривой, куда ставится крестик обрыва
+        double y_label;   // та же точка после разведения подписей
+        double x_end;
+        int    type;
+        bool   aborted;
+    };
+    std::vector<EndLabel> ends;
+    for (const PlotSeries& s : plot)
+    {
+        if (s.curve.empty()) continue;
+        const double ye = sy(s.curve.v.back());
+        ends.push_back({ye, ye, sx(s.curve.t.back() * 1e6), s.type, s.aborted});
+    }
+    std::sort(ends.begin(), ends.end(),
+              [](const EndLabel& a, const EndLabel& b) { return a.y_label < b.y_label; });
+    // Разведение по вертикали в два прохода. Один проход вниз недостаточен:
+    // когда кривые кончаются рядом у нижнего края (smoke-режим — все четыре
+    // у нуля), подписи уезжают за рамку на подписи оси времени. Обратный
+    // проход возвращает пачку внутрь поля.
+    constexpr double kLabelMin = 14.0;
+    const double y_lo = MT + 6.0, y_hi = MT + PH - 6.0;
+    for (size_t i = 1; i < ends.size(); ++i)
+    {
+        if (ends[i].y_label - ends[i - 1].y_label < kLabelMin)
+        {
+            ends[i].y_label = ends[i - 1].y_label + kLabelMin;
+        }
+    }
+    if (!ends.empty() && ends.back().y_label > y_hi)
+    {
+        ends.back().y_label = y_hi;
+        for (size_t i = ends.size() - 1; i > 0; --i)
+        {
+            if (ends[i].y_label - ends[i - 1].y_label < kLabelMin)
+            {
+                ends[i - 1].y_label = ends[i].y_label - kLabelMin;
+            }
+        }
+        for (EndLabel& e : ends) e.y_label = std::max(e.y_label, y_lo);
+    }
+    for (const EndLabel& e : ends)
+    {
+        // Крестик в точке обрыва: обрыв — свойство данных и обязан быть виден
+        // на самом графике, а не только в подписи сбоку.
+        if (e.aborted)
+        {
+            os << "<path d=\"M" << (e.x_end - 4) << "," << (e.y_end - 4)
+               << "L" << (e.x_end + 4) << "," << (e.y_end + 4)
+               << "M" << (e.x_end + 4) << "," << (e.y_end - 4)
+               << "L" << (e.x_end - 4) << "," << (e.y_end + 4)
+               << "\" stroke=\"var(--s" << e.type << ")\" stroke-width=\"2\" fill=\"none\"/>\n";
+        }
+        os << "<line x1=\"" << (ML + PW + 6) << "\" y1=\"" << e.y_label
+           << "\" x2=\"" << (ML + PW + 24) << "\" y2=\"" << e.y_label
+           << "\" stroke=\"var(--s" << e.type << ")\" stroke-width=\"2.5\"/>\n";
+        os << "<text class=\"lbl\" x=\"" << (ML + PW + 30) << "\" y=\"" << (e.y_label + 3.8)
+           << "\">тип " << e.type << (e.aborted ? " ✕" : "") << "</text>\n";
     }
     os << "</svg>\n";
 
@@ -1549,8 +1814,11 @@ void emit_plot(const RunResult& r, bool full, const fs::path& out_path)
         ++failures;
         return;
     }
-    std::printf("  ok   : график записан (%zu точек расчёта, %zu эталона, %zu байт)\n",
-                calc.t.size(), ref.t.size(), svg.size());
+    size_t pts = 0;
+    for (const PlotSeries& s : plot) pts += s.curve.t.size();
+    std::printf("  ok   : график записан (%zu %s, %zu точек расчёта, %zu эталона, %zu байт)\n",
+                plot.size(), ru_plural(plot.size(), "кривая", "кривые", "кривых"),
+                pts, ref.t.size(), svg.size());
 }
 
 // ===========================================================================
@@ -1769,36 +2037,73 @@ void check_against_reference(const RunResult& r, bool full)
     }
 }
 
-// --- §6, таблица сценариев: устойчивость при contact_force_type = 1..3 -----
-void test_contact_scenarios(const RunSettings& base)
+// --- Сводный график: сборка серий из выгрузок отдельных прогонов -----------
+// Режим --plot-from: расчёта нет, читаются файлы bc2_curve_<тип>.txt, которые
+// оставили прогоны с --emit-curve. Отсутствующий тип — не ошибка сборки
+// графика, а сообщение: прогон по этому типу просто ещё не делали.
+void emit_plot_from_dir(const fs::path& dir, bool full, const fs::path& out_path)
 {
-    for (int type = 1; type <= 3; ++type)
+    std::printf("\n[график] сборка из выгрузок: %s\n", dir.string().c_str());
+
+    std::vector<PlotSeries> series;
+    for (int type = 0; type <= 3; ++type)
     {
-        std::printf("\n[§6] Сценарий contact_force_type = %d (сверяется только устойчивость)\n", type);
-        RunSettings rs = base;
-        rs.name = "contact";
-        rs.contact_force_type = type;
-        const RunResult r = run_case(rs);
-        if (!r.ok)
+        const fs::path p = curve_dump_path(dir, type);
+        if (!fs::exists(p))
         {
-            std::printf("  FAIL : прогон не состоялся: %s\n", r.error.c_str());
+            std::printf("  info : нет выгрузки для типа %d (%s) — кривая не рисуется\n",
+                        type, p.filename().string().c_str());
+            continue;
+        }
+        PlotSeries s;
+        std::string err;
+        if (!load_series(p, s, err))
+        {
+            std::printf("  FAIL : выгрузка типа %d не прочитана: %s\n", type, err.c_str());
             ++failures;
             continue;
         }
-        check_run_health(r, rs);
-        // Эталон для контактных сценариев не требуется (ТЗ §6).
+        // Тип берётся из ИМЕНИ файла: цвет серии обязан отвечать типу, под
+        // которым её положили, даже если заголовок внутри расходится.
+        s.type = type;
+        std::printf("  info : тип %d — %zu точек, %zu шагов%s\n",
+                    type, s.curve.t.size(), s.steps, s.aborted ? ", прогон оборван" : "");
+        series.push_back(s);
     }
+
+    if (series.empty())
+    {
+        std::printf("  FAIL : ни одной выгрузки не найдено, график не построен\n");
+        ++failures;
+        return;
+    }
+
+    // Геометрия нужна только для подписи (разрешение, число частиц): строится
+    // без расчёта, это заполнение массивов.
+    ParticleSystem sys;
+    const Bc2Geometry geom = build_bc2_geometry(sys, case_delta_x(full));
+    emit_plot(geom, series, full, out_path);
 }
 
 void print_usage()
 {
     std::printf(
-        "Использование: test_e2e_bc2 [--full] [--emit-reference] [--verbose]\n"
+        "Использование: test_e2e_bc2 [--full] [--contact-type=N] [прочие ключи]\n"
         "  (без аргументов)  smoke-режим: delta_x = 8e-4, t_total = 3e-7\n"
-        "  --full            полный кейс: delta_x = 2e-4, t_total из конфига + сценарии §6\n"
+        "  --full            полный кейс: delta_x = 2e-4, t_total из конфига\n"
+        "  --contact-type=N  contact_force_type прогона, N = 0..3 (по умолчанию 0).\n"
+        "                    Один прогон — один тип: сценарии §6 разнесены по\n"
+        "                    отдельным тестам, чтобы падение одного типа не\n"
+        "                    скрывало результат остальных. Сверка с эталоном\n"
+        "                    (§4.3) делается только при N = 0, для остальных\n"
+        "                    типов ТЗ §6 требует лишь устойчивости.\n"
         "  --emit-reference  напечатать эталон текущего режима в stdout\n"
         "  --verbose         не глушить вывод конвейера\n"
         "  --keep-workdir    не удалять временный каталог прогона (log.txt, кадры)\n"
+        "  --emit-curve=<f>  выгрузить кривую прогона в файл f для сводного\n"
+        "                    графика (формат эталона: время, скорость, itype)\n"
+        "  --plot-from=<d>   НЕ считать, а собрать сводный график из выгрузок\n"
+        "                    bc2_curve_0..3.txt в каталоге d; требует --emit-plot\n"
         "  --emit-plot=<f>   записать SVG «расчёт против эталона» в файл f.\n"
         "                    По умолчанию выключено: тест не оставляет побочных\n"
         "                    эффектов (§7) и должен работать на checkout только\n"
@@ -1818,6 +2123,9 @@ int main(int argc, char** argv)
     bool verbose = false;
     bool keep_workdir = false;
     fs::path plot_path;            // пуст — график не строится (см. emit_plot)
+    fs::path curve_path;           // пуст — кривая не выгружается
+    fs::path plot_from_dir;        // непуст — режим сборки графика без расчёта
+    int  contact_type = 0;         // за какой contact_force_type отвечает прогон
     double wall_limit_s = 600.0;   // 10 минут на прогон
     for (int i = 1; i < argc; ++i)
     {
@@ -1826,6 +2134,39 @@ int main(int argc, char** argv)
         else if (a == "--emit-reference") emit = true;
         else if (a == "--verbose") verbose = true;
         else if (a == "--keep-workdir") keep_workdir = true;
+        else if (a.rfind("--contact-type=", 0) == 0)
+        {
+            const std::string v = a.substr(std::strlen("--contact-type="));
+            try { contact_type = std::stoi(v); }
+            catch (const std::exception&)
+            {
+                std::fprintf(stderr, "Неверное значение --contact-type: %s\n", a.c_str());
+                return 2;
+            }
+            if (contact_type < 0 || contact_type > 3)
+            {
+                std::fprintf(stderr, "--contact-type должен быть 0..3, получено %d\n", contact_type);
+                return 2;
+            }
+        }
+        else if (a.rfind("--emit-curve=", 0) == 0)
+        {
+            curve_path = a.substr(std::strlen("--emit-curve="));
+            if (curve_path.empty())
+            {
+                std::fprintf(stderr, "--emit-curve= требует путь к файлу\n");
+                return 2;
+            }
+        }
+        else if (a.rfind("--plot-from=", 0) == 0)
+        {
+            plot_from_dir = a.substr(std::strlen("--plot-from="));
+            if (plot_from_dir.empty())
+            {
+                std::fprintf(stderr, "--plot-from= требует путь к каталогу\n");
+                return 2;
+            }
+        }
         else if (a.rfind("--emit-plot=", 0) == 0)
         {
             plot_path = a.substr(std::strlen("--emit-plot="));
@@ -1862,12 +2203,29 @@ int main(int argc, char** argv)
         }
     }
 
+    // Режим сборки графика: расчёта нет, поэтому он идёт до всего остального
+    // и не трогает ни RunSettings, ни сторожа.
+    if (!plot_from_dir.empty())
+    {
+        if (plot_path.empty())
+        {
+            std::fprintf(stderr, "--plot-from требует --emit-plot=<файл.svg>\n");
+            return 2;
+        }
+        std::printf("=== e2e BC2: сводный график, режим %s ===\n", full ? "full" : "smoke");
+        emit_plot_from_dir(plot_from_dir, full, plot_path);
+        std::printf("\n=== e2e BC2: %s (провалов: %d) ===\n",
+                    failures == 0 ? "график построен" : "ГРАФИК НЕ ПОСТРОЕН", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     const fs::path cwd = fs::current_path();
     const DirSnapshot before = snapshot_dir(cwd);
 
     RunSettings rs;
     rs.name = full ? "full" : "smoke";
-    rs.delta_x = full ? 2e-4 : 8e-4;
+    rs.contact_force_type = contact_type;
+    rs.delta_x = case_delta_x(full);
     // Полный режим берёт t_total из tests/data/bc2_initial_conditions.txt.
     // Smoke укорачивает расчёт: это решение обвязки (быстрый прогон в CI),
     // а не параметр кейса, поэтому оно и живёт в коде, а не в конфиге.
@@ -1892,12 +2250,18 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    std::printf("=== e2e BC2, режим %s (delta_x = %g, t_total = %g) ===\n",
-                rs.name, rs.delta_x, rs.t_total);
+    // Сверка с приборным эталоном осмысленна только для базовой постановки:
+    // ТЗ §6 требует от контактных сценариев одной устойчивости, эталона для
+    // них нет и быть не может.
+    const bool is_base = (contact_type == contact::Off);
+
+    std::printf("=== e2e BC2, режим %s, contact_force_type = %d (delta_x = %g, t_total = %g) ===\n",
+                rs.name, contact_type, rs.delta_x, rs.t_total);
 
     // Самопроверка компаратора идёт ДО прогона: она не зависит от расчёта
     // (работает на данных эталона) и должна выполняться даже если прогон упал.
-    test_comparator_selfcheck();
+    // Нужна только там, где компаратор применяется, то есть в базовом прогоне.
+    if (is_base) test_comparator_selfcheck();
 
     std::printf("\n[§1] Геометрия\n");
     const RunResult r = run_case(rs);
@@ -1932,19 +2296,63 @@ int main(int argc, char** argv)
         report_geometry(r.geom, full);
         std::printf("\n[§4.4] Здоровье расчёта\n");
         check_run_health(r, rs);
-        check_against_reference(r, full);
-        // После сверки: график строится из той же кривой, что её прошла.
-        if (!plot_path.empty()) emit_plot(r, full, plot_path);
+        if (is_base)
+        {
+            check_against_reference(r, full);
+        }
+        else
+        {
+            note("§6 сверка с эталоном для контактного сценария не требуется — "
+                 "проверена только устойчивость");
+        }
     }
 
     if (r.ok)
     {
-        test_known_limitation_b4c_b4c(r.geom);
+        test_known_limitation_b4c_b4c(r.geom, contact_type);
     }
 
-    if (full && r.ok)
+    // Кривая выгружается и при обрыве: частичная история — это и есть то,
+    // что сводный график обязан показать, иначе упавший тип просто исчезнет.
+    const PlotSeries series{r.curve, contact_type, !r.ok, r.steps};
+    if (!curve_path.empty())
     {
-        test_contact_scenarios(rs);
+        std::printf("\n[выгрузка] %s\n", curve_path.string().c_str());
+        if (r.curve.empty())
+        {
+            std::printf("  FAIL : кривая пуста, выгружать нечего\n");
+            ++failures;
+        }
+        else
+        {
+            std::string err;
+            if (write_curve_dump(series, curve_path, err))
+            {
+                std::printf("  ok   : выгружено %zu точек (тип %d%s)\n",
+                            r.curve.t.size(), contact_type, r.ok ? "" : ", прогон оборван");
+            }
+            else
+            {
+                std::printf("  FAIL : %s\n", err.c_str());
+                ++failures;
+            }
+        }
+    }
+
+    // Одиночный --emit-plot рисует ровно одну кривую — кривую ЭТОГО прогона.
+    // Сводный график по всем типам строится режимом --plot-from.
+    if (!plot_path.empty())
+    {
+        if (r.curve.empty())
+        {
+            std::printf("\n[график] %s\n", plot_path.string().c_str());
+            std::printf("  FAIL : кривая прогона пуста, рисовать нечего\n");
+            ++failures;
+        }
+        else
+        {
+            emit_plot(r.geom, std::vector<PlotSeries>{series}, full, plot_path);
+        }
     }
 
     check_no_side_effects(cwd, before);
