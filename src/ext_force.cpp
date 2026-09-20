@@ -3,6 +3,7 @@
 // контакт «частица-частица» — part_0.md, ADR-007). Объявления — в ext_force.hpp.
 #include "ext_force.hpp"
 #include "materials.hpp"
+#include <algorithm>
 
 namespace
 {
@@ -61,7 +62,15 @@ double particle_radius(const ParticleSystem& sys, size_t k)
 {
     const double rho = sys.rho[k];
     if (!(rho > 0.0)) return 0.0;
-    const double volume = sys.mass[k] / rho;
+    // Потолок по невозмущённой плотности. По одному лишь mass/rho радиус при
+    // разгрузке (rho -> 0) растёт неограниченно, и порог R_i + R_j объявляет
+    // проникание у частиц, которые на самом деле РАСХОДЯТСЯ: на BC2 центры
+    // разошлись с 1.98e-4 до 2.86e-4 м, а «проникание» выросло до 1.7e-4 м.
+    // Физически тело при разрежении не становится больше — материал расходится,
+    // и занимаемый им объём перестаёт быть мерой размера. Сжатие радиус
+    // по-прежнему уменьшает, разрежение его больше не увеличивает.
+    const double rho_eff = std::max(rho, sys.rho_0[k]);
+    const double volume = sys.mass[k] / rho_eff;
     return 0.5 * std::pow(volume, 1.0 / static_cast<double>(dim));
 }
 
