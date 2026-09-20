@@ -59,7 +59,16 @@ static void trim_comment(std::string &line)
 }
 static void trim_spaces(std::string& s)
 {
-    auto not_space = [](int ch){ return !std::isspace(ch); };
+    // Приведение к unsigned char обязательно. std::isspace принимает int, но
+    // допустимы только значения, представимые в unsigned char, и EOF; передача
+    // отрицательного — неопределённое поведение. На char со знаком (x86) любой
+    // байт UTF-8 со старшим битом даёт отрицательное значение, а в
+    // Initial_Conditions.txt комментарии русские, и строка, кончающаяся
+    // кириллицей, приводит сюда байт вроде 0xB9 = -71.
+    // На Windows с UCRT это срабатывание внутреннего assert и немедленный
+    // abort: процесс умирает молча, до единой строки вывода, ещё на разборе
+    // конфигурации. Так падали ОБА сквозных теста, BC2 и BC6.
+    auto not_space = [](unsigned char ch){ return !std::isspace(ch); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
 }
