@@ -96,7 +96,7 @@ add_test(NAME contact_test COMMAND test_contact)
 # СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и
 # несовместимы по ODR (layout ParticleSystem зависит от dim).
 # См. решение E1 и docs/04-explanation/decisions/adr-002-dim-constexpr.md.
-option(SPH_E2E_SLOW_TESTS "Регистрировать в ctest медленный полный прогон BC2 (метка slow)" OFF)
+option(SPH_E2E_SLOW_TESTS "Регистрировать в ctest медленные полные прогоны BC2 и BC6 (метка slow)" OFF)
 
 add_executable(test_e2e_bc2 tests/test_e2e_bc2.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_e2e_bc2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -197,6 +197,88 @@ add_custom_target(bc2_plot
     DEPENDS test_e2e_bc2
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     COMMENT "Полный прогон BC2 и перестройка ${SPH_BC2_PLOT}"
+    USES_TERMINAL VERBATIM)
+
+# --- End-to-end тест на кейсе BC6 (contact/06-e2e-bc6.md) -------------------
+# Откольный опыт на B4C: ударник и окно PMMA, подложка — пена 160. Схема та
+# же, что у BC2 (свои объектники конвейера с SPH_DIM=2 по решению E1, по тесту
+# на contact_force_type, smoke по умолчанию, полный режим под опцией), но
+# кейс независим: свои данные (tests/bc6_case.hpp), своя геометрия
+# (tests/bc6_geometry.hpp), свой конфиг и свой эталон в tests/data/.
+# Общая обвязка вынесена в tests/e2e_*.hpp; tests/test_e2e_bc2.cpp НЕ изменён
+# и продолжает жить со своими копиями.
+add_executable(test_e2e_bc6 tests/test_e2e_bc6.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_bc6 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_bc6 PRIVATE
+    SPH_DIM=2
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc6 PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_bc6 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_bc6 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc6 PRIVATE -fopenmp)
+    target_link_options(test_e2e_bc6 PRIVATE -fopenmp)
+endif()
+
+# Smoke-режим: delta_x = 8e-4, t_total = 1e-6. Физические проверки там
+# пропускаются с явным предупреждением — при таком шаге носитель ядра
+# (2h = 3.2 мм) шире зазора удара 1.0 мм, тела взаимодействуют с t = 0.
+# Smoke проверяет живучесть конвейера, геометрию и самопроверки инструментов.
+foreach(_type RANGE 0 3)
+    add_test(NAME e2e_bc6_smoke_contact${_type}
+             COMMAND test_e2e_bc6 --contact-type=${_type} --time-limit=120)
+    set_tests_properties(e2e_bc6_smoke_contact${_type} PROPERTIES LABELS "e2e" TIMEOUT 300)
+endforeach()
+
+# Бюджет сторожа на ОДИН полный прогон BC6, секунды. Общий для тестов полного
+# режима и для цели bc6_plot, чтобы они не разъезжались.
+#
+# Значение поставлено ПО ИЗМЕРЕНИЮ, а не по оценке. Первая попытка исходила
+# из скорости BC2 (4,3 шага/с) и дала 1800 с — прогон не уложился, пройдя
+# 1216 шагов из ~1590 за 1800 с. Фактическая скорость на машине разработки
+# 0,68 шага/с, то есть 1,48 с на шаг, и полному прогону нужно около 2350 с.
+#
+# Причина медленности не в кейсе, а в конвейере: single_step на каждом шаге
+# выделяет и обнуляет pair_i/pair_j/w/dwdx размером max_interaction =
+# 100*maxn (src/single_step.cpp:114-118). Для BC6 это 250 МБ на шаг, у BC2 —
+# 190 МБ. Настоящее число пар примерно в 13 раз меньше ёмкости. Переделка
+# этого — отдельная задача по конвейеру, здесь она не делается.
+#
+# 5400 — примерно двух-с-половиной-кратный запас над измеренными 2350 с, как
+# и у BC2 (900 с при 355 с прогона). Это НЕ оценка длительности, а backstop
+# на случай зависания, и он обязан покрывать самую медленную поддерживаемую
+# машину. Коллапс шага ловит второй механизм сторожа (детектор застоя), от
+# стенных часов не зависящий, поэтому запас по времени защиту не ослабляет.
+set(SPH_BC6_RUN_TIME_LIMIT 5400 CACHE STRING
+    "Бюджет сторожа на один полный прогон BC6, с (0 — без ограничения)")
+
+if(SPH_E2E_SLOW_TESTS)
+    foreach(_type RANGE 0 3)
+        add_test(NAME e2e_bc6_full_contact${_type}
+                 COMMAND test_e2e_bc6 --full --contact-type=${_type}
+                         --time-limit=${SPH_BC6_RUN_TIME_LIMIT})
+        set_tests_properties(e2e_bc6_full_contact${_type}
+                             PROPERTIES LABELS "slow;e2e" TIMEOUT 7200)
+    endforeach()
+endif()
+
+# Перестройка графика для отчёта contact/06-e2e-bc6.md:
+#     cmake --build build --target bc6_plot
+# Устройство и обоснование — те же, что у bc2_plot выше.
+set(SPH_BC6_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e/bc6_monitor_velocity.svg"
+    CACHE FILEPATH "Куда цель bc6_plot записывает график BC6")
+add_custom_target(bc6_plot
+    COMMAND ${CMAKE_COMMAND}
+            -DSPH_PLOT_EXE=$<TARGET_FILE:test_e2e_bc6>
+            "-DSPH_PLOT_OUT=${SPH_BC6_PLOT}"
+            -DSPH_PLOT_TIME_LIMIT=${SPH_BC6_RUN_TIME_LIMIT}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/bc6_plot.cmake"
+    DEPENDS test_e2e_bc6
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMENT "Полный прогон BC6 и перестройка ${SPH_BC6_PLOT}"
     USES_TERMINAL VERBATIM)
 
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
