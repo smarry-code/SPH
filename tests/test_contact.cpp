@@ -115,14 +115,19 @@ void test_type1_pinball()
 
 void test_type2_swegle()
 {
-    // M8: обе ветки по очереди доминируют
+    // M8: обе ветки по очереди доминируют.
+    // pdot подобрано так, чтобы p <= pdot*dt_ref, то есть проникание не больше
+    // накопленного сближением за опорный шаг. Это область применимости (2.6),
+    // в ней потолок силы неактивен и max(f1,f2) проходит как есть (см. M8c).
     {
-        // F1 доминирует: большой dt_ref делает F1 малым, подберём так, чтобы F2 доминировала сначала.
-        contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 0.0;
+        // F2 доминирует: большой c_pair.
+        contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 100.0; g.v_rel = 0.0;
         contact::PairProps pr; pr.m_red = 1e-3; pr.dt_ref = 1e-7; pr.c_pair = 5000.0;
         const double kp = 1.0;
         const double f1 = pr.m_red * g.p / (pr.dt_ref * pr.dt_ref);
         const double f2 = 2.0 * pr.m_red * pr.c_pair * g.p / (pr.dt_ref * g.r);
+        check(std::max(f1, f2) <= pr.m_red * g.pdot / pr.dt_ref,
+              "M8 setup case A: потолок неактивен");
         const auto res = contact::swegle_force(g, pr, kp);
         check(rel_close(res.fn, kp * std::max(f1, f2)), "M8 fn == kp*max(f1,f2) [case A]");
         const double k_eff = res.fn / g.p;
@@ -131,14 +136,52 @@ void test_type2_swegle()
     }
     {
         // Меняем c_pair так, чтобы доминировала другая ветка.
-        contact::PairGeom g; g.r = 1e-2; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 0.0;
+        contact::PairGeom g; g.r = 1e-2; g.p = 1e-6; g.pdot = 100.0; g.v_rel = 0.0;
         contact::PairProps pr; pr.m_red = 1e-3; pr.dt_ref = 1e-7; pr.c_pair = 1.0;
         const double kp = 1.0;
         const double f1 = pr.m_red * g.p / (pr.dt_ref * pr.dt_ref);
         const double f2 = 2.0 * pr.m_red * pr.c_pair * g.p / (pr.dt_ref * g.r);
         check(f2 < f1, "M8 setup case B: F1 доминирует");
+        check(std::max(f1, f2) <= pr.m_red * g.pdot / pr.dt_ref,
+              "M8 setup case B: потолок неактивен");
         const auto res = contact::swegle_force(g, pr, kp);
         check(rel_close(res.fn, kp * std::max(f1, f2)), "M8 fn == kp*max(f1,f2) [case B]");
+    }
+
+    // M8c: потолок силы. Проникание вдесятеро больше накопленного сближением
+    // за опорный шаг (p = 10*pdot*dt_ref) — (2.6) вне области применимости.
+    // Сила обязана срезаться до m_red*pdot/dt_ref (импульса, гасящего
+    // сближение), а ограничитель шага — перейти на вязкую ветку: на потолке
+    // F от p не зависит, и k_eff = fn/p перестаёт быть жёсткостью.
+    {
+        contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 0.0;
+        contact::PairProps pr; pr.m_red = 1e-3; pr.dt_ref = 1e-7; pr.c_pair = 5000.0;
+        const double kp = 1.0;
+        const double f_raw = std::max(pr.m_red * g.p / (pr.dt_ref * pr.dt_ref),
+                                      2.0 * pr.m_red * pr.c_pair * g.p / (pr.dt_ref * g.r));
+        const double f_cap = pr.m_red * g.pdot / pr.dt_ref;
+        check(f_raw > f_cap, "M8c setup: без потолка сила превышает гасящую");
+        const auto res = contact::swegle_force(g, pr, kp);
+        check(rel_close(res.fn, kp * f_cap), "M8c fn срезана до m_red*pdot/dt_ref");
+        const double expected_dt = contact::kOscSafety * 2.0 * pr.dt_ref / kp;
+        check(rel_close(res.dt_limit, expected_dt), "M8c dt_limit по вязкой ветке");
+    }
+
+    // M8d: импульс за шаг не превышает нормального импульса пары. Это то
+    // свойство, ради которого введён потолок: dt <= dt_ref по построению
+    // pair_dt_ref, значит fn*dt <= m_red*pdot при любом проникании.
+    {
+        contact::PairProps pr; pr.m_red = 1e-3; pr.dt_ref = 1e-7; pr.c_pair = 5000.0;
+        bool ok = true;
+        for (double p_over : {1.0, 10.0, 1e3, 1e6})
+        {
+            contact::PairGeom g;
+            g.r = 1e-3; g.pdot = 1.0; g.v_rel = 0.0;
+            g.p = p_over * g.pdot * pr.dt_ref;
+            const auto res = contact::swegle_force(g, pr, 1.0);
+            if (res.fn * pr.dt_ref > pr.m_red * g.pdot * (1.0 + 1e-12)) ok = false;
+        }
+        check(ok, "M8d fn*dt_ref <= m_red*pdot при p до 1e6 накопленных");
     }
 
     // M9: pdot<0 -> fn==0

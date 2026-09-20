@@ -86,11 +86,37 @@ inline Result swegle_force(const PairGeom& g, const PairProps& pr, double kp)
 
     const double f1 = pr.m_red * g.p / (pr.dt_ref * pr.dt_ref);
     const double f2 = 2.0 * pr.m_red * pr.c_pair * g.p / (pr.dt_ref * g.r);
-    out.fn = kp * std::max(f1, f2);
+
+    // Потолок: сила не больше той, что гасит сближение пары за один опорный
+    // шаг. (2.6) выведена для p, накопленного ЗА ШАГ (p = pdot*dt_ref); в этом
+    // режиме f1 = m_red*pdot/dt_ref ровно совпадает с потолком, поэтому в
+    // области применимости формулы он неактивен. Превышение равно в точности
+    // p/(pdot*dt_ref) — во сколько раз проникание больше накопленного
+    // сближением, — и потолок вступает ровно тогда, когда допущение нарушено.
+    //
+    // Без потолка это разрушало кейс BC2 при contact_force_type = 2: приосевая
+    // частица полиуретана разгружалась, particle_radius по mass/rho раздувал
+    // порог R_i + R_j, и p росло у РАСХОДЯЩИХСЯ частиц. К шагу 1665 p = 1.7e-4
+    // при pdot*dt_ref ~ 2.7e-8, то есть сила была завышена в ~6e3 раз: 4.5e8 Н
+    // и 3.5e4 м/с приращения за шаг, плотность уходила в минус.
+    const double f_cap  = pr.m_red * g.pdot / pr.dt_ref;
+    const double f_raw  = std::max(f1, f2);
+    const bool   capped = (f_raw > f_cap);
+
+    out.fn = kp * (capped ? f_cap : f_raw);
     if (out.fn <= 0.0) return out;
 
-    const double k_eff = out.fn / g.p;   // F линейна по p
-    out.dt_limit = kOscSafety / std::sqrt(k_eff / pr.m_red);
+    if (capped)
+    {
+        // На потолке F = c_d*pdot, c_d = kp*m_red/dt_ref: та же вязкая ветка,
+        // что у типа 1, и тот же предел явной схемы dt < 2*m_red/c_d.
+        out.dt_limit = kOscSafety * 2.0 * pr.dt_ref / kp;
+    }
+    else
+    {
+        const double k_eff = out.fn / g.p;   // F линейна по p
+        out.dt_limit = kOscSafety / std::sqrt(k_eff / pr.m_red);
+    }
     return out;
 }
 
