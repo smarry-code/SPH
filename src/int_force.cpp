@@ -616,12 +616,39 @@ void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, 
     }
 #endif
 
+    // Окружная скорость деформации в осесимметричном случае.
+    // Парный цикл выше заполняет только exx = dv_r/dr и eyy = dv_z/dz: он
+    // ходит по индексам координат 0 и 1, а третьей координаты в плоскости
+    // меридиана нет. Компонента ε_θθ = v_r/r относится к ЧАСТИЦЕ, а не к
+    // паре, поэтому задаётся здесь — так же, как осевой член неразрывности
+    // в density.cpp и осевой член энергии ниже.
+    //
+    // Без неё ezz остаётся нулём, и это расходится по трём местам:
+    //   - dszz = 2G(ezz + drho/(3rho)) недосчитывает 2G*v_r/r, из-за чего
+    //     девиатор перестаёт быть бесследовым, хотя sigma_i() для
+    //     осесимметрии считает третью компоненту зависимой;
+    //   - JH-2 берёт ezz в eps_p_z и копит по нему повреждение D
+    //     (ppochnost.cpp, prochnost_cem_JH2);
+    //   - девиаторная работа в энергии теряет окружной вклад.
+    if (axis_sim == true && dim == 2)
+    {
+        for (size_t i = 0; i < ntotal; ++i)
+        {
+            sys.ezz[i] = sys.vx[0][i] / sys.x[0][i];
+        }
+    }
+
     // Обновление внутренней энергии
     for (size_t i = 0; i < ntotal; ++i)
     {
         if (axis_sim == true && dim == 2)
         {
-            dedt[i] = tdsdt[i] + 0.5 * dedt[i] + (sys.sxx[i] * (sys.exx[i] - (sys.vx[0][i]) / (sys.x[0][i])) + sys.szz[i] * (sys.ezz[i] - (sys.vx[0][i]) / (sys.x[0][i])) + 2 * sys.sxy[i] * sys.exy[i]) / sys.rho[i];
+            // Девиаторная работа S:eps. Компоненты в осесимметричном случае:
+            // sxx = S_rr, syy = S_zz, szz = S_theta, sxy = S_rz; окружная
+            // скорость деформации ezz = v_r/r задана выше. Гидростатическую
+            // часть работы (-p*div v) добавляет time_integration, включая её
+            // осевой член -p*v_r/r/rho.
+            dedt[i] = tdsdt[i] + 0.5 * dedt[i] + (sys.sxx[i] * sys.exx[i] + sys.syy[i] * sys.eyy[i] + sys.szz[i] * sys.ezz[i] + 2 * sys.sxy[i] * sys.exy[i]) / sys.rho[i];
         }
         else
         {
