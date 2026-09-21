@@ -85,6 +85,9 @@ struct StaircaseFeatures
     double peak    = 0.0;
     double t_peak  = 0.0;
     double t_front = 0.0;        // t10 переднего фронта
+    double t_mid   = 0.0;        // t50 переднего фронта: на размазанном
+                                 // фронте именно он сопоставим с
+                                 // теоретическим моментом прихода
 
     size_t dips = 0;                       // 0, 1 или 2
     std::array<double, 2> t_dip{};
@@ -161,6 +164,7 @@ inline StaircaseFeatures extract_staircase(const Curve& c, const StaircaseParams
     f.peak    = cf.peak;
     f.t_peak  = cf.t_peak;
     f.t_front = cf.t10;
+    f.t_mid   = cf.t50;
     f.valid   = true;
 
     // Область поиска провалов.

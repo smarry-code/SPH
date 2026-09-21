@@ -63,7 +63,8 @@ struct Geometry
     size_t ntotal  = 0;
     std::array<size_t, 4> begin{}, count{}, n_r{}, n_z{};
     std::array<double, 4> z_first{}, z_last{};   // координаты крайних СЛОЁВ, м
-    double impact_gap = 0.0;                     // z_first[2] − z_last[1]
+    double impact_gap = 0.0;                     // z_first[2] − z_last[1];
+                                                 // сборка встык => равен Δx
 
     size_t moni_axis   = 0;    // основной монитор: тыльный слой образца, i_r = 0
     size_t moni_ctl    = 0;    // контрольный: тот же слой, r ≈ 12.5 мм
@@ -96,7 +97,12 @@ inline Geometry plan_geometry(double delta_x)
 
         g.z_first[b] = z0;
         g.z_last[b]  = z0 + static_cast<double>(g.n_z[b] - 1) * delta_x;
-        z0 = g.z_last[b] + (s.gap_after ? kImpactGap : delta_x);
+        // Сборка встык: плоскость удара раскладывается так же, как
+        // склеенные границы — решётка продолжается с шагом Δx. Поле
+        // impact_after больше не меняет раскладку и осталось признаком
+        // того, какая из границ является плоскостью удара.
+        (void)s.impact_after;
+        z0 = g.z_last[b] + delta_x;
     }
     g.ntotal = total;
     g.impact_gap = g.z_first[2] - g.z_last[1];
@@ -174,6 +180,9 @@ inline Geometry build_geometry(ParticleSystem& sys, double delta_x)
 // Пробег берётся по ФАКТИЧЕСКОМУ размаху частиц образца, а не по паспортной
 // толщине: при Δx = 0.2 мм это 10.4 мм вместо 10.526, и разница в 9 нс
 // сопоставима с допуском ±0.05 мкс.
+// kTImpact равен нулю (сборка встык). Слагаемое оставлено явно: оно
+// показывает, из чего состоит ожидание, и вернёт смысл, если геометрию
+// когда-нибудь снова разведут.
 inline double t_front_expected(const Geometry& g)
 {
     return kTImpact + g.extent(kSampleBody) / kClB4C;
@@ -190,13 +199,13 @@ inline void report_geometry(const Geometry& g)
                     b + 1, kBodies[b].name, g.n_r[b], g.n_z[b], g.count[b],
                     g.z_first[b] * 1e3, g.z_last[b] * 1e3, g.extent(b) * 1e3);
     }
-    std::printf("  info : всего частиц %zu; Δx = %.4f мм; зазор удара %.6f мм\n",
+    std::printf("  info : всего частиц %zu; Δx = %.4f мм; шаг на плоскости удара %.6f мм\n",
                 g.ntotal, g.delta_x * 1e3, g.impact_gap * 1e3);
     std::printf("  info : монитор основной  #%zu (i_r = 0,  r = %.3f мм)\n",
                 g.moni_axis, g.moni_axis_r * 1e3);
     std::printf("  info : монитор контрольный #%zu (i_r = %zu, r = %.3f мм)\n",
                 g.moni_ctl, g.moni_ctl_ir, g.moni_ctl_r * 1e3);
-    std::printf("  info : удар при t = %.4f мкс; приход фронта ожидается при %.4f мкс\n",
+    std::printf("  info : удар при t = %.4f мкс (сборка встык); фронт ожидается при %.4f мкс\n",
                 kTImpact * 1e6, t_front_expected(g) * 1e6);
 }
 
@@ -213,8 +222,8 @@ inline void assert_control_numbers(const Geometry& g, bool full)
     std::printf("\n[§6] Контрольные числа геометрии\n");
 
     // --- не зависит от режима ---
-    check(std::fabs(g.impact_gap - kImpactGap) < 1e-12,
-          "зазор на плоскости удара равен 1.000 мм и не зависит от Δx");
+    check(std::fabs(g.impact_gap - g.delta_x) < 1e-12,
+          "сборка встык: слои на плоскости удара расходятся ровно на Δx");
     check(std::fabs((g.z_first[1] - g.z_last[0]) - g.delta_x) < 1e-12,
           "тела 1 и 2 в контакте: слои расходятся ровно на Δx");
     check(std::fabs((g.z_first[3] - g.z_last[2]) - g.delta_x) < 1e-12,
