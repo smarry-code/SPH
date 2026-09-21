@@ -91,6 +91,27 @@ add_executable(test_contact tests/test_contact.cpp src/ext_force.cpp)
 target_include_directories(test_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME contact_test COMMAND test_contact)
 
+# --- Тест осесимметричной ветки силового расчёта ----------------------------
+# Закрепляет соглашение об индексах девиатора при axis_sim && dim == 2
+# (sxx = S_rr, syy = S_zz, szz = S_theta) и вытекающие из симметрии тождества:
+# бесследовость, равенство S_rr и S_theta, нулевой радиальный источник на
+# состоянии одноосного сжатия. Линкует конвейер своими объектниками с
+# SPH_DIM=2 — по той же причине, что и e2e-цели ниже (ADR-002).
+add_executable(test_axisym tests/test_axisym.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_axisym PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_axisym PRIVATE SPH_DIM=2)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_axisym PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_axisym PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_axisym PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_axisym PRIVATE -fopenmp)
+    target_link_options(test_axisym PRIVATE -fopenmp)
+endif()
+add_test(NAME axisym_test COMMAND test_axisym)
+
 # --- End-to-end тест на кейсе BC2 (contact/04-e2e-test-brief.md) ------------
 # Цель линкует ВЕСЬ конвейер (src/*.cpp кроме main.cpp) и компилирует его
 # СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и
