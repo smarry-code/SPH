@@ -418,15 +418,15 @@ void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, 
                             {
                                 if (d == 0)
                                 {
-                                    double sym_0_i = rhoij * pmass[j] * ((2 * psxx[j] + pszz[j]) / px[0][j]) * w[k];
-                                    double sym_0_j = rhoij * pmass[i] * ((2 * psxx[i] + pszz[i]) / px[0][i]) * w[k];
+                                    double sym_0_i = rhoij * pmass[j] * ((psxx[j] - pszz[j]) / px[0][j]) * w[k];
+                                    double sym_0_j = rhoij * pmass[i] * ((psxx[i] - pszz[i]) / px[0][i]) * w[k];
                                     Acc::add(dvxdt[d][i], sym_0_i);
                                     Acc::add(dvxdt[d][j], sym_0_j);
                                 }
                                 else if (d == 1)
                                 {
-                                    double sym_1_i = rhoij * pmass[j] * (psxz[j] / px[0][j]) * w[k];
-                                    double sym_1_j = rhoij * pmass[i] * (psxz[i] / px[0][i]) * w[k];
+                                    double sym_1_i = rhoij * pmass[j] * (psxy[j] / px[0][j]) * w[k];
+                                    double sym_1_j = rhoij * pmass[i] * (psxy[i] / px[0][i]) * w[k];
                                     Acc::add(dvxdt[d][i], sym_1_i);
                                     Acc::add(dvxdt[d][j], sym_1_j);
                                 }
@@ -515,8 +515,8 @@ void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, 
                             {
                                 if (d == 0)
                                 {
-                                    double sym_0_i = rhoij * pmass[j] * ((2 * psxx[j] + pszz[j]) / px[0][j]) * w[k];
-                                    double sym_0_j = rhoij * pmass[i] * ((2 * psxx[i] + pszz[i]) / px[0][i]) * w[k];
+                                    double sym_0_i = rhoij * pmass[j] * ((psxx[j] - pszz[j]) / px[0][j]) * w[k];
+                                    double sym_0_j = rhoij * pmass[i] * ((psxx[i] - pszz[i]) / px[0][i]) * w[k];
                                     Acc::add(dvxdt[d][i], sym_0_i);
                                     Acc::add(dvxdt[d][j], sym_0_j);
                                     // dvxdt[d][i] += ((2 * sys.sxx[i] + sys.szz[i]) /  sys.x[0][i]);
@@ -524,8 +524,8 @@ void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, 
                                 }
                                 else if (d == 1)
                                 {
-                                    double sym_1_i = rhoij * pmass[j] * (psxz[j] / px[0][j]) * w[k];
-                                    double sym_1_j = rhoij * pmass[i] * (psxz[i] / px[0][i]) * w[k];
+                                    double sym_1_i = rhoij * pmass[j] * (psxy[j] / px[0][j]) * w[k];
+                                    double sym_1_j = rhoij * pmass[i] * (psxy[i] / px[0][i]) * w[k];
                                     Acc::add(dvxdt[d][i], sym_1_i);
                                     Acc::add(dvxdt[d][j], sym_1_j);
                                     // dvxdt[d][i] += (sys.sxz[i] /  sys.x[0][i]);
