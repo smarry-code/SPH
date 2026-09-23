@@ -356,6 +356,26 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         {
             cfg.contact_penalty_scale = std::stod(value);
         }
+        else if (key == "contact_impulse_gamma")
+        {
+            const double v = std::stod(value);
+            // Границы: <= 0 равносильно выключенному контакту типа 3 (ранний
+            // выход в impulse_force), > 1.6 включает ограничитель шага, который
+            // сам зависит от урезанного шага (петля «жёсткость -> шаг»).
+            // Значение принимается как есть, но молча это не проходит.
+            if (!(v > 0.0))
+            {
+                std::cerr << "contact_impulse_gamma = " << v
+                          << " <= 0: тип 3 фактически выключен\n";
+            }
+            else if (v > 1.6)
+            {
+                std::cerr << "contact_impulse_gamma = " << v
+                          << " > 1.6: включается ограничитель шага контакта,"
+                             " возможен коллапс dt\n";
+            }
+            cfg.contact_impulse_gamma = v;
+        }
     }
     in.close();    
 }

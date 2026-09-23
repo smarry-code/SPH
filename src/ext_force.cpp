@@ -244,7 +244,8 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
                 pr.dt_ref = std::min(pair_dt_ref(cfg, sys, i), pair_dt_ref(cfg, sys, j));
 
                 const contact::Result res =
-                    contact::penalty_force(contact_type, g, pr, cfg.contact_penalty_scale, dt);
+                    contact::penalty_force(contact_type, g, pr, cfg.contact_penalty_scale,
+                                           dt, cfg.contact_impulse_gamma);
 
                 ++wb.contact_pair_count;
                 if (p > wb.contact_max_delta) wb.contact_max_delta = p;

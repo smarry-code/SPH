@@ -203,17 +203,49 @@ void test_type2_swegle()
 
 void test_type3_impulse()
 {
-    // M10: pdot>0 -> fn == m_red*v_rel/dt точно; dt_limit == kNoLimit
+    // M10: pdot>0 -> fn == gamma*m_red*pdot/dt точно.
+    // Сила строится на НОРМАЛЬНОЙ составляющей: v_rel задана заведомо больше
+    // pdot, и если бы формула брала её, значение отличалось бы в 2.5 раза.
     {
         contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 2.5;
         contact::PairProps pr; pr.m_red = 1e-3;
         const double dt_applied = 1e-8;
         const auto res = contact::impulse_force(g, pr, dt_applied);
-        check(rel_close(res.fn, pr.m_red * g.v_rel / dt_applied), "M10 fn точно");
-        check(res.dt_limit == contact::kNoLimit, "M10 dt_limit == kNoLimit");
+        check(rel_close(res.fn, pr.m_red * g.pdot / dt_applied), "M10 fn == m_red*pdot/dt (gamma=1)");
+        check(!rel_close(res.fn, pr.m_red * g.v_rel / dt_applied),
+              "M10 fn построена на pdot, а не на полной v_rel");
     }
 
-    // M11: pdot<0 -> fn==0
+    // M10a: gamma масштабирует силу линейно.
+    {
+        contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 2.5;
+        contact::PairProps pr; pr.m_red = 1e-3;
+        const double dt_applied = 1e-8;
+        const auto full = contact::impulse_force(g, pr, dt_applied, 1.0);
+        const auto part = contact::impulse_force(g, pr, dt_applied, 0.25);
+        check(rel_close(part.fn, 0.25 * full.fn), "M10a fn линейна по gamma");
+        check(contact::impulse_force(g, pr, dt_applied, 0.0).fn == 0.0,
+              "M10a gamma<=0 -> контакт выключен");
+    }
+
+    // M10b: сила непрерывна в точке включения — при pdot -> +0 она стремится
+    // к нулю. Это и есть главное отличие от буквальной (2.10), где при том же
+    // предельном переходе сила оставалась конечной (m_red*v_rel/dt).
+    {
+        contact::PairProps pr; pr.m_red = 1e-3;
+        const double dt_applied = 1e-8;
+        double prev = 1e300;
+        for (double pdot : {1e-2, 1e-4, 1e-6, 1e-8})
+        {
+            contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = pdot; g.v_rel = 2.5;
+            const double fn = contact::impulse_force(g, pr, dt_applied).fn;
+            check(fn < prev, "M10b fn убывает вместе с pdot");
+            prev = fn;
+        }
+        check(prev < 1e-6 * (pr.m_red * 2.5 / dt_applied), "M10b fn -> 0 при pdot -> +0");
+    }
+
+    // M11: pdot<0 -> fn==0 (контакт не тянет)
     {
         contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = -1.0; g.v_rel = 2.5;
         contact::PairProps pr; pr.m_red = 1e-3;
@@ -227,6 +259,23 @@ void test_type3_impulse()
         contact::PairProps pr; pr.m_red = 1e-3;
         const auto res = contact::impulse_force(g, pr, 1e-8);
         check(res.fn == 0.0 && res.dt_limit == contact::kNoLimit, "M7 тип3 p<=0");
+    }
+
+    // M13: ограничитель шага — вязкая ветка dt < 0.8*2*dt_applied/gamma.
+    // При gamma <= 1.6 он не строже применяемого шага, то есть не срабатывает.
+    {
+        contact::PairGeom g; g.r = 1e-3; g.p = 1e-6; g.pdot = 1.0; g.v_rel = 2.5;
+        contact::PairProps pr; pr.m_red = 1e-3;
+        const double dt_applied = 1e-8;
+        for (double gamma : {0.25, 1.0, 1.6})
+        {
+            const auto res = contact::impulse_force(g, pr, dt_applied, gamma);
+            check(rel_close(res.dt_limit, contact::kOscSafety * 2.0 * dt_applied / gamma),
+                  "M13 dt_limit == 1.6*dt/gamma");
+            check(res.dt_limit >= dt_applied, "M13 при gamma<=1.6 ограничитель не режет шаг");
+        }
+        const auto tight = contact::impulse_force(g, pr, dt_applied, 4.0);
+        check(tight.dt_limit < dt_applied, "M13 при gamma>1.6 ограничитель режет шаг");
     }
 }
 
@@ -616,14 +665,51 @@ void test_orchestrator_dt_limit_types_1_2()
 
 void test_orchestrator_dt_limit_type_3()
 {
-    // O7: тип 3 не ставит ограничитель шага.
+    // O7: тип 3 ставит ограничитель вязкой ветки 0.8*2*dt_applied/gamma.
+    // Раньше здесь проверялось обратное (min_dt_contact == kNoLimit): у типа 3
+    // не было НИ ОДНОГО контура обратной связи — ни потолка силы, ни предела по
+    // шагу. При gamma в рабочем диапазоне ограничитель по-прежнему не режет
+    // применяемый шаг, но перестаёт быть тождественно отсутствующим.
     ParticleSystem sys = make_pair(0.0, 1e-4, 1.0, -1.0, 2e-6, 3e-6, 1e-3, 1e-3, 500.0, 500.0);
-    SimulationConfig cfg = make_cfg(contact::Impulse);
-    WorkBuffers wb;
-    std::vector<size_t> pair_i{0}, pair_j{1};
-    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
-    ext_force(cfg, sys, 1e-8, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
-    check(wb.min_dt_contact == 1e30, "O7 тип 3 -> min_dt_contact==kNoLimit");
+    const double dt_applied = 1e-8;
+
+    for (double gamma : {0.25, 1.0})
+    {
+        SimulationConfig cfg = make_cfg(contact::Impulse);
+        cfg.contact_impulse_gamma = gamma;
+        WorkBuffers wb;
+        std::vector<size_t> pair_i{0}, pair_j{1};
+        std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(2, 0.0));
+        ext_force(cfg, sys, dt_applied, 2, 2, 1, pair_i, pair_j, dvxdt, wb);
+        check(rel_close(wb.min_dt_contact, contact::kOscSafety * 2.0 * dt_applied / gamma),
+              "O7 min_dt_contact типа 3 совпадает с аналитикой");
+        check(wb.min_dt_contact > dt_applied,
+              "O7 в рабочем диапазоне gamma шаг не урезается");
+    }
+}
+
+void test_orchestrator_impulse_normal_component()
+{
+    // O11: сила типа 3 строится на нормальной составляющей скорости.
+    // Две пары с ОДИНАКОВЫМ сближением вдоль линии центров, но разной полной
+    // относительной скоростью, должны давать одинаковое ускорение. При
+    // буквальной (2.10) ускорения различались бы.
+    //
+    // dim == 1, поэтому тангенциальной составляющей в самой геометрии нет:
+    // разницу вносим прямо в PairGeom и сверяем чистую функцию.
+    contact::PairProps pr; pr.m_red = 1.2e-6;
+    const double dt_applied = 1e-8;
+
+    contact::PairGeom head_on;  head_on.r = 1e-3; head_on.p = 1e-6;
+    head_on.pdot = 3.0; head_on.v_rel = 3.0;           // чистое сближение
+
+    contact::PairGeom sliding;  sliding.r = 1e-3; sliding.p = 1e-6;
+    sliding.pdot = 3.0; sliding.v_rel = 30.0;          // то же сближение + скольжение
+
+    const double f_head = contact::impulse_force(head_on, pr, dt_applied).fn;
+    const double f_slide = contact::impulse_force(sliding, pr, dt_applied).fn;
+    check(rel_close(f_head, f_slide),
+          "O11 скольжение не добавляет нормальной силы (тип 3)");
 }
 
 void test_orchestrator_diagnostics()
@@ -690,6 +776,7 @@ int main()
     test_orchestrator_type_off();
     test_orchestrator_dt_limit_types_1_2();
     test_orchestrator_dt_limit_type_3();
+    test_orchestrator_impulse_normal_component();
     test_orchestrator_diagnostics();
     test_orchestrator_dt_collapse_regression();
 
