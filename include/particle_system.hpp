@@ -54,6 +54,14 @@ struct ParticleSystem
     std::vector<int> itype;
     std::vector<char>   axis;     // bool-семантика, плотное хранение
 
+    // --- номер тела (object_id, fiber/PLAN.md §3.1) ---
+    // Для k-файла — PID (parse_k_file); для встроенных генераторов (shock_tube
+    // и др.) — совпадает с itype, чтобы критерий Solid-Solid-Contact на
+    // BC2/BC6 ("разные материалы") не изменился (см. fiber/SPH.md, раздел
+    // «Solid -- Solid»). Сама фильтрация контакта по body[] реализуется в
+    // Ф4 — здесь только поле и его заполнение.
+    std::vector<int> body;
+
     size_t n = 0;                 // актуальное число частиц
 
     // -----------------------------------------------------------------------
@@ -78,6 +86,7 @@ struct ParticleSystem
         rxy.resize(n);    rxz.resize(n);   ryz.resize(n);
         itype.resize(n);
         axis.resize(n);
+        body.resize(n);
     }
 
     size_t size() const { return n; }
@@ -108,6 +117,7 @@ struct ParticleSystem
         exy[i] = 0.0; exz[i] = 0.0; eyz[i] = 0.0;
         rxy[i] = 0.0; rxz[i] = 0.0; ryz[i] = 0.0;
         axis[i] = 0;
+        body[i] = 0;
     }
 
     // Инициализация частицы i (эквивалент Particle::inzializ). В исходном AoS
@@ -152,5 +162,6 @@ struct ParticleSystem
         eyz[dst] = eyz[src]; exz[dst] = exz[src];
         rxz[dst] = rxz[src]; ryz[dst] = ryz[src];
         D[dst] = D[src]; dp[dst] = dp[src]; hsml[dst] = hsml[src]; e_pl[dst] = e_pl[src];
+        body[dst] = body[src];
     }
 };

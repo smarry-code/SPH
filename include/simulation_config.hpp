@@ -20,6 +20,7 @@
 //     переключатели веток компиляции; не являются mutable состоянием.
 // Эти constexpr-сущности корректны с точки зрения ODR и не блокируют 5.2-В.
 #include <cstddef>
+#include <string>
 #include "materials.hpp"
 
 struct SimulationConfig
@@ -66,6 +67,13 @@ struct SimulationConfig
     // --- Материалы (константны после инициализации; ADR-3 этапа 6.3) ---
     Materials mats;
 
+    // --- Нити (fiber/PLAN.md, этап Ф2) ---
+    // Путь к файлу ломаных нитей (см. формат в fiber_input.cpp). Пусто (по
+    // умолчанию) — нитей в расчёте нет. Если задан, а сборка сделана не с
+    // SPH_DIM=3, parse_sph_config бросает std::runtime_error немедленно
+    // (fiber/SPH.md: "Нити поддерживаются только в трёхмерной постановке").
+    std::string fiber_file;
+
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
     // Вызывается из main ДО parse_sph_config: явно фиксирует контракт
     // инициализации конфига (независимо от default member initializers).
@@ -83,4 +91,5 @@ inline void SimulationConfig::apply_defaults()
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;
     maxn = 0;  max_interaction = 0;  moni_particle = 0;
+    fiber_file.clear();
 }

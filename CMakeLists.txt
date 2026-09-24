@@ -172,6 +172,38 @@ endif()
 add_test(NAME kinematics_3d_test COMMAND test_kinematics_3d)
 set_tests_properties(kinematics_3d_test PROPERTIES LABELS "3d")
 
+# --- Модель данных нитей (fiber/PLAN.md, этап Ф2): FiberState, FiberTopology,
+#     FiberMaterial, Model, разбор файла ломаных (fiber_input.cpp), масса/l0/
+#     l_break, body[] в Solid. Нити только при SPH_DIM=3 (Р9) — собственные
+#     объектники конвейера с SPH_DIM=3, по образцу test_kinematics_3d/
+#     test_e2e_3d (решение E1, adr-002-dim-constexpr.md).
+add_executable(test_fiber_model tests/test_fiber_model.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_model PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_model PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_model PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_model PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_model PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_model PRIVATE -fopenmp)
+    target_link_options(test_fiber_model PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_model_test COMMAND test_fiber_model)
+set_tests_properties(fiber_model_test PROPERTIES LABELS "3d")
+
+# --- Границы SPH_DIM != 3 для нитей (fiber/PLAN.md Ф2, пункт 5):
+#     fiber::check_fiber_requires_dim3() обязана бросать исключение. dim —
+#     compile-time constexpr (ADR-002), поэтому ветку dim != 3 нельзя
+#     исполнить в цели, собранной с SPH_DIM=3 (там dim == 3 всегда,
+#     см. test_fiber_model выше). Отдельная лёгкая цель БЕЗ SPH_DIM
+#     (dim = 1 по умолчанию, param.hpp) проверяет именно эту ветку;
+#     check_fiber_requires_dim3() — header-only, конвейер не нужен.
+add_executable(test_fiber_dim_guard tests/test_fiber_dim_guard.cpp)
+target_include_directories(test_fiber_dim_guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME fiber_dim_guard_test COMMAND test_fiber_dim_guard)
+
 # --- End-to-end тест на кейсе BC2 (contact/04-e2e-test-brief.md) ------------
 # Цель линкует ВЕСЬ конвейер (src/*.cpp кроме main.cpp) и компилирует его
 # СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и

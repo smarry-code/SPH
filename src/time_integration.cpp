@@ -333,3 +333,12 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         }
     }
 }
+
+// Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7): тонкая
+// обёртка над прежним циклом, работающая с model.solid как раньше с sys.
+// Нити (model.fiber/model.topology) здесь не интегрируются — это Ф3+.
+void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
+                      double delta_x, RunGuard* guard)
+{
+    time_integration(cfg, model.solid, ntotal, dt, time, delta_x, guard);
+}

@@ -9,6 +9,7 @@
 #include "buffers.hpp"
 #include "simulation_config.hpp"
 #include "run_guard.hpp"
+#include "fiber/model.hpp"
 
 // Вычисление шага по времени из условия Куранта.
 double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal);
@@ -21,3 +22,12 @@ double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, si
 // time_integration об успехе не свидетельствует.
 void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x,
                       RunGuard* guard = nullptr);
+
+// Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7). На этом
+// этапе — тонкая обёртка: вызывает прежнюю логику для Solid-части
+// (model.solid) и не делает ничего физического с нитями (model.fiber/
+// model.topology) — их интеграция в цикл начинается с этапа Ф3. Прежняя
+// сигнатура выше не изменена и продолжает работать без правок для
+// test_e2e_bc2/test_e2e_bc6.
+void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
+                      double delta_x, RunGuard* guard = nullptr);

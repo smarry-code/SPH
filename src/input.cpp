@@ -3,6 +3,7 @@
 // Объявления — в input.hpp. Вспомогательные функции разбора (parse_k_file,
 // shock_tube, shear_cavity) — внутренние (internal linkage / static) этого TU.
 #include "input.hpp"
+#include "fiber/fiber_system.hpp"
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -237,6 +238,11 @@ void parse_k_file(SimulationConfig& cfg, const std::string& filename, ParticleSy
         sys.x[2][idx] = it->second[2];
         sys.mass[idx]  = e.mass;
         sys.itype[idx] = e.pid;
+        // body[] = PID (fiber/PLAN.md §3.1): "для k-файла это PID". Совпадает
+        // с itype здесь только потому, что itype тоже читается из PID выше —
+        // но body[] хранит именно номер тела (object_id), а не материал, и
+        // остаётся отдельным полем для будущего Solid-Solid-Contact (Ф4).
+        sys.body[idx]  = e.pid;
         if (sys.x[0][idx] > 0.0131 && sys.itype[idx] == 3 &&
             sys.x[1][idx] > -1.9e-4 && sys.x[1][idx] < 1.9e-4 &&
             sys.x[2][idx] > -1.9e-4 && sys.x[2][idx] < 1.9e-4)
@@ -376,8 +382,16 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             }
             cfg.contact_impulse_gamma = v;
         }
+        else if (key == "fiber_file")
+        {
+            cfg.fiber_file = value;
+            // fiber/PLAN.md, этап Ф2, пункт 5: если нити реально заданы, а
+            // dim != 3, это ошибка, и она должна выявляться здесь, на этапе
+            // разбора конфигурации, а не позже в середине расчёта.
+            fiber::check_fiber_requires_dim3();
+        }
     }
-    in.close();    
+    in.close();
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)
@@ -497,6 +511,15 @@ void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, doub
             sys.vx[0][i] = 0.0;
             sys.x[0][i] += delta_x; //=======
         }
+    }
+
+    // body[] = itype[] (fiber/PLAN.md §3.1): встроенные генераторы не знают
+    // отдельного номера тела, поэтому body совпадает с материалом — это
+    // сохраняет нынешний критерий Solid-Solid-Contact «разные материалы»
+    // (fiber/SPH.md, раздел «Solid -- Solid») без изменений на BC2/BC6.
+    for (size_t i = 0; i < ntotal; ++i)
+    {
+        sys.body[i] = sys.itype[i];
     }
 
     // Контроль корректности инициализации: каждая частица обязана получить
@@ -666,6 +689,7 @@ void shear_cavity(ParticleSystem& sys, size_t& ntotal)
         sys.u[i] = 357.1;     // Внутренняя энергия
         sys.itype[i] = 2;     // Водяная частица
         sys.hsml[i] = dx;     // Длина сглаживания = начальный шаг
+        sys.body[i] = sys.itype[i];   // body[] = itype[] (fiber/PLAN.md §3.1)
     }
 }
 
@@ -778,6 +802,10 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
 
             // Чтение длины сглаживания
             iss >> sys.hsml[i];
+
+            // body[] = itype[] (fiber/PLAN.md §3.1): формат particles.dat не
+            // содержит отдельного номера тела.
+            sys.body[i] = sys.itype[i];
 
             // Проверка на ошибки чтения
             if (iss.fail())
