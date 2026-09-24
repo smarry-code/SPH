@@ -690,7 +690,7 @@ void test_orchestrator_dt_limit_type_3()
 
 void test_orchestrator_impulse_normal_component()
 {
-    // O11: сила типа 3 строится на нормальной составляющей скорости.
+    // O12: сила типа 3 строится на нормальной составляющей скорости.
     // Две пары с ОДИНАКОВЫМ сближением вдоль линии центров, но разной полной
     // относительной скоростью, должны давать одинаковое ускорение. При
     // буквальной (2.10) ускорения различались бы.
@@ -709,7 +709,7 @@ void test_orchestrator_impulse_normal_component()
     const double f_head = contact::impulse_force(head_on, pr, dt_applied).fn;
     const double f_slide = contact::impulse_force(sliding, pr, dt_applied).fn;
     check(rel_close(f_head, f_slide),
-          "O11 скольжение не добавляет нормальной силы (тип 3)");
+          "O12 скольжение не добавляет нормальной силы (тип 3)");
 }
 
 void test_orchestrator_diagnostics()
