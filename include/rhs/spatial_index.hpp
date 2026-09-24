@@ -229,14 +229,35 @@ private:
         return d2;
     }
 
-    // Обходит все существующие соседние ячейки (до 3^Dim, clamp по границам
-    // сетки — несуществующие соседи просто пропускаются, дублей не
-    // возникает: разным смещениям всегда соответствуют разные многоиндексы).
-    template <class F>
-    void for_each_neighbor_cell(const std::array<int, Dim>& center, F&& f) const
+    // Сколько слоёв соседних ячеек в каждую сторону нужно обойти, чтобы
+    // гарантированно найти все точки в пределах radius. Если cell_size >=
+    // radius, достаточно одного слоя (offset -1..0..1, как раньше). Но
+    // SpatialIndex строится с ПРОИЗВОЛЬНЫМ cell_size (build() принимает его
+    // явным параметром — в отличие от FlatGrid, где ячейка выводится из
+    // hsml), и ничто не гарантирует cell_size >= radius: например,
+    // радиус поиска может отличаться от размера ячейки, используемого при
+    // построении индекса. Тогда пара точек на расстоянии <= radius может
+    // лежать в ячейках, отстоящих друг от друга более чем на один шаг
+    // сетки — фиксированный 3^Dim стенсил такие пары молча теряет. Formula
+    // floor(radius/cell_size)+1 — стандартная безопасная (не обязательно
+    // самая узкая) оценка: |floor(a/h)-floor(b/h)| <= floor(|a-b|/h)+1 для
+    // любых a,b,h>0; использована вместо ceil(...), чтобы не зависеть от
+    // округления чисел с плавающей точкой around точных кратных cell_size.
+    int neighbor_reach(double radius) const
     {
+        return static_cast<int>(std::floor(radius / cell_size_)) + 1;
+    }
+
+    // Обходит все существующие ячейки в кубе (2*reach+1)^Dim вокруг center
+    // (clamp по границам сетки — несуществующие соседи просто пропускаются,
+    // дублей не возникает: разным смещениям всегда соответствуют разные
+    // многоиндексы).
+    template <class F>
+    void for_each_neighbor_cell(const std::array<int, Dim>& center, int reach, F&& f) const
+    {
+        const std::size_t span = static_cast<std::size_t>(2 * reach + 1);
         std::size_t combos = 1;
-        for (std::size_t d = 0; d < Dim; ++d) combos *= 3;
+        for (std::size_t d = 0; d < Dim; ++d) combos *= span;
         for (std::size_t k = 0; k < combos; ++k)
         {
             std::size_t kk = k;
@@ -244,8 +265,8 @@ private:
             bool valid = true;
             for (std::size_t d = 0; d < Dim; ++d)
             {
-                const int off = static_cast<int>(kk % 3) - 1;
-                kk /= 3;
+                const int off = static_cast<int>(kk % span) - reach;
+                kk /= span;
                 const int v = center[d] + off;
                 if (v < 0 || v >= ncell_[d])
                 {
@@ -266,10 +287,11 @@ private:
         auto [b, e] = cell_range(cell_lin);
         if (b == e) return;
         const std::array<int, Dim> center = decode(cell_lin);
+        const int reach = neighbor_reach(radius);
         for (std::size_t pi = b; pi < e; ++pi)
         {
             const std::size_t i = sorted_idx_[pi];
-            for_each_neighbor_cell(center, [&](std::size_t nb_lin) {
+            for_each_neighbor_cell(center, reach, [&](std::size_t nb_lin) {
                 auto [nb, ne] = cell_range(nb_lin);
                 for (std::size_t pj = nb; pj < ne; ++pj)
                 {
@@ -289,8 +311,9 @@ private:
         std::array<double, Dim> p{};
         for (std::size_t d = 0; d < Dim; ++d) p[d] = other_coords[d][a];
         const std::array<int, Dim> cell = cell_of_point(p);
+        const int reach = neighbor_reach(radius);
 
-        for_each_neighbor_cell(cell, [&](std::size_t nb_lin) {
+        for_each_neighbor_cell(cell, reach, [&](std::size_t nb_lin) {
             auto [nb, ne] = cell_range(nb_lin);
             for (std::size_t pb = nb; pb < ne; ++pb)
             {
