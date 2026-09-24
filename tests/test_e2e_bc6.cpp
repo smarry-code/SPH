@@ -1061,7 +1061,12 @@ Curve load_reference()
 // Режим --plot-from: расчёта нет, читаются файлы bc6_curve_<тип>.txt, которые
 // оставили прогоны с --emit-curve. Отсутствующий тип — не ошибка сборки
 // графика, а сообщение: прогон по этому типу просто ещё не делали.
-void emit_plot_from_dir(const fs::path& dir, bool full, const fs::path& out_path)
+//
+// delta_x > 0 — шаг решётки, с которым посчитаны выгрузки (ключ --delta-x);
+// без него подпись назвала бы штатный шаг и штатное число частиц, даже если
+// кривые посчитаны на другой сетке.
+void emit_plot_from_dir(const fs::path& dir, bool full, const fs::path& out_path,
+                        double delta_x)
 {
     std::printf("\n[график] сборка из выгрузок: %s\n", dir.string().c_str());
 
@@ -1112,7 +1117,7 @@ void emit_plot_from_dir(const fs::path& dir, bool full, const fs::path& out_path
     }
 
     // Геометрия нужна только для подписи: строится БЕЗ частиц.
-    const bc6::Geometry g = bc6::plan_geometry(case_delta_x(full));
+    const bc6::Geometry g = bc6::plan_geometry(delta_x > 0.0 ? delta_x : case_delta_x(full));
     e2e::emit_plot(series, ref, bc6_labels(g, shift), out_path);
 }
 
@@ -1252,7 +1257,7 @@ int main(int argc, char** argv)
             return 2;
         }
         std::printf("=== e2e BC6: сводный график, режим %s ===\n", full ? "full" : "smoke");
-        emit_plot_from_dir(plot_from_dir, full, plot_path);
+        emit_plot_from_dir(plot_from_dir, full, plot_path, delta_x_override);
         std::printf("\n=== e2e BC6: %s (провалов: %d) ===\n",
                     e2e::failures == 0 ? "график построен" : "ГРАФИК НЕ ПОСТРОЕН",
                     e2e::failures);
