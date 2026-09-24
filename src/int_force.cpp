@@ -685,7 +685,13 @@ void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, 
                 //dszz[i] = G_ * (sys.ezz[i] - ((sys.exx[i] + sys.eyy[i] + sys.ezz[i]) / 3.0)) - 2 * (sys.sxz[i] * sys.rxz[i] - sys.syz[i] * sys.ryz[i]);
                 dsxx[i] = 2 * G_ * (sys.exx[i] + (drho[i] / (3.0 * sys.rho[i]))) + 2 * (sys.sxy[i] * sys.rxy[i] + sys.sxz[i] * sys.rxz[i]);
                 dsyy[i] = 2 * G_ * (sys.eyy[i] + (drho[i] / (3.0 * sys.rho[i]))) + 2 * (sys.syz[i] * sys.ryz[i] - sys.sxy[i] * sys.rxy[i]);
-                dszz[i] = 2 * G_ * (sys.ezz[i] + (drho[i] / (3.0 * sys.rho[i]))) - 2 * (sys.sxz[i] * sys.rxz[i] - sys.syz[i] * sys.ryz[i]);
+                // Поворотные члены производной Яуманна: dS/dt = ... + (R·S − S·R),
+                // R_ab = ½(∂v_a/∂x_b − ∂v_b/∂x_a). Для zz это −2(sxz·rxz + syz·ryz);
+                // прежний знак «− syz·ryz» делал след поворотной части равным
+                // 4·syz·ryz, и при вращении вокруг x девиатор переставал быть
+                // бесследовым (tests/test_kinematics_3d.cpp, проверки C2–C4).
+                // При dim = 2 ryz = 0, и правка осесимметричную ветку не меняет.
+                dszz[i] = 2 * G_ * (sys.ezz[i] + (drho[i] / (3.0 * sys.rho[i]))) - 2 * (sys.sxz[i] * sys.rxz[i] + sys.syz[i] * sys.ryz[i]);
                 dsxy[i] = 2 * G_ * sys.exy[i] + sys.rxy[i] * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * sys.ryz[i] + sys.syz[i] * sys.rxz[i];
                 dsyz[i] = 2 * G_ * sys.eyz[i] - sys.sxy[i] * sys.rxz[i] - sys.sxz[i] * sys.rxy[i] + sys.ryz[i] * (sys.szz[i] - sys.syy[i]);
                 dsxz[i] = 2 * G_ * sys.exz[i] + sys.rxz[i] * (sys.szz[i] - sys.sxx[i]) - sys.sxy[i] * sys.ryz[i] + sys.syz[i] * sys.rxy[i];

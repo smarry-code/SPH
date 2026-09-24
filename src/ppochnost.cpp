@@ -150,7 +150,9 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
         {
             eps_e_x = ((dsx - 2 * (sys.sxy[i] * sys.rxy[i] + sys.sxz[i] * sys.rxz[i])) / gem) + eps_vol;
             eps_e_y = ((dsy - 2 * (sys.syz[i] * sys.ryz[i] - sys.sxy[i] * sys.rxy[i])) / gem) + eps_vol;
-            eps_e_z = ((dsz - (-2 * (sys.sxz[i] * sys.rxz[i] - sys.syz[i] * sys.ryz[i]))) / gem) + eps_vol;
+            // Поворотная часть — та же, что у dszz в int_force (−2(sxz·rxz +
+            // syz·ryz)); знак при syz·ryz исправлен вместе с ней.
+            eps_e_z = ((dsz - (-2 * (sys.sxz[i] * sys.rxz[i] + sys.syz[i] * sys.ryz[i]))) / gem) + eps_vol;
             eps_e_xy = (dsxy - (sys.rxy[i] * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * sys.ryz[i] + sys.syz[i] * sys.rxz[i])) / gem;
             eps_e_yz = (dsyz - (-sys.sxy[i] * sys.rxz[i] - sys.sxz[i] * sys.rxy[i] + sys.ryz[i] * (sys.szz[i] - sys.syy[i]))) / gem;
             eps_e_xz = (dsxz - (sys.rxz[i] * (sys.szz[i] - sys.sxx[i]) - sys.sxy[i] * sys.ryz[i] + sys.syz[i] * sys.rxy[i])) / gem;

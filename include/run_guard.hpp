@@ -15,6 +15,11 @@
 //   Stalled   — шаг деградировал настолько, что расчёт не финиширует никогда.
 //               Это дефект модели или данных, бюджет тут не поможет.
 //
+// Третий исход — StepLimit — аварией не является: это штатный останов после
+// заданного числа шагов (set_step_limit). Нужен регрессионному тесту
+// (tests/test_regression.cpp), который сравнивает состояние после ровно N
+// шагов: останов по t_total при чуть разошедшемся dt дал бы разное число шагов.
+//
 // По умолчанию выключен (лимиты нулевые): поведение конвейера без явной
 // настройки не меняется, main.cpp сторож не передаёт.
 #include <chrono>
@@ -29,7 +34,8 @@ public:
     {
         None,       // не сработал
         WallClock,  // исчерпан бюджет времени
-        Stalled     // расчёт перестал продвигаться
+        Stalled,    // расчёт перестал продвигаться
+        StepLimit   // выполнено заданное число шагов (штатный останов)
     };
 
     RunGuard() = default;
@@ -45,6 +51,9 @@ public:
           patience_(patience)
     {
     }
+
+    // Останов после ровно max_steps шагов; 0 — без предела.
+    void set_step_limit(size_t max_steps) { max_steps_ = max_steps; }
 
     // Вызывается ровно один раз за шаг, после обновления time.
     // Возвращает true, если цикл нужно прервать.
@@ -88,11 +97,24 @@ public:
             reason_ = Reason::WallClock;
             return true;
         }
+
+        // Последним: если на том же шаге сработал WallClock или Stalled,
+        // причиной останова должна остаться авария, а не штатный предел.
+        if (max_steps_ > 0 && steps_ >= max_steps_)
+        {
+            reason_ = Reason::StepLimit;
+            return true;
+        }
         return false;
     }
 
     bool   triggered() const { return reason_ != Reason::None; }
     Reason reason()    const { return reason_; }
+    // Останов аварийный (WallClock или Stalled), а не штатный StepLimit.
+    bool   failed()    const
+    {
+        return reason_ == Reason::WallClock || reason_ == Reason::Stalled;
+    }
 
     double elapsed_s() const
     {
@@ -154,6 +176,11 @@ public:
                << projected_ << " шагов (потолок " << max_projected_steps_
                << "). Это коллапс шага, а не нехватка времени.";
         }
+        else if (reason_ == Reason::StepLimit)
+        {
+            os << "Расчёт остановлен штатно: выполнено заданное число шагов ("
+               << max_steps_ << ").";
+        }
         else
         {
             return "сторож не срабатывал";
@@ -181,6 +208,7 @@ private:
     double wall_limit_s_        = 0.0;
     double max_projected_steps_ = 0.0;
     size_t patience_            = 1;
+    size_t max_steps_           = 0;
 
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
     Reason reason_   = Reason::None;

@@ -63,7 +63,9 @@ namespace fs = std::filesystem;
 inline constexpr size_t kIdxItype = 1;
 inline constexpr size_t kIdxMass  = 2;
 inline constexpr size_t kIdxX     = 3;                              // r
-inline constexpr size_t kIdxVAxis = 3 + dim + (dim > 1 ? 1 : 0);     // v_z при dim = 2
+// Осевая скорость — последняя компонента (v_z при dim = 2 и dim = 3), как и
+// в log.txt (time_integration: moni_axis = dim − 1).
+inline constexpr size_t kIdxVAxis = 3 + dim + (dim - 1);
 inline constexpr size_t kIdxRho   = 3 + 2 * dim;
 inline constexpr size_t kIdxD     = kIdxRho + 6;                     // rho p u c sigma_i e_pl D
 inline constexpr size_t kMinCols  = kIdxD + 1;
@@ -205,8 +207,10 @@ inline FrameScan scan_frames(const fs::path& dir, const FrameProbe& probe)
                 if (std::isfinite(d) && d > frame_damage)
                 {
                     frame_damage = d;
-                    frame_damage_r = vals[kIdxX];
-                    frame_damage_z = vals[kIdxX + 1];
+                    // r — расстояние от оси (в 3D ось — z), z — осевая координата.
+                    frame_damage_r = (dim == 3) ? std::hypot(vals[kIdxX], vals[kIdxX + 1])
+                                                : vals[kIdxX];
+                    frame_damage_z = vals[kIdxX + dim - 1];
                     frame_damage_index = row;
                 }
             }

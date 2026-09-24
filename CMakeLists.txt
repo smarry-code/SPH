@@ -112,6 +112,28 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME axisym_test COMMAND test_axisym)
 
+# --- Тест трёхмерной ветки силового расчёта (dim == 3) ----------------------
+# По образцу test_axisym, но для ветки dim == 3, которую не проверяет ни
+# один сквозной тест: простой сдвиг, сжатие, жёсткое вращение (производная
+# Яуманна), покой при однородном и линейном поле напряжений. Нити
+# (fiber/PLAN.md) живут только в 3D, и Solid рядом с ними считается этой
+# веткой. Свои объектники конвейера с SPH_DIM=3 — по той же причине (ADR-002).
+add_executable(test_kinematics_3d tests/test_kinematics_3d.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_kinematics_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_kinematics_3d PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_kinematics_3d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_kinematics_3d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_kinematics_3d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_kinematics_3d PRIVATE -fopenmp)
+    target_link_options(test_kinematics_3d PRIVATE -fopenmp)
+endif()
+add_test(NAME kinematics_3d_test COMMAND test_kinematics_3d)
+set_tests_properties(kinematics_3d_test PROPERTIES LABELS "3d")
+
 # --- End-to-end тест на кейсе BC2 (contact/04-e2e-test-brief.md) ------------
 # Цель линкует ВЕСЬ конвейер (src/*.cpp кроме main.cpp) и компилирует его
 # СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и
@@ -300,6 +322,127 @@ add_custom_target(bc6_plot
     DEPENDS test_e2e_bc6
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     COMMENT "Полный прогон BC6 и перестройка ${SPH_BC6_PLOT}"
+    USES_TERMINAL VERBATIM)
+
+# --- Сквозной 3D-тест на уменьшенном BC2 (tests/test_e2e_3d.cpp) -----------
+# Материалы, толщины и скорости BC2, радиусы уменьшены до 4 мм у керамики
+# (tests/bc2_mini3d_geometry.hpp). Проверяет ветку dim = 3 целиком: здоровье,
+# сохранение массы, импульса и энергии, симметрию решётки, приход волны.
+# Свои объектники конвейера с SPH_DIM=3 (решение E1).
+add_executable(test_e2e_3d tests/test_e2e_3d.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_3d PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_3d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_3d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_3d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_3d PRIVATE -fopenmp)
+    target_link_options(test_e2e_3d PRIVATE -fopenmp)
+endif()
+# Smoke: ровно 100 шагов, по тесту на тип контакта.
+foreach(_type RANGE 0 3)
+    add_test(NAME e2e_3d_smoke_contact${_type}
+             COMMAND test_e2e_3d --contact-type=${_type} --time-limit=240)
+    set_tests_properties(e2e_3d_smoke_contact${_type} PROPERTIES LABELS "e2e;3d" TIMEOUT 300)
+endforeach()
+# Баланс энергии без XSPH: поправка av прибавляется к скорости и уносит
+# энергию, поэтому сохранение полной энергии проверяется при epsilon = 0.
+add_test(NAME e2e_3d_energy_noxsph COMMAND test_e2e_3d --no-xsph --time-limit=240)
+set_tests_properties(e2e_3d_energy_noxsph PROPERTIES LABELS "e2e;3d" TIMEOUT 300)
+# Полный прогон до t_total (3.5 мкс) — под той же опцией, что полные BC2/BC6.
+if(SPH_E2E_SLOW_TESTS)
+    foreach(_type RANGE 0 3)
+        add_test(NAME e2e_3d_full_contact${_type}
+                 COMMAND test_e2e_3d --full --contact-type=${_type} --time-limit=1800)
+        set_tests_properties(e2e_3d_full_contact${_type}
+                             PROPERTIES LABELS "slow;e2e;3d" TIMEOUT 3600)
+    endforeach()
+endif()
+
+# --- Регрессионный тест на кейсах BC2 и BC6 (tests/test_regression.cpp) ----
+# Сквозные тесты выше сверяют расчёт с ПРИБОРНЫМ эталоном в грубых воротах и
+# ловят только кратную поломку. Регрессия сверяет все поля каждой частицы после
+# N = 1 и N = K шагов с эталоном, снятым этим же кодом (tests/data/regression/),
+# и ловит любое изменение расчёта сверх допуска. Сборка — как у e2e: свои
+# объектники конвейера с SPH_DIM=2 (решение E1).
+add_executable(test_regression tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_regression PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_regression PRIVATE
+    SPH_DIM=2
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_regression PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_regression PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_regression PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_regression PRIVATE -fopenmp)
+    target_link_options(test_regression PRIVATE -fopenmp)
+endif()
+
+add_test(NAME regression_selfcheck COMMAND test_regression --selfcheck)
+set_tests_properties(regression_selfcheck PROPERTIES LABELS "regression" TIMEOUT 60)
+# По тесту на кейс и тип контакта — по той же причине, что у e2e: провал
+# одного не скрывает остальные, и виновник называется по имени.
+foreach(_case bc2 bc6)
+    foreach(_type RANGE 0 3)
+        add_test(NAME regression_${_case}_contact${_type}
+                 COMMAND test_regression --case=${_case} --contact-type=${_type}
+                         --time-limit=240)
+        set_tests_properties(regression_${_case}_contact${_type}
+                             PROPERTIES LABELS "regression" TIMEOUT 300)
+    endforeach()
+endforeach()
+
+# Та же программа в 3D: кейс bc2mini3d (уменьшенный BC2, 3648 частиц), K = 50.
+# Нужна, чтобы перенос Solid на новую схему RHS (fiber/PLAN.md, Ф4) не сломал
+# ветку dim = 3, в которой будут жить нити.
+add_executable(test_regression_3d tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_regression_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_regression_3d PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_regression_3d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_regression_3d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_regression_3d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_regression_3d PRIVATE -fopenmp)
+    target_link_options(test_regression_3d PRIVATE -fopenmp)
+endif()
+add_test(NAME regression_selfcheck_3d COMMAND test_regression_3d --selfcheck)
+set_tests_properties(regression_selfcheck_3d PROPERTIES LABELS "regression;3d" TIMEOUT 60)
+foreach(_type RANGE 0 3)
+    add_test(NAME regression_bc2mini3d_contact${_type}
+             COMMAND test_regression_3d --case=bc2mini3d --contact-type=${_type}
+                     --time-limit=240)
+    set_tests_properties(regression_bc2mini3d_contact${_type}
+                         PROPERTIES LABELS "regression;3d" TIMEOUT 300)
+endforeach()
+
+# Перегенерация эталонов — осознанное действие владельца, а не часть прогона
+# тестов (запись в дерево исходников):
+#     cmake --build build --target regression_golden
+# Скрипт ставит OMP_NUM_THREADS=1, обходит обе программы (2D и 3D) и вписывает
+# в шапку commit и дату.
+add_custom_target(regression_golden
+    COMMAND ${CMAKE_COMMAND}
+            -DSPH_REG_EXE=$<TARGET_FILE:test_regression>
+            -DSPH_REG_EXE_3D=$<TARGET_FILE:test_regression_3d>
+            "-DSPH_REG_OUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/regression"
+            "-DSPH_REG_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/regression_golden.cmake"
+    DEPENDS test_regression test_regression_3d
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMENT "Перегенерация регрессионных эталонов в tests/data/regression"
     USES_TERMINAL VERBATIM)
 
 # --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.

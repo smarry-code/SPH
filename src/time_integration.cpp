@@ -315,7 +315,10 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         // с которым сверяется эталон. Раньше писалась vx[0] (радиальная), из-за
         // чего расчёт и эксперимент были несопоставимы в принципе.
         // Прежние Керамика/**/log_*.txt содержат vx[0] и с новыми несравнимы.
-        const size_t moni_axis = (dim > 1) ? 1 : 0;
+        // Осевая компонента — последняя координата: z в 3D, z (ось симметрии)
+        // в осесимметричном 2D, x в 1D. Прежняя запись (dim > 1 ? 1 : 0)
+        // совпадает с этой при dim <= 2, а в 3D снимала бы поперечную v_y.
+        const size_t moni_axis = dim - 1;
         file << time << " " << sys.vx[moni_axis][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
         file.close();
 
@@ -324,7 +327,8 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         // признаков зависания для ОС нет. Причина обрыва остаётся в guard.
         if (guard != nullptr && guard->should_stop(dt, time, t_total))
         {
-            std::cerr << guard->message() << std::endl;
+            // Штатный останов по числу шагов (StepLimit) аварией не является.
+            if (guard->failed()) std::cerr << guard->message() << std::endl;
             break;
         }
     }
