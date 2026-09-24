@@ -76,6 +76,44 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(test_pair_graph PRIVATE -fopenmp)
 endif()
 
+# --- Инфраструктура нитей, этап Ф1 (fiber/PLAN.md): CpuExecutor,
+#     ContributionWriter/reduce, SpatialIndex, RhsWorkspace (include/rhs/).
+#     Чистая инфраструктура без физики — не зависит от SPH_DIM/param.hpp,
+#     размерность задаётся шаблонным параметром SpatialIndex<Dim>, поэтому
+#     цели собираются один раз с параметрами по умолчанию, как test_flat_grid.
+add_executable(test_executor tests/test_executor.cpp)
+target_include_directories(test_executor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME executor_test COMMAND test_executor)
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_executor PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_executor PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_executor PRIVATE -fopenmp)
+    target_link_options(test_executor PRIVATE -fopenmp)
+endif()
+
+add_executable(test_spatial_index tests/test_spatial_index.cpp)
+target_include_directories(test_spatial_index PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME spatial_index_test COMMAND test_spatial_index)
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_spatial_index PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_spatial_index PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_spatial_index PRIVATE -fopenmp)
+    target_link_options(test_spatial_index PRIVATE -fopenmp)
+endif()
+
+add_executable(test_contributions tests/test_contributions.cpp)
+target_include_directories(test_contributions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME contributions_test COMMAND test_contributions)
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_contributions PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_contributions PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_contributions PRIVATE -fopenmp)
+    target_link_options(test_contributions PRIVATE -fopenmp)
+endif()
+
 # --- Тест моста AoS <-> SoA (Этап 4.3.1): тождество gather/scatter. ---
 add_executable(test_particle_system tests/test_particle_system.cpp)
 target_include_directories(test_particle_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
