@@ -158,8 +158,11 @@ inline void compute_solid_contact_contributions(
 // contact_max_delta -- через parallel_reduce"; dt_limit -- как сейчас в
 // contact_force.hpp/ADR-007). Отдельный проход через CpuExecutor::
 // parallel_reduce, буквально по формулировке плана; независим от
-// compute_solid_contact_contributions (та же геометрия пересчитывается,
-// цена приемлема -- диагностика вызывается не на каждый шаг, а по запросу).
+// compute_solid_contact_contributions (та же геометрия пересчитывается).
+// Вызывается КАЖДЫЙ шаг из src/single_step.cpp (fiber/PLAN.md, этап
+// Ф4-B1) -- ADR-007 требует min_dt_contact ограничивающим продовый шаг
+// сейчас же, а не по отдельному запросу; цена второго прохода по real_pairs
+// приемлема (см. src/single_step.cpp, комментарий у вызова).
 // ----------------------------------------------------------------------
 struct SolidContactDiagnostics
 {

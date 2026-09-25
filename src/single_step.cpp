@@ -1,6 +1,19 @@
 // single_step.cpp
 // Определения time_print и оркестратора одного шага симуляции (single_step).
 // Объявления — в single_step.hpp.
+//
+// fiber/PLAN.md, этап Ф4-B1: single_step() ниже — НОВЫЙ путь RHS для Solid
+// (interactions/solid_sph.hpp, interactions/solid_contact.hpp), подключённый
+// к продовому циклу. Обе перегрузки time_integration (ParticleSystem&,
+// fiber::Model&, src/time_integration.cpp) вызывают именно эту функцию,
+// поэтому переключение её тела переключает оба цикла одновременно — это
+// единственная точка врезки, минимально затрагивающая остальной код.
+//
+// Старый путь (direct_find/link_list -> con_density -> int_force -> art_visc
+// -> ext_force -> h_upgrade -> av_vel) сохранён НИЖЕ под именем
+// single_step_legacy — компилируется, но не вызывается (fiber/PLAN.md, этап
+// Ф4-B1: "сохранить старый single_step... физически доступным... не
+// удалять"). Удаление — часть Ф4-B2, после независимого ревью части B1.
 #include "single_step.hpp"
 #include "direct_find.hpp"
 #include "linked_list.hpp"
@@ -12,12 +25,18 @@
 #include "ext_force.hpp"
 #include "h_upgrade.hpp"
 
+#include "interactions/solid_contact.hpp"
+#include "interactions/solid_sph.hpp"
+#include "rhs/contributions.hpp"
+#include "rhs/cpu_executor.hpp"
+
 #include <chrono>
 #include <ctime>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
 #include <omp.h>
 
 #ifdef _WIN32
@@ -52,7 +71,7 @@ void time_print()
     std::wcout << "Текущее время: " << buffer << std::endl;
 }
 
-// Заглушки для недостающих функций
+// Заглушки для недостающих функций (используются только single_step_legacy)
 static void tree_search()
 {
     std::cout << "tree_search (stub) called" << std::endl;
@@ -68,8 +87,182 @@ static void art_heat()
     std::cout << "art_heat (stub) called" << std::endl;
 }
 
-// Основная функция single_step
+// ============================================================================
+// single_step — НОВЫЙ путь (fiber/PLAN.md, этап Ф4-B1).
+//
+// Граф вычисления (fiber/PLAN.md §3.4): Solid derived (EOS) -> GhostSet ->
+// SolidExtended -> поиск пар (SpatialIndex) -> Solid-SPH kernel + Solid-
+// Solid-Contact kernel -> reduce_contributions -> finalize_solid -> запись
+// в выходные параметры + шим совместимости в sys.
+//
+// ШИМ СОВМЕСТИМОСТИ (решение координатора, НЕ часть Ф7): p, c (EOS) и
+// exx..eyz, rxy..ryz (скорости деформаций/поворота) по-прежнему пишутся в
+// sys, хотя физически они теперь считаются в RhsWorkspace-эквиваленте
+// (SolidDerived/SolidFinal). Причина — src/ppochnost.cpp (prochnost_mises,
+// prochnost_cem_JH2) и compute_cfl_timestep (src/time_integration.cpp)
+// читают их из sys НАПРЯМУЮ и вызываются time_integration.cpp ПОСЛЕ
+// single_step на каждом шаге; переносить их читателей на новую схему —
+// содержание этапа Ф7 (fiber/PLAN.md §3.6, раздел «### Ф7. Postprocessing»:
+// «перенос прочности (Мизес, JH-2)»), не Ф4. Шим временный и будет убран
+// вместе с этим переносом.
+//
+// h_upgrade (sle) НЕ входит в новый RHS-путь по плану (переезжает в
+// Postprocessing на Ф7) — вызывается как раньше, старым кодом. sle == 1
+// (BC2/BC6 и все текущие конфиги) не использует пары соседей (h == fac*
+// (mass/rho)^(1/dim), src/h_upgrade.cpp) — вызывается с пустым списком пар.
+// sle == 2 пары ИСПОЛЬЗУЕТ (сумма div v по niac), а новый путь их в формате
+// старого поиска не строит — обнаружено явно исключением, а не молча
+// неверным результатом (kNoLimit-подобная защита).
+// ============================================================================
 void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, double dt, size_t ntotal, std::vector<double>& t, std::vector<double>& tdsdt,
+                 std::vector<std::vector<double>>& dx, std::vector<std::vector<double>>& dvx, std::vector<double>& du, std::vector<double>& ds,
+                 std::vector<double>& drho, std::vector<std::vector<double>>& av, std::vector<double>& dsxx, std::vector<double>& dsyy,
+                 std::vector<double>& dszz, std::vector<double>& dsxy, std::vector<double>& dsyz, std::vector<double>& dsxz, WorkBuffers& wb,
+                 PairGraph& graph)
+{
+    // itimestep — нужен только link_list (старый поиск соседей с кэшем по
+    // шагам, nnps == 2); новый путь строит SpatialIndex заново на каждом
+    // вызове. graph (PairGraph/раскраска) — инфраструктура atomic-ветви
+    // старого int_force/art_visc/av_vel; rhs::reduce_contributions её не
+    // использует (reduce по шардам owner-computes, fiber/PLAN.md §3.5).
+    // t, ds — унаследованные от старого single_step мёртвые выходные
+    // параметры (ни старый int_force, ни time_integration.cpp их не
+    // читают после вызова single_step) — сохранены нетронутыми только ради
+    // неизменности сигнатуры (её меняют оба вызова в time_integration.cpp).
+    (void)itimestep;
+    (void)graph;
+    (void)t;
+    (void)ds;
+
+    if (cfg.sle == 2)
+    {
+        throw std::runtime_error(
+            "single_step: sle=2 требует сумму по парам соседей (div v), которую "
+            "новый путь RHS (fiber/PLAN.md, этап Ф4-B1) не строит в формате "
+            "старого поиска для h_upgrade; ни один текущий конфиг (BC2/BC6 -> "
+            "sle=1) sle=2 не использует. Поддержать sle=2 в новом пути — часть "
+            "переноса h_upgrade в Postprocessing (fiber/PLAN.md, этап Ф7).");
+    }
+
+    // CpuExecutor — один на вызов (num_threads=0 => omp_get_max_threads(),
+    // тот же счётчик потоков, что main.cpp выставляет один раз через
+    // omp_set_num_threads(cfg.num_threads), rhs/cpu_executor.hpp). Часть A
+    // (test_rhs_equivalence) строит executor так же.
+    rhs::CpuExecutor exec;
+
+    // --- Solid derived: EOS (p, c) -- fiber/PLAN.md §3.6 -------------------
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec, cfg.mats, sys, ntotal, derived);
+
+    // --- GhostSet + SolidExtended -- замена virt_part.cpp -------------------
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, ntotal, ghosts);
+
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, ntotal, derived, ghosts, ext);
+
+    // --- Поиск пар Solid-SPH (общий для Solid-SPH и Solid-Solid-Contact,
+    // fiber/SPH.md: "Одна и та же построенная spatial structure может
+    // использоваться несколькими interaction types") --------------------
+    interactions::SolidSphSearchResult search;
+    interactions::build_solid_sph_search(exec, cfg, ext, search);
+
+    // --- Compute interaction kernels -> contributions -----------------------
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers, contact_buffers;
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
+    interactions::compute_solid_contact_contributions(exec, cfg, cfg.mats, sys, derived.c, dt,
+                                                        search.real_pairs, contact_buffers);
+
+    // --- Reduce (owner-computes по шардам, fiber/PLAN.md §3.5) -------------
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> all_buffers = sph_buffers;
+    all_buffers.insert(all_buffers.end(), contact_buffers.begin(), contact_buffers.end());
+    const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, all_buffers, ntotal);
+
+    // --- Finalize (parallel_for по реальным частицам) -----------------------
+    std::vector<interactions::SolidFinal> finalres;
+    interactions::finalize_solid(exec, cfg.mats, sys, ntotal, reduced, finalres);
+
+    // --- Диагностика контакта -- заполняет wb (ADR-007), как старый
+    // ext_force: min_dt_contact ограничивает шаг в time_integration.cpp,
+    // contact_pair_count/contact_max_delta -- вывод прогресса. Вызывается
+    // каждый шаг (не "по запросу", в отличие от комментария в
+    // interactions/solid_contact.hpp у compute_solid_contact_diagnostics) --
+    // ADR-007 требует min_dt_contact СЕЙЧАС же ограничивающим ПРОДОВЫЙ шаг,
+    // а не по отдельному запросу диагностики.
+    wb.reset_contact();
+    if (cfg.contact_force_type != contact::Off)
+    {
+        const interactions::SolidContactDiagnostics diag = interactions::compute_solid_contact_diagnostics(
+            exec, cfg, cfg.mats, sys, derived.c, dt, search.real_pairs);
+        wb.contact_pair_count = diag.pair_count;
+        wb.contact_max_delta = diag.max_delta;
+        wb.min_dt_contact = diag.min_dt;
+    }
+
+    // --- Запись в выходные параметры + шим совместимости в sys -------------
+    for (size_t i = 0; i < ntotal; ++i)
+    {
+        const interactions::SolidFinal& f = finalres[i];
+        drho[i] = f.drho;
+        du[i] = f.du;
+        for (size_t d = 0; d < dim; ++d)
+        {
+            dvx[d][i] = f.dv[d];
+            dx[d][i] = sys.vx[d][i]; // dx/dt = vx, как в старом пути
+            // XSPH: СЫРАЯ сумма (SolidDelta::xsph) -> *cfg.epsilon, как
+            // старый av_vel.cpp ("Масштабирование средней скорости").
+            av[d][i] = reduced[i].xsph[d] * cfg.epsilon;
+        }
+        dsxx[i] = f.dsxx; dsyy[i] = f.dsyy; dszz[i] = f.dszz;
+        dsxy[i] = f.dsxy; dsyz[i] = f.dsyz; dsxz[i] = f.dsxz;
+
+        // Шим совместимости (см. комментарий у функции): p, c -- EOS этого
+        // RHS; exx..eyz, rxy..ryz -- сырые скорости деформаций/поворота
+        // (с осевым переопределением ezz при axis_sim && dim == 2, уже
+        // применённым в finalize_solid). Читатели: src/ppochnost.cpp
+        // (prochnost_cem_JH2), compute_cfl_timestep (sys.c).
+        sys.p[i] = derived.p[i];
+        sys.c[i] = derived.c[i];
+        sys.exx[i] = f.exx; sys.eyy[i] = f.eyy; sys.ezz[i] = f.ezz;
+        sys.exy[i] = f.exy; sys.exz[i] = f.exz; sys.eyz[i] = f.eyz;
+        sys.rxy[i] = f.rxy; sys.rxz[i] = f.rxz; sys.ryz[i] = f.ryz;
+
+        tdsdt[i] = 0.0; // физическая вязкость (visc) выключена constexpr -- как в старом int_force
+    }
+
+    // h_upgrade -- НЕ часть нового RHS-пути (fiber/PLAN.md §3.6: "sle=1 --
+    // Postprocessing" на этапе Ф7; сейчас остаётся старым кодом). sle == 1
+    // не читает pair_i/pair_j/dwdx (src/h_upgrade.cpp) -- пустые буферы
+    // корректны; sle == 0 -- no-op; sle == 2 отклонён исключением выше.
+    if (cfg.sle == 1)
+    {
+        static const std::vector<size_t> kEmptyPairIdx;
+        static const std::vector<std::vector<double>> kEmptyDwdx(dim);
+        h_upgrade(cfg, sys, dt, ntotal, 0, kEmptyPairIdx, kEmptyPairIdx, kEmptyDwdx);
+    }
+
+    // Единая диагностика состояния (подэтап 5.8, перенесена из старого
+    // single_step): read-only проверка конечности p/rho/c/u/hsml после шага.
+    Diagnostics::validate(sys, ntotal, "post-solid-rhs");
+
+    // Старый путь дозаписывал зеркальные частицы прямо в sys (virt_part.cpp)
+    // и поэтому обнулял [ntotal, sys.size()) в конце каждого шага, чтобы не
+    // накапливать мусор. Новый путь НИКОГДА не пишет в sys за пределами
+    // [0, ntotal) (зеркала живут только в interactions::SolidExtended,
+    // fiber/PLAN.md §3.6: "виртуальные частицы -> GhostSet + SolidExtended,
+    // а не дозапись в sys"), поэтому очищать там нечего.
+}
+
+// ============================================================================
+// single_step_legacy — старый путь, побитная копия прежнего тела single_step
+// (fiber/PLAN.md, этап Ф4-B1: "сохранить старый single_step физически
+// доступным... для дальнейшего сравнения в части B2/на случай отката").
+// НЕ вызывается ни из одной перегрузки time_integration.
+// TODO(Ф4-B2): удалить вместе со старым путём (direct_find, link_list,
+// int_force, art_visc, av_vel, ext_force, virt_part) после независимого
+// ревью части B1.
+// ============================================================================
+void single_step_legacy(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, double dt, size_t ntotal, std::vector<double>& t, std::vector<double>& tdsdt,
                  std::vector<std::vector<double>>& dx, std::vector<std::vector<double>>& dvx, std::vector<double>& du, std::vector<double>& ds,
                  std::vector<double>& drho, std::vector<std::vector<double>>& av, std::vector<double>& dsxx, std::vector<double>& dsyy,
                  std::vector<double>& dszz, std::vector<double>& dsxy, std::vector<double>& dsyz, std::vector<double>& dsxz, WorkBuffers& wb,

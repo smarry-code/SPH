@@ -177,6 +177,14 @@ inline Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
                 sys.x[0][k]  = r;
                 sys.x[1][k]  = z;
                 sys.itype[k] = s.itype;
+                // body[] = itype[] (fiber/PLAN.md §3.1: "для встроенных
+                // генераторов... совпадает с itype"). Этот геометрический
+                // генератор строит частицы напрямую, в обход src/input.cpp
+                // (которое уже делает body[i]=itype[i] для shock_tube/k-файла)
+                // -- без этой строки body[] остаётся 0 у всех частиц, и
+                // критерий Solid-Solid-Contact body[i]!=body[j]
+                // (interactions/solid_contact.hpp) никогда не срабатывает.
+                sys.body[k]  = s.itype;
                 sys.rho[k]   = s.rho;
                 sys.rho_0[k] = s.rho;
                 sys.vx[0][k] = 0.0;

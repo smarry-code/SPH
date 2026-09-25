@@ -122,14 +122,21 @@ struct SolidDelta
     }
 };
 
-// Итог finalize -- ровно те поля, что сравниваются test_rhs_equivalence
-// со старым путём (drho, du, dv[dim], dsxx..dsxz).
+// Итог finalize -- поля, что сравниваются test_rhs_equivalence со старым
+// путём (drho, du, dv[dim], dsxx..dsxz), ПЛЮС "сырые" скорости деформаций/
+// поворота (exx..eyz, rxy..ryz), которые test_rhs_equivalence не сравнивает,
+// но которые нужны fiber/PLAN.md, этап Ф4-B1: временный шим совместимости
+// пишет их обратно в sys для prochnost_cem_JH2 (src/ppochnost.cpp читает
+// sys.exx.. и sys.rxy.. напрямую) -- перенос читателей на RhsWorkspace
+// запланирован на Ф7 (fiber/PLAN.md §3.6), не на Ф4.
 struct SolidFinal
 {
     double drho = 0.0;
     double du = 0.0;
     double dv[dim] = {};
     double dsxx = 0.0, dsyy = 0.0, dszz = 0.0, dsxy = 0.0, dsyz = 0.0, dsxz = 0.0;
+    double exx = 0.0, eyy = 0.0, ezz = 0.0, exy = 0.0, exz = 0.0, eyz = 0.0;
+    double rxy = 0.0, rxz = 0.0, ryz = 0.0;
 };
 
 // ----------------------------------------------------------------------
@@ -776,6 +783,14 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
         f.drho = drho;
 
         for (std::size_t dd = 0; dd < dim; ++dd) f.dv[dd] = d.dv[dd];
+
+        // Шим совместимости (fiber/PLAN.md, этап Ф4-B1) -- ровно те значения,
+        // что старый int_force.cpp пишет в sys.exx.. и sys.rxy.. (те же
+        // локальные exx/eyy/ezz(с осевым переопределением)/exy/exz/eyz/rxy/
+        // rxz/ryz, что участвуют в формулах dsxx.. ниже).
+        f.exx = exx; f.eyy = eyy; f.ezz = ezz;
+        f.exy = exy; f.exz = exz; f.eyz = eyz;
+        f.rxy = rxy; f.rxz = rxz; f.ryz = ryz;
 
         // Энергия: 0.5*(сырая сумма давление+вязкость) + девиаторная работа.
         const double dedt_half = 0.5 * d.du;
