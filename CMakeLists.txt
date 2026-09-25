@@ -238,6 +238,27 @@ endif()
 add_test(NAME rhs_equivalence_test COMMAND test_rhs_equivalence)
 set_tests_properties(rhs_equivalence_test PROPERTIES TIMEOUT 120)
 
+# Тот же tests/test_rhs_equivalence.cpp, собранный с SPH_DIM=3 (по образцу
+# test_regression/test_regression_3d выше): только в 3D существуют sxz/syz/
+# rxz/ryz и поворотные члены производной Яуманна с ними, которых 2D-сборка не
+# упражняет вовсе (rxz==ryz==0 тождественно при dim==2, см. заголовок файла).
+# Нити (fiber/PLAN.md, Ф5/Ф6) живут только в этой ветке.
+add_executable(test_rhs_equivalence_3d tests/test_rhs_equivalence.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_rhs_equivalence_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_rhs_equivalence_3d PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_rhs_equivalence_3d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_rhs_equivalence_3d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_rhs_equivalence_3d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_rhs_equivalence_3d PRIVATE -fopenmp)
+    target_link_options(test_rhs_equivalence_3d PRIVATE -fopenmp)
+endif()
+add_test(NAME rhs_equivalence_test_3d COMMAND test_rhs_equivalence_3d)
+set_tests_properties(rhs_equivalence_test_3d PROPERTIES LABELS "3d" TIMEOUT 120)
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый

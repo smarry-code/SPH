@@ -1,17 +1,29 @@
 // test_rhs_equivalence.cpp
 // Стенд эквивалентности старого и нового путей RHS для Solid (fiber/PLAN.md,
-// этап Ф4, ЧАСТЬ A: "стенд test_rhs_equivalence (SPH_DIM=2): старый и новый
-// RHS на одном состоянии, все производные совпадают с относительной точностью
-// ~1e-12").
+// этап Ф4, ЧАСТЬ A: "стенд test_rhs_equivalence: старый и новый RHS на одном
+// состоянии, все производные совпадают с относительной точностью ~1e-9..1e-12").
+//
+// Файл собирается ДВАЖДЫ, в два разных исполняемых файла (по образцу
+// test_regression/test_regression_3d, CMakeLists.txt):
+//   - test_rhs_equivalence (SPH_DIM=2)    -- осесимметричная ветка (BC2/BC6);
+//   - test_rhs_equivalence_3d (SPH_DIM=3) -- полностью трёхмерная ветка, в
+//     которой будут жить нити (fiber/PLAN.md, Ф5/Ф6). Только в 3D существуют
+//     компоненты sxz/syz/rxz/ryz и поворотные члены Яуманна с ними
+//     (-2*(sxz*rxz+syz*ryz) в dszz и парные слагаемые в dsxx/dsyy/dsxy/dsyz/
+//     dsxz, src/int_force.cpp) -- при dim==2 эти члены тождественно нулевые
+//     и 2D-вариант их не упражняет вовсе (см. ниже про исправленный знак).
+// Геометрия состояния (build_state) для каждого SPH_DIM своя (#if SPH_DIM ==
+// 2 / == 3 ниже); всё остальное (сравнение, сценарии, диагностика) общее.
 //
 // СХЕМА:
 //   1) строится ОДНО физически осмысленное состояние Solid: два тела разных
 //      материалов (B4C itype=10, JH-2 EOS; PMMA itype=9, УА-Тэта EOS) в
-//      контакте у оси симметрии (r мало -> часть частиц получает зеркальные
-//      частицы, virt_part.cpp/GhostSet), с ненулевыми радиальной и осевой
-//      скоростями (упражняет плотность, кинематику, искусственную вязкость,
-//      осесимметричные члены) и ненулевым начальным девиатором напряжений
-//      (упражняет производную Яуманна и девиаторную работу в энергии);
+//      контакте (в 2D -- у оси симметрии, r мало -> часть частиц получает
+//      зеркальные частицы, virt_part.cpp/GhostSet; в 3D зеркальных частиц нет
+//      -- axis_sim действует только при dim==2), с ненулевыми скоростями по
+//      ВСЕМ осям (упражняет плотность, кинематику, искусственную вязкость) и
+//      ненулевым начальным девиатором напряжений (упражняет производную
+//      Яуманна и девиаторную работу в энергии; в 3D -- в т.ч. sxz, syz);
 //   2) СТАРЫЙ путь: virt_part -> direct_find -> con_density -> int_force ->
 //      art_visc -> ext_force, В ТОЧНОСТИ как их вызывает src/single_step.cpp
 //      (тот же порядок и сигнатуры, что в tests/test_axisym.cpp);
@@ -51,7 +63,7 @@
 #include <omp.h>
 #endif
 
-static_assert(dim == 2, "test_rhs_equivalence требует сборки с SPH_DIM=2");
+static_assert(dim == 2 || dim == 3, "test_rhs_equivalence собирается с SPH_DIM=2 или SPH_DIM=3");
 
 namespace
 {
@@ -64,7 +76,8 @@ void check(bool cond, const std::string& what)
     if (!cond) ++g_failures;
 }
 
-// --- Геометрия испытательного состояния -------------------------------------
+#if SPH_DIM == 2
+// --- Геометрия испытательного состояния (SPH_DIM=2) --------------------------
 // Два тела в контакте у оси: A (B4C, itype=10) движется вдоль +z навстречу
 // покоящемуся B (PMMA, itype=9). Оба тела заходят вглубь друг друга на
 // полшага решётки (сознательный небольшой overlap: контакт СРАБАТЫВАЕТ уже
@@ -145,6 +158,121 @@ void build_state(ParticleSystem& sys, std::size_t& nreal)
         }
     }
 }
+#elif SPH_DIM == 3
+// --- Геометрия испытательного состояния (SPH_DIM=3) --------------------------
+// Два тела в контакте вдоль оси Z: A (B4C, itype=10) движется вдоль +Z
+// навстречу покоящемуся в среднем B (PMMA, itype=9), с тем же сознательным
+// overlap 0.5*dx, что и в 2D-варианте. Осевой симметрии в 3D нет (axis_sim
+// действует только при dim==2, virt_part.cpp -- зеркальных частиц тоже нет,
+// GhostSet у обоих путей пустой), поэтому решётка -- обычная кубическая
+// 3x3 (поперёк, X/Y) x 5 (вдоль контакта, Z) частиц на тело.
+//
+// ГЛАВНОЕ ОТЛИЧИЕ от 2D-варианта: поле скорости -- ПОЛНАЯ линейная (аффинная)
+// функция ВСЕХ ТРЁХ координат с несимметричной матрицей градиента dv_a/dx_b
+// (для каждого тела своя, разного знака -- A сжимается, B расширяется, как
+// и в 2D). Несимметричность матрицы даёт НЕНУЛЕВЫЕ rxy, rxz, ryz (поворот),
+// а не только rxy, как было бы при полях, зависящих лишь от двух осей --
+// именно rxz/ryz ненулевые нужны, чтобы упражнить поворотные члены
+// производной Яуманна (-2*(sxz*rxz+syz*ryz) в dszz и парные им в
+// dsxx/dsyy/dsxy/dsyz/dsxz), которые тождественно нулевые при dim==2.
+// Начальный девиатор напряжений тоже задан с ненулевыми sxz, syz (в отличие
+// от 2D-варианта, где эти компоненты не существуют) -- иначе сами поворотные
+// слагаемые sxz*rxz/syz*ryz были бы нулевыми при r != 0, но s == 0.
+constexpr std::size_t kNx = 3;
+constexpr std::size_t kNy = 3;
+constexpr std::size_t kNzA = 5;
+constexpr std::size_t kNzB = 5;
+constexpr double kDx = 1.0e-4;
+constexpr int kItypeA = 10;   // B4C, JH-2
+constexpr int kItypeB = 9;    // PMMA, УА-Тэта
+constexpr double kRhoA = 2517.0;
+constexpr double kRhoB = 1186.0;
+
+// Матрицы градиента скорости dv_a/dx_b -- НЕСИММЕТРИЧНЫЕ (иначе поворот был
+// бы нулевым), с разными коэффициентами по всем девяти компонентам, чтобы ни
+// одна из трёх пар (rxy, rxz, ryz) не обнулилась случайным совпадением.
+// Тело A -- всестороннее сжатие по диагонали (согласуется с rho > rho_0);
+// тело B -- расширение (согласуется с rho < rho_0), как в 2D-варианте.
+constexpr double kGradA[3][3] = {{-50.0, 5.0, 8.0}, {10.0, -30.0, 12.0}, {20.0, 15.0, -20.0}};
+constexpr double kGradB[3][3] = {{30.0, -8.0, -6.0}, {-4.0, 25.0, 9.0}, {-10.0, 6.0, 18.0}};
+// Тело A дополнительно движется вдоль +Z навстречу B (как "300" в 2D-варианте).
+constexpr double kBulkVzA = 300.0;
+
+std::size_t idxA(std::size_t ix, std::size_t iy, std::size_t iz)
+{
+    return (ix * kNy + iy) * kNzA + iz;
+}
+std::size_t idxB(std::size_t ix, std::size_t iy, std::size_t iz)
+{
+    return kNx * kNy * kNzA + (ix * kNy + iy) * kNzB + iz;
+}
+
+void build_state(ParticleSystem& sys, std::size_t& nreal)
+{
+    const std::size_t nA = kNx * kNy * kNzA;
+    const std::size_t nB = kNx * kNy * kNzB;
+    nreal = nA + nB;
+    sys.resize(nreal); // без запаса: в 3D зеркальных частиц нет (axis_sim && dim==2 -- ложь)
+
+    const double ZB0 = (static_cast<double>(kNzA) - 0.5) * kDx; // сознательный overlap 0.5*dx
+
+    for (std::size_t ix = 0; ix < kNx; ++ix)
+    {
+        const double X = (static_cast<double>(ix) + 0.5) * kDx;
+        for (std::size_t iy = 0; iy < kNy; ++iy)
+        {
+            const double Y = (static_cast<double>(iy) + 0.5) * kDx;
+            for (std::size_t iz = 0; iz < kNzA; ++iz)
+            {
+                const std::size_t k = idxA(ix, iy, iz);
+                const double Z = static_cast<double>(iz) * kDx;
+                sys.x[0][k] = X; sys.x[1][k] = Y; sys.x[2][k] = Z;
+                sys.vx[0][k] = kGradA[0][0] * X + kGradA[0][1] * Y + kGradA[0][2] * Z;
+                sys.vx[1][k] = kGradA[1][0] * X + kGradA[1][1] * Y + kGradA[1][2] * Z;
+                sys.vx[2][k] = kBulkVzA + kGradA[2][0] * X + kGradA[2][1] * Y + kGradA[2][2] * Z;
+                sys.itype[k] = kItypeA; sys.body[k] = kItypeA;
+                // rho слегка ВЫШЕ rho_0 (сжатие), как в 2D-варианте -- см. там
+                // же обоснование (mu != 0, иначе p == 0 тождественно у обеих EOS).
+                sys.rho[k] = kRhoA * 1.02; sys.rho_0[k] = kRhoA;
+                sys.mass[k] = kRhoA * kDx * kDx * kDx;
+                sys.hsml[k] = 1.3 * kDx;
+                sys.u[k] = 1.0e3; sys.dp[k] = 0.0; sys.D[k] = 0.0; sys.e_pl[k] = 0.0;
+                sys.p[k] = 0.0;
+                // Полный девиатор с НЕНУЛЕВЫМИ sxz, syz -- см. комментарий выше.
+                sys.sxx[k] = 1.0e7; sys.syy[k] = -0.4e7; sys.szz[k] = -0.6e7;
+                sys.sxy[k] = 0.35e7; sys.syz[k] = 0.2e7; sys.sxz[k] = -0.15e7;
+            }
+        }
+    }
+    for (std::size_t ix = 0; ix < kNx; ++ix)
+    {
+        const double X = (static_cast<double>(ix) + 0.5) * kDx;
+        for (std::size_t iy = 0; iy < kNy; ++iy)
+        {
+            const double Y = (static_cast<double>(iy) + 0.5) * kDx;
+            for (std::size_t iz = 0; iz < kNzB; ++iz)
+            {
+                const std::size_t k = idxB(ix, iy, iz);
+                const double Z = ZB0 + static_cast<double>(iz) * kDx;
+                sys.x[0][k] = X; sys.x[1][k] = Y; sys.x[2][k] = Z;
+                sys.vx[0][k] = kGradB[0][0] * X + kGradB[0][1] * Y + kGradB[0][2] * Z;
+                sys.vx[1][k] = kGradB[1][0] * X + kGradB[1][1] * Y + kGradB[1][2] * Z;
+                sys.vx[2][k] = kGradB[2][0] * X + kGradB[2][1] * Y + kGradB[2][2] * Z;
+                sys.itype[k] = kItypeB; sys.body[k] = kItypeB;
+                // rho слегка НИЖЕ rho_0 (разрежение) -- противоположный знак mu
+                // относительно тела A, как в 2D-варианте.
+                sys.rho[k] = kRhoB * 0.98; sys.rho_0[k] = kRhoB;
+                sys.mass[k] = kRhoB * kDx * kDx * kDx;
+                sys.hsml[k] = 1.3 * kDx;
+                sys.u[k] = 5.0e2; sys.dp[k] = 0.0; sys.D[k] = 0.0; sys.e_pl[k] = 0.0;
+                sys.p[k] = 0.0;
+                sys.sxx[k] = -0.6e7; sys.syy[k] = 0.5e7; sys.szz[k] = 0.1e7;
+                sys.sxy[k] = -0.2e7; sys.syz[k] = 0.1e7; sys.sxz[k] = 0.25e7;
+            }
+        }
+    }
+}
+#endif
 
 // --- Старый путь --------------------------------------------------------------
 struct OldResult
@@ -152,6 +280,13 @@ struct OldResult
     std::vector<double> drho, du;
     std::vector<double> dv[dim];
     std::vector<double> dsxx, dsyy, dszz, dsxy, dsyz, dsxz;
+    // rxz, ryz -- поворот (int_force.cpp пишет их напрямую в sys.rxz/sys.ryz,
+    // ДО умножения на что-либо -- та же величина, что и SolidDelta::drxz/dryz
+    // нового пути). Нужны ТОЛЬКО для диагностической проверки "состояние
+    // реально ненулевое по rxz/ryz" (SPH_DIM=3, см. run_scenario) -- при
+    // dim==2 остаются тождественно нулевыми (int_force обнуляет их для ВСЕХ
+    // частиц перед циклом и никогда не пишет при dim==2), что безвредно.
+    std::vector<double> rxz, ryz;
 };
 
 OldResult run_old_path(const SimulationConfig& cfg, ParticleSystem sys, std::size_t nreal, double dt_applied)
@@ -198,6 +333,8 @@ OldResult run_old_path(const SimulationConfig& cfg, ParticleSystem sys, std::siz
     out.dsxy.assign(dsxy.begin(), dsxy.begin() + static_cast<std::ptrdiff_t>(nreal));
     out.dsyz.assign(dsyz.begin(), dsyz.begin() + static_cast<std::ptrdiff_t>(nreal));
     out.dsxz.assign(dsxz.begin(), dsxz.begin() + static_cast<std::ptrdiff_t>(nreal));
+    out.rxz.assign(sys.rxz.begin(), sys.rxz.begin() + static_cast<std::ptrdiff_t>(nreal));
+    out.ryz.assign(sys.ryz.begin(), sys.ryz.begin() + static_cast<std::ptrdiff_t>(nreal));
     for (std::size_t d = 0; d < dim; ++d) out.dv[d].resize(nreal);
     for (std::size_t i = 0; i < nreal; ++i)
     {
@@ -363,7 +500,39 @@ std::vector<interactions::SolidFinal> run_scenario(int pa_sph, int density_metho
     const OldResult oldr = run_old_path(cfg, sys, nreal, dt_applied);
     std::vector<interactions::SolidFinal> newr = run_new_path(cfg, sys, nreal, dt_applied);
 
-    compare(oldr, newr, nreal, label, 1.0e-9);
+    // Диагностика "состояние реально ненулевое по rxz/ryz" (SPH_DIM=3): без
+    // неё сравнение dszz/dsxy/dsyz/dsxz в compare() могло бы тождественно
+    // пройти даже при перепутанном знаке/индексе у поворотных членов
+    // Яуманна -- ровно так, как это едва не произошло в 2D-варианте теста
+    // (см. заголовок файла), только там речь шла о rxz/ryz, тождественно
+    // нулевых при dim==2, а здесь -- проверка, что при dim==3 они
+    // действительно ненулевые и потому реально упражняют эти члены.
+    if constexpr (dim == 3)
+    {
+        double max_rxz = 0.0, max_ryz = 0.0;
+        for (std::size_t i = 0; i < nreal; ++i)
+        {
+            max_rxz = std::max(max_rxz, std::fabs(oldr.rxz[i]));
+            max_ryz = std::max(max_ryz, std::fabs(oldr.ryz[i]));
+        }
+        std::printf("  [диагностика] max|rxz| = %.3e 1/с, max|ryz| = %.3e 1/с\n", max_rxz, max_ryz);
+        check(max_rxz > 0.1, "3D-состояние: max|rxz| > 0 (поворотный член с rxz реально упражняется)");
+        check(max_ryz > 0.1, "3D-состояние: max|ryz| > 0 (поворотный член с ryz реально упражняется)");
+    }
+
+    // Допуск: ~1e-9, как в 2D-варианте. При dim==3 у внутренних частиц
+    // решётки 3x3x5 вдвое-втрое больше соседей в носителе (кубический сплайн,
+    // 2h = 2.6*dx), чем у частиц 2D-решётки -- суммы по парам длиннее, и
+    // порядок суммирования СТАРОГО пути (последовательный проход по niac) и
+    // НОВОГО (per-thread буферы, детерминированно редуцируемые, но в ДРУГОМ
+    // порядке -- rhs/contributions.hpp) расходятся на бит раньше. Измерено:
+    // худшее расхождение по всем 7 сценариям -- 1.541e-09 (pa_sph=1, частица
+    // #22, dv[0]); это чистый roundoff (см. "ГЛАВНЫЙ ВОПРОС 1" ниже -- то же
+    // поле между сценариями отличается на уровне 1.85e0, на 9 порядков выше).
+    // Допуск ослаблен вчетверо (4e-9) -- запас над измеренным максимумом, но
+    // на 8-9 порядков строже, чем физические расхождения между сценариями.
+    const double tol = (dim == 3) ? 4.0e-9 : 1.0e-9;
+    compare(oldr, newr, nreal, label, tol);
     return newr;
 }
 
