@@ -1,5 +1,13 @@
 # Методы поиска соседних частиц
 
+> **Устарело (fiber/PLAN.md, этап Ф4-B2).** Описанный ниже код удалён из
+> продового пути: `direct_find()/link_list()/FlatGrid` больше не собираются и не вызываются
+> (`ctest`-набор их тоже не содержит). Их заменил единый механизм
+> `CpuExecutor` + `SpatialIndex<Dim>` + `ContributionWriter`/reduce по
+> шардам — см. `fiber/SPH.md`, раздел «CPU», и
+> [ADR-008](../decisions/adr-008-rhs-architecture-fiber.md). Текст ниже
+> сохранён как описание прежнего устройства, а не текущего кода.
+
 Поиск соседей (neighbor search, параметр `nnps` в
 [`SimulationConfig`](../../../include/simulation_config.hpp:29)) строит список
 пар взаимодействия — основу всех парных вычислений SPH. Диспетчеризация

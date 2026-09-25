@@ -1,7 +1,20 @@
 # ADR-006: Graph coloring для устранения `#pragma omp atomic`
 
-**Статус:** Принято
+**Статус:** Заменено на [ADR-008](adr-008-rhs-architecture-fiber.md)
 **Дата:** Этап параллелизма (фаза B)
+**Дата замены:** fiber/PLAN.md, этап Ф4-B2
+
+## Приписка: PairGraph удалён
+
+`PairGraph`, `AccAtomic`/`AccPlain` и весь парный цикл, для которого они
+существовали (`direct_find`, `linked_list`, `density.cpp`, `int_force.cpp`,
+`art_visc.cpp`, `av_vel.cpp`, `virt_part.cpp`), удалены на этапе Ф4-B2 плана
+нитей ([`fiber/PLAN.md`](../../../fiber/PLAN.md)). Проблема гонки при
+накоплении вкладов в частицу решается теперь иначе — thread-local
+`Contribution`-буферы и reduce по шардам (owner-computes), без раскраски
+графа и без atomic/mutex в physics-коде; см. [ADR-008](adr-008-rhs-architecture-fiber.md).
+Текст ниже описывает упразднённую схему и сохранён как исторический
+контекст решения, а не как описание текущего кода.
 
 ## Контекст
 
