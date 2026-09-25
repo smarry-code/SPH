@@ -127,8 +127,19 @@ struct SolidDelta
 // поворота (exx..eyz, rxy..ryz), которые test_rhs_equivalence не сравнивает,
 // но которые нужны fiber/PLAN.md, этап Ф4-B1: временный шим совместимости
 // пишет их обратно в sys для prochnost_cem_JH2 (src/ppochnost.cpp читает
-// sys.exx.. и sys.rxy.. напрямую) -- перенос читателей на RhsWorkspace
-// запланирован на Ф7 (fiber/PLAN.md §3.6), не на Ф4.
+// sys.exx.. и sys.rxy.. напрямую).
+//
+// ОБНОВЛЕНИЕ (этап Ф7, interactions/postprocessing.hpp): перенос
+// prochnost_cem_JH2/prochnost_mises в Postprocessing выполнен, но координатор
+// Ф7 СОЗНАТЕЛЬНО ОСТАВИЛ этот шим -- сигнатуру prochnost_cem_JH2 не меняли,
+// она по-прежнему читает sys.exx.. / sys.rxy.. напрямую (см. комментарий у
+// single_step() в src/single_step.cpp и у apply_material_strength в
+// interactions/postprocessing.hpp). Шим НЕ временный до Ф7 -- он остаётся
+// как минимум до этапа Ф8 (унификация ODESolver, fiber/PLAN.md §3.9), где
+// его наконец стоит убрать вместе с переводом prochnost_cem_JH2 на явные
+// параметры. НЕ удалять этот комментарий и запись в sys без одновременного
+// обновления prochnost_cem_JH2 -- иначе Ф8 рискует молча оставить мёртвую
+// запись в sys или, наоборот, сломать JH-2, читающий уже неактуальные поля.
 struct SolidFinal
 {
     double drho = 0.0;
