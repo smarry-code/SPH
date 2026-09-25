@@ -6,6 +6,7 @@
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/fiber_solid_contact.hpp"
+#include "interactions/postprocessing.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include <fstream>
@@ -243,6 +244,13 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
 
         // Вычисление сил и производных
         single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb);
+        // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8): sle=1 -- пересчёт h.
+        // МЕСТО ВЫЗОВА -- сразу после single_step(), ДО compute_cfl_timestep():
+        // см. большой комментарий у interactions::update_smoothing_length
+        // (include/interactions/postprocessing.hpp) -- почему это обязательно
+        // для бит-в-бит совпадения с прежним поведением (h_upgrade раньше
+        // вызывался отсюда же, изнутри single_step.cpp).
+        interactions::update_smoothing_length(cfg, sys, dt, ntotal);
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контактный предел
         // Обновление свойств частиц (полный временной шаг)
@@ -366,21 +374,11 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
                 sys.sxz[i] = sxz_min[i] + (dt) * dsxz[i];
             }
         }
-        for (size_t i = 0; i < ntotal; ++i)
-        {
-            if (sys.itype[i] >= 3 && sys.itype[i] <= 9)
-            {
-                prochnost_mises(cfg.mats, static_cast<size_t>(sys.itype[i]), sys.sxx[i], sys.syy[i], sys.szz[i], sys.sxy[i], sys.syz[i], sys.sxz[i]);
-            }
-            else if (sys.itype[i] == 10)
-            {
-                prochnost_cem_JH2(cfg.mats, sys, i, dt, drho[i]);
-            }
-            else if (sys.itype[i] == 11)
-            {
-                prochnost_cem_JH2(cfg.mats, sys, i, dt, drho[i]);
-            }
-        }
+        // Postprocessing, этап Ф7: Мизес/JH-2 (interactions::apply_material_strength,
+        // include/interactions/postprocessing.hpp) -- буквально прежний код,
+        // читает ФИНАЛЬНЫЕ (скорректированные) sys.sxx.. и т.д., место вызова
+        // не изменилось (сразу после corrector'а, как и раньше).
+        interactions::apply_material_strength(cfg, sys, ntotal, dt, drho);
         if (time >= next_output_time)
         {
             output(sys, ntotal, time, current_ts, dt);
@@ -503,6 +501,11 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
     // тому же принципу, что буферы выше.
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
+    // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8) -- разрыв связей Fiber-Bond:
+    // per-thread буфер событий поиска (interactions/postprocessing.hpp,
+    // find_fiber_break_events), переиспользуется между шагами по тому же
+    // принципу, что буферы выше.
+    std::vector<std::vector<interactions::FiberBreakEvent>> fiber_break_thread_buffers;
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -565,6 +568,13 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
 
         // RHS: Solid (SPH+контакт, как раньше).
         single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb);
+
+        // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8): sle=1 -- пересчёт h.
+        // МЕСТО ВЫЗОВА -- сразу после single_step(), ДО compute_cfl_timestep():
+        // см. большой комментарий у interactions::update_smoothing_length
+        // (include/interactions/postprocessing.hpp) -- почему это обязательно
+        // для бит-в-бит совпадения с прежним поведением.
+        interactions::update_smoothing_length(cfg, sys, dt, ntotal);
 
         // RHS: Fiber-Bond (fiber/PLAN.md, этап Ф3) — readonly search по
         // topology.bonds, contributions -> reduce (fiber/SPH.md, «Основные
@@ -678,20 +688,24 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
         pc_finalize_velocity_position(nfiber, dt, first_step ? dt / 2.0 : dt, fb.x, fb.vx, dv_fiber, v_min_fiber,
                                        /*use_base=*/!first_step);
 
-        for (size_t i = 0; i < ntotal; ++i)
+        // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8) -- ПОСЛЕ шага
+        // ODESolver (predictor-corrector Solid И Fiber уже завершены выше):
+        //   1) Мизес/JH-2 -- interactions::apply_material_strength, буквально
+        //      прежний код, читает финальные sys.sxx.. (место вызова не
+        //      изменилось);
+        //   2) разрыв связей Fiber-Bond -- interactions::
+        //      run_fiber_topology_postprocessing: поиск событий (readonly
+        //      parallel_for по topology.bonds, ТЕКУЩИЕ fb.x после corrector'а
+        //      выше) -> применение строго последовательно (prev/next,
+        //      новый object_id j-стороне, topology.bonds/version). Fiber-Bond
+        //      kernel и Fiber-Fiber-Contact search строят primitives заново
+        //      из topology/object_id на КАЖДОМ вызове RHS -- отдельной
+        //      инвалидации кэша не требуется (fiber/SPH.md, «Postprocessing и
+        //      изменение topology»).
+        interactions::apply_material_strength(cfg, sys, ntotal, dt, drho);
+        if (nfiber > 0)
         {
-            if (sys.itype[i] >= 3 && sys.itype[i] <= 9)
-            {
-                prochnost_mises(cfg.mats, static_cast<size_t>(sys.itype[i]), sys.sxx[i], sys.syy[i], sys.szz[i], sys.sxy[i], sys.syz[i], sys.sxz[i]);
-            }
-            else if (sys.itype[i] == 10)
-            {
-                prochnost_cem_JH2(cfg.mats, sys, i, dt, drho[i]);
-            }
-            else if (sys.itype[i] == 11)
-            {
-                prochnost_cem_JH2(cfg.mats, sys, i, dt, drho[i]);
-            }
+            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, model.topology, fiber_break_thread_buffers);
         }
         if (time >= next_output_time)
         {

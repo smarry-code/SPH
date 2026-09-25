@@ -15,7 +15,6 @@
 // tests/test_axisym.cpp / tests/test_kinematics_3d.cpp на этот путь.
 #include "single_step.hpp"
 #include "ext_force.hpp"
-#include "h_upgrade.hpp"
 
 #include "interactions/solid_contact.hpp"
 #include "interactions/solid_sph.hpp"
@@ -28,7 +27,6 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
-#include <stdexcept>
 #include <omp.h>
 
 #ifdef _WIN32
@@ -71,24 +69,24 @@ void time_print()
 // Solid-Contact kernel -> reduce_contributions -> finalize_solid -> запись
 // в выходные параметры + шим совместимости в sys.
 //
-// ШИМ СОВМЕСТИМОСТИ (решение координатора, НЕ часть Ф7): p, c (EOS) и
-// exx..eyz, rxy..ryz (скорости деформаций/поворота) по-прежнему пишутся в
-// sys, хотя физически они теперь считаются в RhsWorkspace-эквиваленте
-// (SolidDerived/SolidFinal). Причина — src/ppochnost.cpp (prochnost_mises,
-// prochnost_cem_JH2) и compute_cfl_timestep (src/time_integration.cpp)
-// читают их из sys НАПРЯМУЮ и вызываются time_integration.cpp ПОСЛЕ
-// single_step на каждом шаге; переносить их читателей на новую схему —
-// содержание этапа Ф7 (fiber/PLAN.md §3.6, раздел «### Ф7. Postprocessing»:
-// «перенос прочности (Мизес, JH-2)»), не Ф4. Шим временный и будет убран
-// вместе с этим переносом.
+// ШИМ СОВМЕСТИМОСТИ (решение координатора этапа Ф7 — оставлен сознательно,
+// НЕ убран вместе с переносом прочности): p, c (EOS) и exx..eyz, rxy..ryz
+// (скорости деформаций/поворота) по-прежнему пишутся в sys, хотя физически
+// они теперь считаются в RhsWorkspace-эквиваленте (SolidDerived/SolidFinal).
+// prochnost_cem_JH2 (src/ppochnost.cpp) по-прежнему читает 9 величин
+// деформации/поворота из sys напрямую (сигнатуру не меняли — риск регрессии
+// от смены источника данных не оправдан архитектурной чистотой на этом
+// этапе, fiber/PLAN.md §Ф7 явно допускает оба варианта); compute_cfl_timestep
+// (src/time_integration.cpp) читает sys.c. Оба вызываются из
+// interactions::postprocessing (interactions/postprocessing.hpp) ПОСЛЕ
+// single_step на каждом шаге.
 //
-// h_upgrade (sle) НЕ входит в новый RHS-путь по плану (переезжает в
-// Postprocessing на Ф7) — вызывается как раньше, старым кодом. sle == 1
-// (BC2/BC6 и все текущие конфиги) не использует пары соседей (h == fac*
-// (mass/rho)^(1/dim), src/h_upgrade.cpp) — вызывается с пустым списком пар.
-// sle == 2 пары ИСПОЛЬЗУЕТ (сумма div v по niac), а новый путь их в формате
-// старого поиска не строит — обнаружено явно исключением, а не молча
-// неверным результатом (kNoLimit-подобная защита).
+// h_upgrade (sle) — этап Ф7 (fiber/PLAN.md §3.8: «sle=1 — Postprocessing")
+// вынес вызов ИЗ single_step в interactions::update_smoothing_length
+// (interactions/postprocessing.hpp), вызываемую из ОБЕИХ перегрузок
+// time_integration.cpp СРАЗУ после single_step() — см. там же подробное
+// обоснование, ПОЧЕМУ именно это место (а не буквально "после corrector'а")
+// обязательно для нулевого изменения численного результата.
 // ============================================================================
 void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, double dt, size_t ntotal, std::vector<double>& t, std::vector<double>& tdsdt,
                  std::vector<std::vector<double>>& dx, std::vector<std::vector<double>>& dvx, std::vector<double>& du, std::vector<double>& ds,
@@ -104,16 +102,6 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     (void)itimestep;
     (void)t;
     (void)ds;
-
-    if (cfg.sle == 2)
-    {
-        throw std::runtime_error(
-            "single_step: sle=2 требует сумму по парам соседей (div v), которую "
-            "путь RHS (fiber/PLAN.md, этап Ф4) не строит в формате старого "
-            "поиска для h_upgrade; ни один текущий конфиг (BC2/BC6 -> sle=1) "
-            "sle=2 не использует. Поддержать sle=2 в новом пути — часть "
-            "переноса h_upgrade в Postprocessing (fiber/PLAN.md, этап Ф7).");
-    }
 
     // CpuExecutor — один на вызов (num_threads=0 => omp_get_max_threads(),
     // тот же счётчик потоков, что main.cpp выставляет один раз через
@@ -200,16 +188,14 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         tdsdt[i] = 0.0; // физическая вязкость (visc) выключена constexpr -- как в старом int_force
     }
 
-    // h_upgrade -- НЕ часть нового RHS-пути (fiber/PLAN.md §3.6: "sle=1 --
-    // Postprocessing" на этапе Ф7; сейчас остаётся старым кодом). sle == 1
-    // не читает pair_i/pair_j/dwdx (src/h_upgrade.cpp) -- пустые буферы
-    // корректны; sle == 0 -- no-op; sle == 2 отклонён исключением выше.
-    if (cfg.sle == 1)
-    {
-        static const std::vector<size_t> kEmptyPairIdx;
-        static const std::vector<std::vector<double>> kEmptyDwdx(dim);
-        h_upgrade(cfg, sys, dt, ntotal, 0, kEmptyPairIdx, kEmptyPairIdx, kEmptyDwdx);
-    }
+    // h_upgrade (sle) -- этап Ф7: вызов вынесен ИЗ single_step в
+    // interactions::update_smoothing_length (interactions/postprocessing.hpp),
+    // вызываемую из time_integration.cpp сразу ПОСЛЕ single_step() (см.
+    // комментарий у update_smoothing_length -- почему именно там, а не
+    // буквально в Postprocessing-стадии после corrector'а). Diagnostics::
+    // validate ниже поэтому проверяет sys.hsml СО ЗНАЧЕНИЕМ ПРЕДЫДУЩЕГО шага
+    // (ещё не обновлённым на этом шаге) -- чисто диагностическая проверка на
+    // конечность, на численный результат не влияет.
 
     // Единая диагностика состояния (подэтап 5.8, перенесена из старого
     // single_step): read-only проверка конечности p/rho/c/u/hsml после шага.
