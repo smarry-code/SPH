@@ -16,6 +16,7 @@
 // Индексация массивов металлов/полимеров ведётся через смещение n_Me (itype - n_Me).
 #include <vector>
 #include <cstddef>
+#include <optional>
 
 struct Materials
 {
@@ -68,4 +69,67 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
         return k < m.const_JH_2.size() ? m.const_JH_2[k][1] : 0.0;
     }
     return 0.0;
+}
+
+// Упругие константы (E, nu) Solid-частицы -- fiber/SPH.md, «Fiber-Solid-
+// Contact», «Постановка проекта: коэффициент K_fs»:
+//   E = 9*K*G/(3*K+G),  nu = (3*K-2*G)/(2*(3*K+G)),
+// где G -- shear_modulus_by_itype (уже реализован выше), K -- модуль
+// объёмного сжатия:
+//   - itype 3-9 (УРС Ми-Грюнайзена/Тэт, p = a*((rho/rho0)^z - 1)):
+//     K = a*z. Проверено прямым выводом из eos.cpp::eos_ua_teta: при
+//     rho=rho0 (w=1) c^2 = a*z/rho0, значит K = rho0*c^2 = a*z (формула
+//     p=a*((rho/rho0)^z-1) -- частный случай УРС Тэта; для Ми-Грюнайзена
+//     (eos_mi_grunaizen) та же величина a*z играет роль "холодного" модуля
+//     сжатия при u=0, rho=rho0 -- используется единая формула K=a*z для
+//     обоих УРС, как того требует fiber/SPH.md);
+//   - itype 10-11 (керамика JH-2): K = K1 = const_JH_2[itype-10][13]
+//     (см. таблицу столбцов в комментарии у Materials::const_JH_2 выше);
+//   - itype 1-2 (газ/вода) и любой прочий itype без G или K -- НЕ ОПРЕДЕЛЕНО
+//     (std::nullopt). Fiber-Solid-Contact с такими частицами не формируется
+//     (fiber/SPH.md, тот же раздел, последний абзац подраздела K_fs).
+//
+// При повреждении D>0 конкретной частицы используются НЕПОВРЕЖДЁННЫЕ
+// константы: функция принимает только itype (индекс в таблице материалов),
+// не читает состояние (D) частицы -- K и G берутся из таблицы материала,
+// поэтому результат по построению не зависит от текущего повреждения.
+struct ElasticProps
+{
+    double E = 0.0;
+    double nu = 0.0;
+};
+
+inline std::optional<ElasticProps> elastic_by_itype(const Materials& m, int itype)
+{
+    double K = 0.0;
+    bool have_K = false;
+    if (itype >= 3 && itype <= 9)
+    {
+        const size_t k = static_cast<size_t>(itype) - Materials::n_Me;
+        if (k < m.aa.size() && k < m.zz.size())
+        {
+            K = m.aa[k] * m.zz[k];
+            have_K = true;
+        }
+    }
+    else if (itype == 10 || itype == 11)
+    {
+        const size_t k = static_cast<size_t>(itype - 10);
+        if (k < m.const_JH_2.size() && m.const_JH_2[k].size() > 13)
+        {
+            K = m.const_JH_2[k][13];
+            have_K = true;
+        }
+    }
+    if (!have_K || !(K > 0.0)) return std::nullopt;
+
+    const double G = shear_modulus_by_itype(m, itype);
+    if (!(G > 0.0)) return std::nullopt; // газ/вода (itype 1-2) и прочие без G
+
+    const double denom = 3.0 * K + G;
+    if (!(denom > 0.0)) return std::nullopt;
+    const double E = 9.0 * K * G / denom;
+    if (!(E > 0.0)) return std::nullopt;
+    const double nu = (3.0 * K - 2.0 * G) / (2.0 * denom);
+    return ElasticProps{E, nu};
 }

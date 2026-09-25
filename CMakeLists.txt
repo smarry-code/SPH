@@ -236,6 +236,47 @@ endif()
 add_test(NAME e2e_fiber_contact_test COMMAND test_e2e_fiber_contact)
 set_tests_properties(e2e_fiber_contact_test PROPERTIES LABELS "3d")
 
+# --- Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6): primitive/kernel
+#     механического контакта бусины нити с реальной Solid-частицей
+#     (include/interactions/fiber_solid_contact.hpp), elastic_by_itype
+#     (include/materials.hpp), dt_limit контакта. Нити — только при
+#     SPH_DIM=3 (Р9), по образцу test_fiber_contact.
+add_executable(test_fiber_solid tests/test_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_solid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_solid PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_solid PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_solid PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_solid PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_solid PRIVATE -fopenmp)
+    target_link_options(test_fiber_solid PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_solid_test COMMAND test_fiber_solid)
+set_tests_properties(fiber_solid_test PROPERTIES LABELS "3d")
+
+# --- E2E-критерий готовности Ф6 (fiber/PLAN.md: «smoke одного Solid в 3D,
+#     затем нить, падающая на пластину, без проникания»).
+add_executable(test_e2e_fiber_solid tests/test_e2e_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_fiber_solid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_fiber_solid PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_solid PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_fiber_solid PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_fiber_solid PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_solid PRIVATE -fopenmp)
+    target_link_options(test_e2e_fiber_solid PRIVATE -fopenmp)
+endif()
+add_test(NAME e2e_fiber_solid_test COMMAND test_e2e_fiber_solid)
+set_tests_properties(e2e_fiber_solid_test PROPERTIES LABELS "3d" TIMEOUT 300)
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый

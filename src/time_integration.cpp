@@ -5,6 +5,7 @@
 #include "output.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
+#include "interactions/fiber_solid_contact.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include <fstream>
@@ -497,6 +498,11 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
     // kFiberBondInteractionType), переиспользуется между шагами так же, как
     // fiber_thread_buffers выше ("память только растёт").
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_contact_thread_buffers;
+    // Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6) -- два буфера (сторона
+    // Fiber и сторона Solid, разные Delta), переиспользуются между шагами по
+    // тому же принципу, что буферы выше.
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -589,6 +595,29 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
             const double fiber_contact_dt_limit = interactions::compute_fiber_contact_dt_limit(
                 fiber_exec, fb, model.materials, fiber_contact_search.primitives);
             if (fiber_contact_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_contact_dt_limit;
+
+            // RHS: Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6) -- механический
+            // контакт бусины нити с реальной Solid-частицей. Ф4 уже завершён,
+            // поэтому вклад в Solid идёт ЧЕРЕЗ ТОТ ЖЕ МЕХАНИЗМ, что и Solid-SPH/
+            // Solid-Solid-Contact внутри single_step (SolidDelta + rhs::
+            // reduce_contributions) — здесь он лишь ДОБАВЛЯЕТСЯ к уже
+            // посчитанному single_step() dvx (interactions/fiber_solid_contact.hpp,
+            // шапка файла, решения 1-6). Вклад в Fiber складывается с Fiber-Bond/
+            // Fiber-Fiber-Contact в тот же dv_fiber, как и они между собой.
+            const interactions::FiberSolidContactResult fiber_solid_result = interactions::compute_fiber_solid_contact(
+                fiber_exec, cfg.mats, sys, ntotal, fb, model.topology, model.materials, fiber_solid_fiber_buffers,
+                fiber_solid_solid_buffers);
+
+            for (size_t d = 0; d < dim; ++d)
+                for (size_t i = 0; i < nfiber; ++i)
+                    dv_fiber[d][i] += fiber_solid_result.fiber_delta[i].dv[d];
+            for (size_t d = 0; d < dim; ++d)
+                for (size_t i = 0; i < ntotal; ++i)
+                    dvx[d][i] += fiber_solid_result.solid_delta[i].dv[d];
+
+            const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
+                fiber_exec, cfg.mats, sys, fb, model.materials, fiber_solid_result.primitives);
+            if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
         }
 
         // Общий шаг (fiber/SPH.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).
