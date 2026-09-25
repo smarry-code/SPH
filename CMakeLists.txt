@@ -197,6 +197,27 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- ODESolver (fiber/PLAN.md, этап Ф8): интерфейс OdeSolver, PredictorCorrector
+#     и Euler (include/ode/ode_solver.hpp) -- первый порядок сходимости Эйлера
+#     на задаче с аналитическим решением, ограниченность энергии нити без
+#     контактов на PredictorCorrector. Нити -- только при SPH_DIM=3 (Р9), по
+#     образцу test_fiber_bond.
+add_executable(test_ode_solver tests/test_ode_solver.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_ode_solver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_ode_solver PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_ode_solver PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_ode_solver PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_ode_solver PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_ode_solver PRIVATE -fopenmp)
+    target_link_options(test_ode_solver PRIVATE -fopenmp)
+endif()
+add_test(NAME ode_solver_test COMMAND test_ode_solver)
+set_tests_properties(ode_solver_test PROPERTIES LABELS "3d")
+
 # --- Postprocessing: разрыв связей Fiber-Bond (fiber/PLAN.md, этап Ф7):
 #     каркас "поиск событий -> применение" (include/interactions/
 #     postprocessing.hpp), критерий l > l_break, новый object_id

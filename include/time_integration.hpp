@@ -24,15 +24,19 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
                       RunGuard* guard = nullptr);
 
 // Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7 — сигнатура;
-// этап Ф3 — физика). Интегрирует Solid (model.solid) тем же
-// PredictorCorrector, что и старая сигнатура, и одновременно нити
-// (model.fiber/model.topology): на каждом шаге считается RHS связей
-// Fiber-Bond (include/interactions/fiber_bond.hpp) и её dt_limit, итоговый
-// шаг — общий минимум CFL/контакта Solid и dt_limit связей (fiber/SPH.md,
-// «Шаг по времени»). Solid-цикл внутри этой перегрузки — копия цикла старой
-// сигнатуры (см. TODO(Ф8) в src/time_integration.cpp); эквивалентность
-// проверяет tests/test_fiber_time_integration_equivalence.cpp. Прежняя
-// сигнатура выше не изменена и продолжает работать без правок для
-// test_e2e_bc2/test_e2e_bc6.
+// этап Ф3 — физика; этап Ф8 — унификация). Интегрирует Solid (model.solid) и
+// нити (model.fiber/model.topology) одновременно: на каждом шаге считается
+// RHS Fiber-Bond/Fiber-Fiber-Contact/Fiber-Solid-Contact
+// (include/interactions/) и их dt_limit, итоговый шаг — общий минимум
+// CFL/контакта Solid и dt_limit нитей (fiber/SPH.md, «Шаг по времени»).
+// Решатель — ode::PredictorCorrectorSolver (по умолчанию) или ode::EulerSolver
+// (include/ode/ode_solver.hpp), выбор — по cfg.ode_solver.
+//
+// Эта перегрузка и перегрузка выше (ParticleSystem&) — тонкие обёртки над
+// ОДНОЙ общей реализацией (detail::run_time_integration<Solver>,
+// src/time_integration.cpp): различаются только передаваемые
+// fb/topology/materials (пустые по умолчанию у старой сигнатуры -> вся
+// Fiber-физика no-op). Эквивалентность прежней сигнатуры при пустых нитях
+// проверяет tests/test_fiber_time_integration_equivalence.cpp.
 void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
                       double delta_x, RunGuard* guard = nullptr);

@@ -382,6 +382,20 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             }
             cfg.contact_impulse_gamma = v;
         }
+        else if (key == "ode_solver")
+        {
+            const int v = std::stoi(value);
+            if (v != 0 && v != 1)
+            {
+                std::cerr << "ode_solver вне диапазона 0..1: " << v
+                          << ", откат к 0 (PredictorCorrector)\n";
+                cfg.ode_solver = 0;
+            }
+            else
+            {
+                cfg.ode_solver = v;
+            }
+        }
         else if (key == "fiber_file")
         {
             cfg.fiber_file = value;
