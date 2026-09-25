@@ -213,6 +213,33 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- Эквивалентность Solid-цикла в новой перегрузке time_integration
+#     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
+#     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый
+#     цикл, а содержит его построчную копию (src/time_integration.cpp,
+#     TODO(Ф8)); до этого теста копия не была упражнена НИ ОДНИМ тестом с
+#     непустым Solid (test_fiber_bond.cpp проверяет только Fiber-физику при
+#     ntotal == 0). Кейс — уменьшенная 3D-геометрия BC2
+#     (tests/bc2_mini3d_geometry.hpp), та же, что использует test_e2e_3d.
+add_executable(test_fiber_time_integration_equivalence
+    tests/test_fiber_time_integration_equivalence.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_time_integration_equivalence PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_time_integration_equivalence PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_time_integration_equivalence PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_time_integration_equivalence PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_time_integration_equivalence PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_time_integration_equivalence PRIVATE -fopenmp)
+    target_link_options(test_fiber_time_integration_equivalence PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_time_integration_equivalence_test COMMAND test_fiber_time_integration_equivalence)
+set_tests_properties(fiber_time_integration_equivalence_test PROPERTIES LABELS "3d" TIMEOUT 300)
+
 # --- Границы SPH_DIM != 3 для нитей (fiber/PLAN.md Ф2, пункт 5):
 #     fiber::check_fiber_requires_dim3() обязана бросать исключение. dim —
 #     compile-time constexpr (ADR-002), поэтому ветку dim != 3 нельзя

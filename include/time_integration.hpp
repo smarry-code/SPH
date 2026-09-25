@@ -23,10 +23,15 @@ double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, si
 void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x,
                       RunGuard* guard = nullptr);
 
-// Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7). На этом
-// этапе — тонкая обёртка: вызывает прежнюю логику для Solid-части
-// (model.solid) и не делает ничего физического с нитями (model.fiber/
-// model.topology) — их интеграция в цикл начинается с этапа Ф3. Прежняя
+// Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7 — сигнатура;
+// этап Ф3 — физика). Интегрирует Solid (model.solid) тем же
+// PredictorCorrector, что и старая сигнатура, и одновременно нити
+// (model.fiber/model.topology): на каждом шаге считается RHS связей
+// Fiber-Bond (include/interactions/fiber_bond.hpp) и её dt_limit, итоговый
+// шаг — общий минимум CFL/контакта Solid и dt_limit связей (fiber/SPH.md,
+// «Шаг по времени»). Solid-цикл внутри этой перегрузки — копия цикла старой
+// сигнатуры (см. TODO(Ф8) в src/time_integration.cpp); эквивалентность
+// проверяет tests/test_fiber_time_integration_equivalence.cpp. Прежняя
 // сигнатура выше не изменена и продолжает работать без правок для
 // test_e2e_bc2/test_e2e_bc6.
 void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
