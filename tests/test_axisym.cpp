@@ -31,13 +31,21 @@
 //
 // Проверки A1/B1/C/D — точные тождества схемы, поэтому допуск задан
 // относительно масштаба самих производных, а не абсолютным числом.
-#include "density.hpp"
-#include "direct_find.hpp"
-#include "int_force.hpp"
+// fiber/PLAN.md, этап Ф4-B2, шаг 1: probe_rates() ниже больше НЕ вызывает
+// старый путь (direct_find/con_density/int_force) напрямую — конвейер
+// заменён на тот же набор вызовов, что src/single_step.cpp использует для
+// продового расчёта (Solid derived -> GhostSet -> SolidExtended -> поиск ->
+// Solid-SPH kernel -> reduce -> finalize), БЕЗ стадии Solid-Solid-Contact:
+// тест проверяет только соглашение об индексах девиатора в осесимметричной
+// ветке finalize_solid, а не контакт. Смысл и допуски проверок A1-E2 не
+// изменились — сравниваются те же величины (dsxx/dsyy/dszz/dvr/dvz), теперь
+// читаемые из interactions::SolidFinal вместо выходных массивов int_force.
+#include "interactions/solid_sph.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "rhs/contributions.hpp"
+#include "rhs/cpu_executor.hpp"
 #include "simulation_config.hpp"
-#include "virt_part.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -105,7 +113,10 @@ Rates probe_rates(const VelocityField& field,
     const size_t n = kNr * kNz;
 
     ParticleSystem sys;
-    sys.resize(n * 2);               // вторая половина — запас под зеркальные
+    // Новый путь не дописывает зеркальные частицы в sys (они живут только в
+    // interactions::SolidExtended, построенном из GhostSet) — в отличие от
+    // старого virt_part.cpp, запас под них здесь не нужен.
+    sys.resize(n);
 
     for (size_t ir = 0; ir < kNr; ++ir)
     {
@@ -142,47 +153,44 @@ Rates probe_rates(const VelocityField& field,
     }
 
     SimulationConfig cfg;
-    cfg.nnps            = 1;          // direct_find: без сетки, без её настроек
     cfg.pa_sph          = 2;
     cfg.skf             = 1;          // кубический сплайн
     cfg.density_method  = 1;
-    cfg.maxn            = n * 2;
-    cfg.max_interaction = n * 200;
+    cfg.maxn            = n;
+    cfg.max_interaction = n * 200;     // не используется новым путём (нет max_interaction-буферов), оставлено для минимальности diff
 
-    size_t nvirt = 0;
-    virt_part(sys, n, nvirt, cfg.maxn);
-    const size_t nall = n + nvirt;
+    // Тот же набор вызовов, что src/single_step.cpp (новый путь, fiber/PLAN.md
+    // Ф4-B1), без стадии Solid-Solid-Contact (тест не про контакт).
+    rhs::CpuExecutor exec;
 
-    size_t niac = 0;
-    std::vector<size_t> pair_i(cfg.max_interaction), pair_j(cfg.max_interaction);
-    std::vector<double> w(cfg.max_interaction, 0.0);
-    std::vector<std::vector<double>> dwdx(dim, std::vector<double>(cfg.max_interaction, 0.0));
-    std::vector<int> countiac(nall, 0);
-    direct_find(cfg, sys, nall, niac, pair_i, pair_j, w, dwdx, countiac);
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec, cfg.mats, sys, n, derived);
 
-    PairGraph graph;
-    graph.num_colors = 0;             // atomic-ветвь потребителей пар
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, n, ghosts);
 
-    std::vector<double> drho(nall, 0.0);
-    con_density(cfg, sys, nall, niac, pair_i, pair_j, dwdx, drho, graph);
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, n, derived, ghosts, ext);
 
-    std::vector<double> eta(nall, 0.0), t(nall, 0.0);
-    std::vector<double> tdsdt(nall, 0.0), dedt(nall, 0.0);
-    std::vector<double> dsxx(nall, 0.0), dsyy(nall, 0.0), dszz(nall, 0.0);
-    std::vector<double> dsxy(nall, 0.0), dsyz(nall, 0.0), dsxz(nall, 0.0);
-    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(nall, 0.0));
-    WorkBuffers wb;
+    interactions::SolidSphSearchResult search;
+    interactions::build_solid_sph_search(exec, cfg, ext, search);
 
-    int_force(cfg, sys, nall, niac, eta, pair_i, pair_j, dwdx, w, t, dvxdt,
-              tdsdt, dedt, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, drho, wb, graph);
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers;
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
+
+    const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
+
+    std::vector<interactions::SolidFinal> finalres;
+    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, finalres);
 
     const size_t probe = flat_index(kProbeIr, kProbeIz);
+    const interactions::SolidFinal& f = finalres[probe];
     Rates out;
-    out.dsxx = dsxx[probe];
-    out.dsyy = dsyy[probe];
-    out.dszz = dszz[probe];
-    out.dvr  = dvxdt[0][probe];
-    out.dvz  = dvxdt[1][probe];
+    out.dsxx = f.dsxx;
+    out.dsyy = f.dsyy;
+    out.dszz = f.dszz;
+    out.dvr  = f.dv[0];
+    out.dvz  = f.dv[1];
     out.scale = std::max({std::fabs(out.dsxx), std::fabs(out.dsyy), std::fabs(out.dszz)});
     return out;
 }

@@ -28,11 +28,19 @@
 //   E  линейное поле одной компоненты напряжения σ_ab = k·x_b: ускорение
 //      появляется только по оси a — ловит компоненту девиатора, попавшую не в
 //      то уравнение движения.
-#include "density.hpp"
-#include "direct_find.hpp"
-#include "int_force.hpp"
+// fiber/PLAN.md, этап Ф4-B2, шаг 1: probe() ниже больше НЕ вызывает старый
+// путь (direct_find/con_density/int_force) напрямую — конвейер заменён на
+// тот же набор вызовов, что src/single_step.cpp использует для продового
+// расчёта (Solid derived -> GhostSet -> SolidExtended -> поиск -> Solid-SPH
+// kernel -> reduce -> finalize), БЕЗ стадии Solid-Solid-Contact (тест не про
+// контакт). Смысл проверок A-E не изменился; e/r/ds/a читаются из
+// interactions::SolidFinal (шим-поля exx..eyz/rxy..ryz и dsxx..dsxz), а не
+// из sys, куда их писал старый int_force.cpp напрямую.
+#include "interactions/solid_sph.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "rhs/contributions.hpp"
+#include "rhs/cpu_executor.hpp"
 #include "simulation_config.hpp"
 
 #include <algorithm>
@@ -124,46 +132,50 @@ Probe probe(const VelocityField& vfield, const StressField& sfield = zero_stress
             }
 
     SimulationConfig cfg;
-    cfg.nnps            = 1;          // direct_find: без сетки
     cfg.pa_sph          = 2;
     cfg.skf             = 1;          // кубический сплайн
     cfg.density_method  = 1;
     cfg.maxn            = n;
-    cfg.max_interaction = n * 200;
+    cfg.max_interaction = n * 200;     // не используется новым путём, оставлено для минимальности diff
 
-    size_t niac = 0;
-    std::vector<size_t> pair_i(cfg.max_interaction), pair_j(cfg.max_interaction);
-    std::vector<double> w(cfg.max_interaction, 0.0);
-    std::vector<std::vector<double>> dwdx(dim, std::vector<double>(cfg.max_interaction, 0.0));
-    std::vector<int> countiac(n, 0);
-    direct_find(cfg, sys, n, niac, pair_i, pair_j, w, dwdx, countiac);
+    // Тот же набор вызовов, что src/single_step.cpp (новый путь, fiber/PLAN.md
+    // Ф4-B1), без стадии Solid-Solid-Contact (тест не про контакт). В 3D
+    // GhostSet всегда пуст (axis_sim && dim==2 ложно при dim==3).
+    rhs::CpuExecutor exec;
 
-    PairGraph graph;
-    graph.num_colors = 0;
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec, cfg.mats, sys, n, derived);
 
-    std::vector<double> drho(n, 0.0);
-    con_density(cfg, sys, n, niac, pair_i, pair_j, dwdx, drho, graph);
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, n, ghosts);
 
-    std::vector<double> eta(n, 0.0), t(n, 0.0), tdsdt(n, 0.0), dedt(n, 0.0);
-    std::vector<double> dsxx(n, 0.0), dsyy(n, 0.0), dszz(n, 0.0);
-    std::vector<double> dsxy(n, 0.0), dsyz(n, 0.0), dsxz(n, 0.0);
-    std::vector<std::vector<double>> dvxdt(dim, std::vector<double>(n, 0.0));
-    WorkBuffers wb;
-    int_force(cfg, sys, n, niac, eta, pair_i, pair_j, dwdx, w, t, dvxdt,
-              tdsdt, dedt, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, drho, wb, graph);
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, n, derived, ghosts, ext);
+
+    interactions::SolidSphSearchResult search;
+    interactions::build_solid_sph_search(exec, cfg, ext, search);
+
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers;
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
+
+    const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
+
+    std::vector<interactions::SolidFinal> finalres;
+    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, finalres);
 
     const size_t p = flat_index(kProbe, kProbe, kProbe);
+    const interactions::SolidFinal& f = finalres[p];
     Probe out;
-    out.e = {{{sys.exx[p], sys.exy[p], sys.exz[p]},
-              {sys.exy[p], sys.eyy[p], sys.eyz[p]},
-              {sys.exz[p], sys.eyz[p], sys.ezz[p]}}};
-    out.r = {{{0.0, sys.rxy[p], sys.rxz[p]},
-              {-sys.rxy[p], 0.0, sys.ryz[p]},
-              {-sys.rxz[p], -sys.ryz[p], 0.0}}};
-    out.ds = {{{dsxx[p], dsxy[p], dsxz[p]},
-               {dsxy[p], dsyy[p], dsyz[p]},
-               {dsxz[p], dsyz[p], dszz[p]}}};
-    out.a = {dvxdt[0][p], dvxdt[1][p], dvxdt[2][p]};
+    out.e = {{{f.exx, f.exy, f.exz},
+              {f.exy, f.eyy, f.eyz},
+              {f.exz, f.eyz, f.ezz}}};
+    out.r = {{{0.0, f.rxy, f.rxz},
+              {-f.rxy, 0.0, f.ryz},
+              {-f.rxz, -f.ryz, 0.0}}};
+    out.ds = {{{f.dsxx, f.dsxy, f.dsxz},
+               {f.dsxy, f.dsyy, f.dsyz},
+               {f.dsxz, f.dsyz, f.dszz}}};
+    out.a = {f.dv[0], f.dv[1], f.dv[2]};
     out.G = cfg.mats.const_JH_2[static_cast<size_t>(kItype - 10)][1];
     return out;
 }
