@@ -59,28 +59,12 @@ set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
 
 # --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
 enable_testing()
-add_executable(test_flat_grid tests/test_flat_grid.cpp)
-target_include_directories(test_flat_grid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-add_test(NAME flat_grid_test COMMAND test_flat_grid)
-
-add_executable(test_pair_graph tests/test_pair_graph.cpp)
-target_include_directories(test_pair_graph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-add_test(NAME pair_graph_test COMMAND test_pair_graph)
-# pair_graph.hpp использует OpenMP (спекулятивная блочно-параллельная окраска, фаза B1).
-# Без -fopenmp omp_get_max_threads()==1 и параллельный путь не тестируется.
-if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-    target_compile_options(test_pair_graph PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
-    target_link_options(test_pair_graph PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
-elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(test_pair_graph PRIVATE -fopenmp)
-    target_link_options(test_pair_graph PRIVATE -fopenmp)
-endif()
 
 # --- Инфраструктура нитей, этап Ф1 (fiber/PLAN.md): CpuExecutor,
 #     ContributionWriter/reduce, SpatialIndex, RhsWorkspace (include/rhs/).
 #     Чистая инфраструктура без физики — не зависит от SPH_DIM/param.hpp,
 #     размерность задаётся шаблонным параметром SpatialIndex<Dim>, поэтому
-#     цели собираются один раз с параметрами по умолчанию, как test_flat_grid.
+#     цели собираются один раз с параметрами по умолчанию.
 add_executable(test_executor tests/test_executor.cpp)
 target_include_directories(test_executor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME executor_test COMMAND test_executor)
@@ -268,7 +252,7 @@ target_compile_definitions(test_e2e_bc2 PRIVATE
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(test_e2e_bc2 PRIVATE -fexceptions)
 endif()
-# Конвейер использует OpenMP (link_list, int_force, pair_graph).
+# Конвейер использует OpenMP (interactions/solid_sph.hpp, rhs/cpu_executor.hpp).
 if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     target_compile_options(test_e2e_bc2 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
     target_link_options(test_e2e_bc2 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
@@ -562,22 +546,6 @@ add_custom_target(regression_golden
     COMMENT "Перегенерация регрессионных эталонов в tests/data/regression"
     USES_TERMINAL VERBATIM)
 
-# --- Бенчмарк фазы B (Этап 1): сравнение серийного (B2) и параллельного (B1) путей.
-add_executable(bench_color bench_color.cpp)
-target_include_directories(bench_color PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(bench_color PRIVATE -O2 -Wno-unused-parameter)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    target_compile_options(bench_color PRIVATE -O2)
-endif()
-if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-    target_compile_options(bench_color PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
-    target_link_options(bench_color PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
-elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(bench_color PRIVATE -fopenmp)
-    target_link_options(bench_color PRIVATE -fopenmp)
-endif()
-
 # --- Предупреждения: воспроизводим -Weverything (Clang) с прежними подавлениями
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(SPH PRIVATE
@@ -626,8 +594,8 @@ if(WIN32)
     target_compile_definitions(SPH PRIVATE _WIN32)
 endif()
 
-# --- Профилирование: включает блоки #ifdef SPH_PROFILE в pair_graph/int_force
-#     (тайминг фаз build и параллельных циклов, запись в force_timing.csv) ----
+# --- Профилирование: включает блоки #ifdef SPH_PROFILE (тайминг фаз, запись
+#     в force_timing.csv) ----
 if(SPH_PROFILE)
     target_compile_definitions(SPH PRIVATE SPH_PROFILE)
 endif()

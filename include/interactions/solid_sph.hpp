@@ -354,12 +354,13 @@ struct SolidSphSearchResult
     std::vector<std::pair<rhs::index_t, rhs::index_t>> real_pairs;      // подмножество (real, real)
 };
 
-// Поиск пар -- та же логика, что src/direct_find.cpp: канонический порядок
+// Поиск пар -- та же логика, что был у прежнего прямого поиска соседей
+// (direct_find, удалён на fiber/PLAN.md, этапе Ф4-B2): канонический порядок
 // i<j, критерий r < scale_k*(h_i+h_j)/2 (scale_k = 2 для кубического сплайна,
-// 3 для гаусса/квинтического, src/direct_find.cpp). SpatialIndex даёт БРОУЗ-
-// фазу с фиксированным радиусом (rhs/spatial_index.hpp поддерживает только
-// его), точный per-pair критерий проверяется в accept() -- воспроизводит
-// direct_find для ЛЮБОГО (не обязательно однородного) распределения hsml.
+// 3 для гаусса/квинтического). SpatialIndex даёт БРОУЗ-фазу с фиксированным
+// радиусом (rhs/spatial_index.hpp поддерживает только его), точный per-pair
+// критерий проверяется в accept() -- воспроизводит прежний поиск для ЛЮБОГО
+// (не обязательно однородного) распределения hsml.
 // ghost-ghost пары отбрасываются в accept() (i >= nreal): вклад в Solid они
 // дать не могут (обе стороны -- ghost), а старый путь их тоже фактически
 // не учитывает (обе стороны отбрасываются downstream, см. single_step.cpp).
@@ -814,7 +815,10 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
             {
                 f.dsxx = 2.0 * G_ * (exx + drho / (3.0 * sys.rho[i])) + 2.0 * (sys.sxy[i] * rxy + sys.sxz[i] * rxz);
                 f.dsyy = 2.0 * G_ * (eyy + drho / (3.0 * sys.rho[i])) + 2.0 * (sys.syz[i] * ryz - sys.sxy[i] * rxy);
-                // Исправленный знак (см. src/int_force.cpp, комментарий про C2-C4).
+                // Исправленный знак у syz*ryz (см. tests/test_kinematics_3d.cpp,
+                // проверки C2-C4: прежний знак «− syz·ryz» делал след
+                // поворотной части dS/dt равным 4·syz·ryz, и при вращении
+                // вокруг x девиатор переставал быть бесследовым).
                 f.dszz = 2.0 * G_ * (ezz + drho / (3.0 * sys.rho[i])) - 2.0 * (sys.sxz[i] * rxz + sys.syz[i] * ryz);
                 f.dsxy = 2.0 * G_ * exy + rxy * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * ryz + sys.syz[i] * rxz;
                 f.dsyz = 2.0 * G_ * eyz - sys.sxy[i] * rxz - sys.sxz[i] * rxy + ryz * (sys.szz[i] - sys.syy[i]);

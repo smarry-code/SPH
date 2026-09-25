@@ -161,10 +161,8 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
     std::vector<double> u_min(ntotal, 0.0);
     std::vector<double> rho_min(ntotal, 0.0);
 
-    // переиспользуемые рабочие буферы (живут всю симуляцию, передаются в int_force)
+    // переиспользуемые рабочие буферы (живут всю симуляцию, передаются в single_step)
     WorkBuffers wb;
-    // граф пар + окраска (живёт всю симуляцию, перестраивается каждый шаг в single_step)
-    PairGraph graph;
     // sys (ParticleSystem) — первичное хранилище частиц, передаётся из main.
 
     size_t current_ts = 0;
@@ -242,7 +240,7 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
         }
 
         // Вычисление сил и производных
-        single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb, graph);
+        single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb);
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контактный предел
         // Обновление свойств частиц (полный временной шаг)
@@ -482,7 +480,6 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
     std::vector<double> rho_min(ntotal, 0.0);
 
     WorkBuffers wb;
-    PairGraph graph;
 
     // --- Fiber: ускорение связей на шаге, v^n сохранённая для корректора ---
     std::vector<double> dv_fiber[dim];
@@ -555,7 +552,7 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
         }
 
         // RHS: Solid (SPH+контакт, как раньше).
-        single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb, graph);
+        single_step(cfg, sys, current_ts, dt, ntotal, t, tdsdt, dx, dvx, du, ds, drho, av, dsxx, dsyy, dszz, dsxy, dsyz, dsxz, wb);
 
         // RHS: Fiber-Bond (fiber/PLAN.md, этап Ф3) — readonly search по
         // topology.bonds, contributions -> reduce (fiber/SPH.md, «Основные

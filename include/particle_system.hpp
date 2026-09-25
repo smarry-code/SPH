@@ -9,7 +9,7 @@
 // __restrict__.
 //
 // Стратегия: СОСУЩЕСТВОВАНИЕ AoS+SoA.
-// ParticleSystem живёт всю симуляцию рядом с WorkBuffers/PairGraph (в
+// ParticleSystem живёт всю симуляцию рядом с WorkBuffers (в
 // time_integration). Перед расчётом потребителей par вызывается gather()
 // (AoS->SoA), горячие циклы работают на плоских массивах с __restrict__,
 // после — scatter() (SoA->AoS) для изменённых полей. Так миграция выполняется

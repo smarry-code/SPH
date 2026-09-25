@@ -16,7 +16,22 @@
 #include "input.hpp"
 #include "output.hpp"
 #include "time_integration.hpp"
-#include "linked_list.hpp"   // time_elapsed — объявлена здесь (определение в linked_list.cpp)
+
+namespace
+{
+// Замер времени выполнения программы. Раньше жил в linked_list.cpp вместе с
+// link_list() (старый поиск соседей); при удалении старого пути
+// (fiber/PLAN.md, этап Ф4-B2) единственный оставшийся потребитель —
+// main.cpp, поэтому функция перенесена сюда без изменений.
+const auto program_start = std::chrono::high_resolution_clock::now();
+
+void time_elapsed(double& elapsed)
+{
+    auto now = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration = now - program_start;
+    elapsed = duration.count();
+}
+} // namespace
 
 int main()
 {
