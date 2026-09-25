@@ -4,6 +4,7 @@
 #include "time_integration.hpp"
 #include "output.hpp"
 #include "interactions/fiber_bond.hpp"
+#include "interactions/fiber_contact.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include <fstream>
@@ -491,6 +492,11 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
     }
     rhs::CpuExecutor fiber_exec;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_thread_buffers;
+    // Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5) -- отдельный буфер
+    // (interaction_type отличается, kFiberFiberContactInteractionType !=
+    // kFiberBondInteractionType), переиспользуется между шагами так же, как
+    // fiber_thread_buffers выше ("память только растёт").
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_contact_thread_buffers;
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -557,14 +563,32 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
         // RHS: Fiber-Bond (fiber/PLAN.md, этап Ф3) — readonly search по
         // topology.bonds, contributions -> reduce (fiber/SPH.md, «Основные
         // требования к interaction kernel»).
+        // RHS: Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5) — readonly
+        // spatial search по бусинам РАЗНЫХ нитей (interactions/fiber_contact.hpp),
+        // тот же FiberDelta reduce, СКЛАДЫВАЕТСЯ с вкладом Fiber-Bond (обе
+        // физики независимо производят ускорение бусин — fiber/PLAN.md §3.3:
+        // «FiberDelta: dv[dim]», сумма нескольких interaction types в общий dv).
         double fiber_dt_limit = std::numeric_limits<double>::max();
         if (nfiber > 0)
         {
-            std::vector<fiber::FiberDelta> fiber_delta =
+            std::vector<fiber::FiberDelta> fiber_bond_delta =
                 interactions::compute_fiber_bond(fiber_exec, fb, model.topology, model.materials, fiber_thread_buffers);
+
+            interactions::FiberContactSearchResult fiber_contact_search;
+            interactions::build_fiber_contact_search(fiber_exec, fb, model.topology, model.materials, fiber_contact_search);
+            interactions::compute_fiber_contact_contributions(fiber_exec, fb, model.materials,
+                                                               fiber_contact_search.primitives, fiber_contact_thread_buffers);
+            std::vector<fiber::FiberDelta> fiber_contact_delta =
+                rhs::reduce_contributions(fiber_exec, fiber_contact_thread_buffers, fb.size());
+
             for (size_t d = 0; d < dim; ++d)
-                for (size_t i = 0; i < nfiber; ++i) dv_fiber[d][i] = fiber_delta[i].dv[d];
+                for (size_t i = 0; i < nfiber; ++i)
+                    dv_fiber[d][i] = fiber_bond_delta[i].dv[d] + fiber_contact_delta[i].dv[d];
+
             fiber_dt_limit = interactions::compute_fiber_bond_dt_limit(fiber_exec, fb, model.topology, model.materials);
+            const double fiber_contact_dt_limit = interactions::compute_fiber_contact_dt_limit(
+                fiber_exec, fb, model.materials, fiber_contact_search.primitives);
+            if (fiber_contact_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_contact_dt_limit;
         }
 
         // Общий шаг (fiber/SPH.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).

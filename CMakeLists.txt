@@ -197,6 +197,45 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5): primitive/kernel
+#     пространственного контакта бусин разных нитей
+#     (include/interactions/fiber_contact.hpp), dt_limit контакта,
+#     диагностика "пар на пересечение". Нити — только при SPH_DIM=3 (Р9), по
+#     образцу test_fiber_bond.
+add_executable(test_fiber_contact tests/test_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_contact PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_contact PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_contact PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact PRIVATE -fopenmp)
+    target_link_options(test_fiber_contact PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_contact_test COMMAND test_fiber_contact)
+set_tests_properties(fiber_contact_test PROPERTIES LABELS "3d")
+
+# --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
+#     крест-накрест, отскакивают без взаимного проникания»).
+add_executable(test_e2e_fiber_contact tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_fiber_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_fiber_contact PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_contact PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_fiber_contact PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_fiber_contact PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_contact PRIVATE -fopenmp)
+    target_link_options(test_e2e_fiber_contact PRIVATE -fopenmp)
+endif()
+add_test(NAME e2e_fiber_contact_test COMMAND test_e2e_fiber_contact)
+set_tests_properties(e2e_fiber_contact_test PROPERTIES LABELS "3d")
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый
