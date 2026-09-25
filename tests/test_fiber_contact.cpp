@@ -223,6 +223,50 @@ void test_near_parallel_fallback()
     check(near_rel(geom.P_ij, -x0, 1e-6), "P_ij совпадает с формулой Surface-End");
     check(geom.w_j == 1.0, "j (в вырожденной ветке) получает w_j=1 -- без распределения на соседей");
     check(!geom.j_has_neighbor, "j в вырожденной ветке не имеет соседа для распределения");
+
+    // Сумма импульсов ИМЕННО в вырожденной ветке (не только в общем случае
+    // Surface-Surface, test_momentum_conservation ниже): w_j=1 означает, что
+    // на стороне j всей силой -F*n наделяется одна бусина j (без соседа), а
+    // на стороне i -- w_i*F*n самой i плюс (1-w_i)*F*n соседу i_next; сумма
+    // обязана быть равна нулю и в этом асимметричном случае (координатор,
+    // пункт 3: явно проверить сохранение импульса именно в вырожденной
+    // ветке, а не полагаться на то, что near-parallel тест проверяет только
+    // геометрию).
+    {
+        rhs::CpuExecutor exec(2);
+        std::vector<interactions::FiberContactPrimitive> primitives = {prim};
+        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
+        interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buffers);
+        std::vector<fiber::FiberDelta> out = rhs::reduce_contributions(exec, buffers, fx.state.size());
+
+        double total[dim] = {};
+        double scale = 0.0;
+        for (std::size_t idx = 0; idx < fx.state.size(); ++idx)
+            for (std::size_t dd = 0; dd < dim; ++dd)
+            {
+                const double p = fx.state.mass[idx] * out[idx].dv[dd];
+                total[dd] += p;
+                scale = std::max(scale, std::fabs(p));
+            }
+        if (scale < 1e-30) scale = 1.0;
+        for (std::size_t dd = 0; dd < dim; ++dd)
+            check(std::fabs(total[dd]) < 1e-9 * scale,
+                  "вырожденная ветка (near-parallel): суммарный импульс по компоненте " + std::to_string(dd) +
+                      " равен нулю: " + std::to_string(total[dd]));
+
+        // Асимметрия упрощения: сторона j (w_j=1) отдаёт вклад ровно одной
+        // бусине, сторона i (Surface-End-формула) -- двум (i и сосед) --
+        // ожидаемо 3 бусины с ненулевым вкладом, а не 4, как в общем случае
+        // Surface-Surface (test_momentum_conservation).
+        int nonzero = 0;
+        for (std::size_t idx = 0; idx < fx.state.size(); ++idx)
+        {
+            bool any = false;
+            for (std::size_t dd = 0; dd < dim; ++dd) any = any || (out[idx].dv[dd] != 0.0);
+            if (any) ++nonzero;
+        }
+        check(nonzero == 3, "вырожденная ветка: 3 бусины получили вклад (i, сосед i, j -- без соседа j)");
+    }
 }
 
 // -----------------------------------------------------------------------
