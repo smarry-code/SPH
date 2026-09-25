@@ -103,7 +103,14 @@ void build_state(ParticleSystem& sys, std::size_t& nreal)
             sys.vx[0][k] = -50.0 * r;                 // сходящееся радиальное поле
             sys.vx[1][k] = 300.0 + 20.0 * r;           // движение к телу B + сдвиг
             sys.itype[k] = kItypeA; sys.body[k] = kItypeA;
-            sys.rho[k] = kRhoA; sys.rho_0[k] = kRhoA;
+            // rho слегка ВЫШЕ rho_0 (сжатие) -- НЕ равно rho_0: иначе mu =
+            // rho/rho_0 - 1 == 0 и обе ветви JH-2/УА-Тэта (mu>=0 при D==0)
+            // дают p == 0 тождественно, из-за чего энергетический член "he"
+            // (int_force.cpp, часть от ДАВЛЕНИЯ) был бы нулевым в ЛЮБОМ
+            // сценарии -- давление никогда бы не упражнялось, а pa_sph=1
+            // против pa_sph=2 в "he" различались бы формулой, но не числом
+            // (см. диагностику ниже, в main()).
+            sys.rho[k] = kRhoA * 1.02; sys.rho_0[k] = kRhoA;
             sys.mass[k] = kRhoA * kDx * kDx;
             sys.hsml[k] = 1.3 * kDx;                   // ОДНОРОДНАЯ hsml -- см. solid_sph.hpp
             sys.u[k] = 1.0e3; sys.dp[k] = 0.0; sys.D[k] = 0.0; sys.e_pl[k] = 0.0;
@@ -124,7 +131,10 @@ void build_state(ParticleSystem& sys, std::size_t& nreal)
             sys.vx[0][k] = 30.0 * r;                   // слегка расходящееся радиальное поле
             sys.vx[1][k] = 10.0 * (r - 2.5 * kDx);      // небольшой сдвиг, тело в целом покоится
             sys.itype[k] = kItypeB; sys.body[k] = kItypeB;
-            sys.rho[k] = kRhoB; sys.rho_0[k] = kRhoB;
+            // rho слегка НИЖЕ rho_0 (разрежение) -- противоположный знак mu
+            // относительно тела A, чтобы обе ветви (mu>=0 / mu<0) обеих EOS
+            // (JH-2 и УА-Тэта) были упражнены хотя бы одной частицей теста.
+            sys.rho[k] = kRhoB * 0.98; sys.rho_0[k] = kRhoB;
             sys.mass[k] = kRhoB * kDx * kDx;
             sys.hsml[k] = 1.3 * kDx;
             sys.u[k] = 5.0e2; sys.dp[k] = 0.0; sys.D[k] = 0.0; sys.e_pl[k] = 0.0;
@@ -298,7 +308,19 @@ bool compare(const OldResult& oldr, const std::vector<interactions::SolidFinal>&
 }
 
 // --- Один сценарий -----------------------------------------------------------
-void run_scenario(int pa_sph, int density_method, int contact_type, const char* label)
+// Возвращает результат НОВОГО пути -- нужен вызывающей стороне (main) для
+// межсценарных проверок: убедиться, что варьируемые параметры (pa_sph,
+// density_method, contact_force_type) реально дают РАЗНЫЕ числа между собой
+// в НОВОМ коде, а не только совпадают со старым путём при каждом фиксированном
+// наборе параметров (см. "ГЛАВНЫЙ ВОПРОС 1" в отчёте ревью части A: во всех
+// 7 сценариях худшее старое/новое расхождение приходится на одну и ту же
+// частицу №25, поле dsxy -- т.к. dsxy там определяется исключительно
+// деформацией/поворотом и state.sxx/syy/sxz/syz, которые НЕ зависят от
+// density_method/pa_sph/contact_force_type; чтобы убедиться, что ветки
+// реально задействованы, а не просто "прогоняются вхолостую", сравниваются
+// поля, которые ПО ФОРМУЛЕ ДОЛЖНЫ отличаться -- drho между density_method,
+// du/dv между pa_sph, dv между contact_force_type).
+std::vector<interactions::SolidFinal> run_scenario(int pa_sph, int density_method, int contact_type, const char* label)
 {
     std::printf("\n[сценарий] %s (pa_sph=%d, density_method=%d, contact_force_type=%d)\n",
                 label, pa_sph, density_method, contact_type);
@@ -339,9 +361,27 @@ void run_scenario(int pa_sph, int density_method, int contact_type, const char* 
     const double dt_applied = 1.0e-9;
 
     const OldResult oldr = run_old_path(cfg, sys, nreal, dt_applied);
-    const std::vector<interactions::SolidFinal> newr = run_new_path(cfg, sys, nreal, dt_applied);
+    std::vector<interactions::SolidFinal> newr = run_new_path(cfg, sys, nreal, dt_applied);
 
     compare(oldr, newr, nreal, label, 1.0e-9);
+    return newr;
+}
+
+// --- Диагностика "ветки реально разные" (ГЛАВНЫЙ ВОПРОС 1) ------------------
+// max относительная разница ОДНОГО поля между двумя прогонами НОВОГО пути по
+// всем реальным частицам. Используется, чтобы явно показать: варьируемые
+// параметры меняют результат заметно (на уровне физики, >> порога roundoff
+// 1e-9 из compare()), а не совпадают тождественно, как это происходит у
+// dsxy/rxy-подобных полей, не зависящих от этих параметров.
+template <class Field>
+double max_rel_diff_field(const std::vector<interactions::SolidFinal>& a,
+                           const std::vector<interactions::SolidFinal>& b,
+                           Field field, double abs_floor)
+{
+    double worst = 0.0;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
+        worst = std::max(worst, rel_diff(field(a[i]), field(b[i]), abs_floor));
+    return worst;
 }
 
 } // namespace
@@ -356,17 +396,85 @@ int main()
     // Основной сценарий -- РЕАЛЬНАЯ конфигурация BC2/BC6
     // (tests/data/bc2_initial_conditions.txt, tests/data/bc6_initial_conditions.txt):
     // pa_sph=2, density_method=1 (умолчание SimulationConfig).
-    run_scenario(2, 1, 0, "BC2/BC6: без контакта");
-    run_scenario(2, 1, 1, "BC2/BC6: контакт тип 1 (pinball)");
+    const auto base = run_scenario(2, 1, 0, "BC2/BC6: без контакта");
+    const auto contact1 = run_scenario(2, 1, 1, "BC2/BC6: контакт тип 1 (pinball)");
     run_scenario(2, 1, 2, "BC2/BC6: контакт тип 2 (Swegle)");
     run_scenario(2, 1, 3, "BC2/BC6: контакт тип 3 (импульсный)");
 
     // Дополнительные комбинации -- для полноты переноса (pa_sph=1,
     // density_method 2 и 3), не используемые реальными кейсами, но
     // предусмотренные SPH.md/PLAN.md.
-    run_scenario(1, 1, 0, "pa_sph=1, без контакта");
-    run_scenario(2, 2, 0, "density_method=2, без контакта");
-    run_scenario(2, 3, 0, "density_method=3 (диффузия), без контакта");
+    const auto pasph1 = run_scenario(1, 1, 0, "pa_sph=1, без контакта");
+    const auto density2 = run_scenario(2, 2, 0, "density_method=2, без контакта");
+    const auto density3 = run_scenario(2, 3, 0, "density_method=3 (диффузия), без контакта");
+
+    // --- ГЛАВНЫЙ ВОПРОС 1 (отчёт ревью части A) --------------------------
+    // Во всех 7 сценариях выше compare() сообщает ОДНО и то же худшее
+    // расхождение старое/новое (4.122e-12, частица #25, поле dsxy) -- это НЕ
+    // значит, что density_method/pa_sph/contact_force_type не влияют на
+    // расчёт: dsxy = 2*G*exy + rxy*(syy-sxx) + sxz*ryz + syz*rxz зависит
+    // ТОЛЬКО от деформации/поворота (exy, rxy, rxz, ryz) и state.s** -- ни
+    // одно из варьируемых полей там не участвует, поэтому и roundoff-разница
+    // старое/новое там одна и та же во всех сценариях. Ниже -- прямая
+    // проверка, что сами варьируемые параметры дают в НОВОМ пути РАЗНЫЕ
+    // (не совпадающие в пределах roundoff) числа, то есть ветки
+    // density_method 1/2/3, pa_sph 1/2 и contact_force_type реально
+    // задействованы, а не молча пропускаются/схлопываются в одну и ту же
+    // формулу.
+    std::printf("\n[диагностика] ветки density_method/pa_sph/contact_force_type действительно расходятся между собой:\n");
+    {
+        // drho -- единственное поле, формула которого меняется по
+        // density_method (SPH.md, "Неразрывность"): 1 vs 2 vs 3 должны
+        // отличаться на уровне физики, а не roundoff.
+        auto get_drho = [](const interactions::SolidFinal& f) { return f.drho; };
+        const double d12 = max_rel_diff_field(base, density2, get_drho, 1.0);
+        const double d13 = max_rel_diff_field(base, density3, get_drho, 1.0);
+        const double d23 = max_rel_diff_field(density2, density3, get_drho, 1.0);
+        std::printf("  drho: density_method 1 vs 2 -- rel %.3e; 1 vs 3 -- rel %.3e; 2 vs 3 -- rel %.3e\n", d12, d13, d23);
+        check(d12 > 1.0e-3, "density_method=1 и 2 дают РАЗНЫЙ drho (ветка density_method реально задействована)");
+        check(d13 > 1.0e-3, "density_method=1 и 3 дают РАЗНЫЙ drho (диффузионный член реально задействован)");
+        check(d23 > 1.0e-3, "density_method=2 и 3 дают РАЗНЫЙ drho");
+
+        // du и dv -- формулы pa_sph=1 и pa_sph=2 в SPH.md явно разные
+        // (симметризация давления/напряжений: (p_i+p_j)/(rho_i*rho_j) против
+        // p_i/rho_i^2+p_j/rho_j^2). dv сравнивается по ОБЕИМ компонентам
+        // (max по d): контактная сила и сходящееся радиальное поле body A
+        // направлены преимущественно по-разному (dv[1] -- ось z, между
+        // телами; dv[0] -- радиус r), фиксированная компонента могла бы
+        // случайно оказаться нечувствительной к варьируемому параметру.
+        auto get_du = [](const interactions::SolidFinal& f) { return f.du; };
+        const double pdu = max_rel_diff_field(base, pasph1, get_du, 1.0);
+        double pdv = 0.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            auto get_dvd = [d](const interactions::SolidFinal& f) { return f.dv[d]; };
+            pdv = std::max(pdv, max_rel_diff_field(base, pasph1, get_dvd, 1.0e-3));
+        }
+        std::printf("  du: pa_sph=2 vs 1 -- rel %.3e; dv: pa_sph=2 vs 1 -- rel %.3e\n", pdu, pdv);
+        check(pdu > 1.0e-3, "pa_sph=1 и 2 дают РАЗНЫЙ du (ветка pa_sph реально задействована)");
+        check(pdv > 1.0e-3, "pa_sph=1 и 2 дают РАЗНЫЙ dv (ветка pa_sph реально задействована)");
+
+        // dv -- контакт добавляет ускорение ТОЛЬКО частицам проникающей пары
+        // (Solid-Solid-Contact); "без контакта" и "контакт тип 1" должны
+        // разойтись хотя бы в норме по dv, раз состояние построено с
+        // сознательным overlap (см. build_state). Геометрия контакта в этом
+        // тесте -- преимущественно ВДОЛЬ оси z (dv[1]), поэтому сравниваются
+        // обе компоненты, а не только dv[0]. Порог ниже, чем у
+        // density_method/pa_sph (1e-3): контактная сила -- малая добавка
+        // поверх уже большого внутреннего SPH-ускорения (девиатор ~1e7 Па),
+        // поэтому её ОТНОСИТЕЛЬНЫЙ вклад в dv скромный; порог 1e-6 всё равно
+        // на ~5 порядков выше чистого roundoff старое/новое (~1e-11 из
+        // compare() выше) -- отличить "контакт реально приложен" от
+        // "контакт молча не сработал" он позволяет уверенно.
+        double cdv = 0.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            auto get_dvd = [d](const interactions::SolidFinal& f) { return f.dv[d]; };
+            cdv = std::max(cdv, max_rel_diff_field(base, contact1, get_dvd, 1.0e-3));
+        }
+        std::printf("  dv: без контакта vs контакт тип 1 -- rel %.3e\n", cdv);
+        check(cdv > 1.0e-6, "contact_force_type=0 и 1 дают РАЗНЫЙ dv (контактная сила реально применяется)");
+    }
 
     std::printf("\n=== %s (провалов: %d) ===\n", g_failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", g_failures);
     return g_failures == 0 ? 0 : 1;

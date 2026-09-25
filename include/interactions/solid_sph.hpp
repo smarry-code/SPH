@@ -139,6 +139,20 @@ struct SolidFinal
 // sys.c: старое urs() мутирует ParticleSystem и поэтому не годится для
 // readonly-стадии RHS.
 // ----------------------------------------------------------------------
+// Известен ли itype диспетчеру solid_eos -- вынесено отдельно, чтобы
+// compute_solid_derived могла проверить это ДО входа в параллельный участок
+// (см. там же: бросок исключения из тела OpenMP `parallel for` -- UB).
+inline bool solid_itype_known(int itype)
+{
+    switch (itype)
+    {
+        case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 11:
+            return true;
+        default:
+            return false;
+    }
+}
+
 inline void solid_eos(const Materials& mats, const ParticleSystem& sys, std::size_t i, double& p, double& c)
 {
     switch (sys.itype[i])
@@ -179,6 +193,39 @@ inline void compute_solid_derived(const rhs::CpuExecutor& exec, const Materials&
 {
     out.p.assign(nreal, 0.0);
     out.c.assign(nreal, 0.0);
+    // Защитная проверка -- БУКВАЛЬНО как в int_force.cpp (тот же диапазон:
+    // ghost'ы -- точные копии rho/mass реальных источников, поэтому проверка
+    // только реальных частиц достаточна). Нулевая/отрицательная/NaN плотность
+    // или масса здесь немедленно дают NaN в EOS и во всех производных дальше
+    // по конвейеру -- лучше упасть с понятной диагностикой на этом шаге.
+    // Намеренно ПОСЛЕДОВАТЕЛЬНЫЙ цикл (не exec.parallel_for), как и в
+    // int_force.cpp: бросок исключения из тела OpenMP `parallel for` --
+    // неопределённое поведение (исключение обязано быть поймано в том же
+    // потоке, где брошено); валидация поэтому отделена от параллельного
+    // вычисления EOS ниже.
+    for (std::size_t i = 0; i < nreal; ++i)
+    {
+        if (!std::isfinite(sys.rho[i]) || sys.rho[i] <= 0.0 ||
+            !std::isfinite(sys.mass[i]) || sys.mass[i] <= 0.0)
+        {
+            throw std::runtime_error(
+                "compute_solid_derived: некорректная частица " + std::to_string(i) +
+                " (rho=" + std::to_string(sys.rho[i]) +
+                ", mass=" + std::to_string(sys.mass[i]) +
+                ", itype=" + std::to_string(sys.itype[i]) + ")");
+        }
+        if (!solid_itype_known(sys.itype[i]))
+        {
+            // Тот же самый случай, что default: в solid_eos -- проверен здесь
+            // заранее и последовательно по той же причине (UB-бросок из
+            // параллельного региона), а не потому что solid_eos избыточен:
+            // switch внутри solid_eos остаётся защитой на случай прямого
+            // вызова в обход этой проверки.
+            throw std::runtime_error(
+                "compute_solid_derived: неизвестный itype=" + std::to_string(sys.itype[i]) +
+                " у частицы " + std::to_string(i));
+        }
+    }
     exec.parallel_for(nreal, [&](std::size_t i) { solid_eos(mats, sys, i, out.p[i], out.c[i]); });
 }
 
@@ -682,6 +729,32 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                             const std::vector<SolidDelta>& reduced, std::vector<SolidFinal>& out)
 {
     out.assign(nreal, SolidFinal{});
+
+    // Защита от деления на ноль -- БУКВАЛЬНО как в density.cpp, con_density
+    // (осевая поправка к уравнению непрерывности): клампы, удерживавшие
+    // осевые частицы от r == 0, закомментированы в time_integration.cpp,
+    // поэтому r == 0 достижимо. Без этой проверки ezz/drho молча получили бы
+    // Inf/NaN, которые разошлись бы по dszz/dsxy/... и энергии значительно
+    // позже и далеко от причины -- падаем в точке возникновения, как старый
+    // путь. Намеренно ПОСЛЕДОВАТЕЛЬНЫЙ цикл (не exec.parallel_for), как и в
+    // compute_solid_derived: бросок исключения из тела OpenMP `parallel for`
+    // -- неопределённое поведение, поэтому валидация отделена от
+    // параллельного вычисления ниже.
+    if constexpr (axis_sim && dim == 2)
+    {
+        for (std::size_t i = 0; i < nreal; ++i)
+        {
+            if (sys.x[0][i] == 0.0)
+            {
+                throw std::runtime_error(
+                    "finalize_solid: частица " + std::to_string(i) + " с r = "
+                    + std::to_string(sys.x[0][i]) + " == 0 (itype "
+                    + std::to_string(sys.itype[i])
+                    + "): осевой член неразрывности не определён");
+            }
+        }
+    }
+
     exec.parallel_for(nreal, [&](std::size_t i) {
         SolidFinal& f = out[i];
         const SolidDelta& d = reduced[i];
