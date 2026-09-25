@@ -1,0 +1,745 @@
+#pragma once
+// interactions/solid_sph.hpp
+// Solid-SPH: новая схема RHS для сплошной среды (fiber/SPH.md, разделы
+// "Solid -- Solid" / "Solid-SPH", "Общие уравнения динамики" -> "Solid";
+// fiber/PLAN.md, этап Ф4, часть A).
+//
+// ЭТО ЧАСТЬ A этапа Ф4: новый путь строится РЯДОМ со старым (src/density.cpp,
+// src/int_force.cpp, src/art_visc.cpp, src/av_vel.cpp, src/virt_part.cpp,
+// src/eos.cpp) и переиспользует их МАТЕМАТИКУ построчно, не меняя старые
+// файлы и не переключая продовые вызовы (это будет часть Б, после ревью).
+//
+// Архитектурный контракт (SPH.md, "Основные требования к interaction kernel"):
+//   - Search и primitive creation — только readonly доступ к состоянию;
+//   - Compute interaction kernel не пишет напрямую в общий RHS, а формирует
+//     typed Contribution<SolidDelta> через ContributionWriter;
+//   - Reduce (rhs::reduce_contributions) суммирует contributions по частицам;
+//   - Finalize — отдельный parallel_for по частицам, вне кернела.
+//
+// Что перестаёт писаться в sys (PLAN.md §3.6):
+//   - p, c (EOS) -> SolidDerived, стадия "Solid derived";
+//   - exx..eyz, rxy..ryz -> накопители SolidDelta, затем finalize;
+//   - виртуальные (зеркальные) частицы -> GhostSet + SolidExtended, а не
+//     дозапись в sys за ntotal (virt_part.cpp).
+//
+// Мёртвый код старого пути, СОЗНАТЕЛЬНО НЕ перенесённый (см. итоговый отчёт
+// части A):
+//   - физическая вязкость (int_force.cpp, `if (visc)`) -- visc == false
+//     constexpr (param.hpp), ветка недостижима при текущей конфигурации;
+//   - отталкивание "реальная <-> виртуальная" в ext_force.cpp
+//     (is_real_virtual_pair, itype[j] < 0) -- виртуальные частицы всегда
+//     наследуют ПОЛОЖИТЕЛЬНЫЙ itype (particle_system.hpp::
+//     inzializ_2d_symm_index не меняет знак itype), поэтому это условие
+//     тождественно ложно на всём текущем пути построения зеркальных частиц.
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstddef>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "eos.hpp"
+#include "kernel.hpp"
+#include "materials.hpp"
+#include "param.hpp"
+#include "particle_system.hpp"
+#include "rhs/contributions.hpp"
+#include "rhs/cpu_executor.hpp"
+#include "rhs/spatial_index.hpp"
+#include "rhs/types.hpp"
+#include "simulation_config.hpp"
+
+namespace interactions
+{
+
+// Метка interaction_type для ContributionMeta/детерминированного reduce
+// (rhs/contributions.hpp, "Детерминизм") -- уникальна среди типов,
+// вносящих вклад в Solid. kSolidContactInteractionType -- в
+// interactions/solid_contact.hpp (второй interaction type того же reduce).
+constexpr std::uint32_t kSolidSphInteractionType = 10;
+
+// ----------------------------------------------------------------------
+// SolidDelta -- то, что суммируется по primitives обоих interaction types,
+// формирующих вклад в Solid (fiber/PLAN.md §3.3):
+//     dv[dim]      ускорение (ФИНАЛЬНОЕ -- не требует постобработки:
+//                  int_force momentum + art_visc momentum + contact
+//                  складываются напрямую, как в single_step.cpp:
+//                  "dvx[d][i] = indvxdt[d][i] + exdvxdt[d][i] + ardvxdt[d][i]");
+//     drho         СЫРАЯ сумма по парам (density.cpp, con_density body).
+//                  Осевой член (axis_sim && dim==2) добавляется в finalize
+//                  (density.cpp: "drhodt[i] -= rho_i*v_r_i/r_i", по частице);
+//     du           СЫРАЯ (нескорректированная) сумма энергии от давления
+//                  (int_force.cpp body2 "he") И от искусственной вязкости
+//                  (art_visc.cpp), сложенные в ОДИН накопитель. В finalize
+//                  умножается на 0.5 (см. int_force.cpp "dedt[i] = tdsdt[i]
+//                  + 0.5*dedt[i] + ..." и art_visc.cpp "dedt[i] = 0.5*dedt[i]" --
+//                  раздельные 0.5 над раздельными суммами равны 0.5 над их
+//                  суммой) и к ней прибавляется девиаторная работа s:eps/rho;
+//     eps[6] (dexx..deyz), rot[3] (drxy..dryz) -- накопители скорости
+//                  деформаций/поворота (int_force.cpp body1), СЫРЫЕ: при
+//                  dim==2 компонента dezz заменяется в finalize на v_r/r
+//                  (окружная, не приходит из парных сумм -- см. int_force.cpp,
+//                  комментарий у "Окружная скорость деформации");
+//     xsph[dim]    СЫРАЯ сумма XSPH-поправки (av_vel.cpp); финальное значение
+//                  требует умножения на cfg.epsilon -- часть A этот
+//                  постпроцессинг не выполняет (поле не входит в сравниваемый
+//                  набор производных, av_vel не производная времени);
+//     dh           зарезервировано под sle == 2 (PLAN.md §3.3); в части A не
+//                  заполняется -- BC2/BC6 используют sle == 1, а sle == 1
+//                  физически не производит производной (h пересчитывается
+//                  напрямую из массы/плотности, переезжает в Postprocessing
+//                  этапа Ф7, PLAN.md §3.6). Поле оставлено для интерфейсной
+//                  полноты по SPH.md/PLAN.md §3.3.
+// ----------------------------------------------------------------------
+struct SolidDelta
+{
+    double dv[dim] = {};
+    double drho = 0.0;
+    double du = 0.0;
+    double dexx = 0.0, deyy = 0.0, dezz = 0.0, dexy = 0.0, dexz = 0.0, deyz = 0.0;
+    double drxy = 0.0, drxz = 0.0, dryz = 0.0;
+    double xsph[dim] = {};
+    double dh = 0.0;
+
+    SolidDelta& operator+=(const SolidDelta& o)
+    {
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            dv[d] += o.dv[d];
+            xsph[d] += o.xsph[d];
+        }
+        drho += o.drho;
+        du += o.du;
+        dexx += o.dexx; deyy += o.deyy; dezz += o.dezz;
+        dexy += o.dexy; dexz += o.dexz; deyz += o.deyz;
+        drxy += o.drxy; drxz += o.drxz; dryz += o.dryz;
+        dh += o.dh;
+        return *this;
+    }
+};
+
+// Итог finalize -- ровно те поля, что сравниваются test_rhs_equivalence
+// со старым путём (drho, du, dv[dim], dsxx..dsxz).
+struct SolidFinal
+{
+    double drho = 0.0;
+    double du = 0.0;
+    double dv[dim] = {};
+    double dsxx = 0.0, dsyy = 0.0, dszz = 0.0, dsxy = 0.0, dsyz = 0.0, dsxz = 0.0;
+};
+
+// ----------------------------------------------------------------------
+// Solid derived: EOS (p, c) -- fiber/PLAN.md §3.6, "стадия Solid derived:
+// EOS в RhsWorkspace". Реализация -- ТОЧНАЯ копия диспетчера urs()
+// (src/int_force.cpp), но пишет в переданные p/c по ссылке, а не в sys.p/
+// sys.c: старое urs() мутирует ParticleSystem и поэтому не годится для
+// readonly-стадии RHS.
+// ----------------------------------------------------------------------
+inline void solid_eos(const Materials& mats, const ParticleSystem& sys, std::size_t i, double& p, double& c)
+{
+    switch (sys.itype[i])
+    {
+        case 1: // идеальный газ
+            p_gas(sys.rho[i], sys.u[i], p, c);
+            break;
+        case 2: // вода
+            p_art_water(sys.rho[i], p, c);
+            break;
+        case 3: case 4: // тантал, алюминий
+            eos_mi_grunaizen(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.u[i], p, c);
+            break;
+        case 5: case 6: case 7: case 8: case 9: // LiF, полиуретаны, PMMA
+            eos_ua_teta(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], p, c);
+            break;
+        case 10: case 11: // B4C, Al2O3 (JH-2)
+        {
+            // urs_cem_JH2 принимает D по неконстантной ссылке, но не изменяет
+            // её (см. src/eos.cpp -- существующая особенность сигнатуры,
+            // не наша). Локальная копия достаточна и не мутирует sys.
+            double D_local = sys.D[i];
+            urs_cem_JH2(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.dp[i], c, p, D_local);
+            break;
+        }
+        default:
+            throw std::runtime_error("solid_eos: неизвестный itype=" + std::to_string(sys.itype[i]));
+    }
+}
+
+struct SolidDerived
+{
+    std::vector<double> p, c;
+};
+
+inline void compute_solid_derived(const rhs::CpuExecutor& exec, const Materials& mats,
+                                   const ParticleSystem& sys, std::size_t nreal, SolidDerived& out)
+{
+    out.p.assign(nreal, 0.0);
+    out.c.assign(nreal, 0.0);
+    exec.parallel_for(nreal, [&](std::size_t i) { solid_eos(mats, sys, i, out.p[i], out.c[i]); });
+}
+
+// ----------------------------------------------------------------------
+// GhostSet -- виртуальные (зеркальные) частицы у оси при axis_sim && dim==2
+// (fiber/PLAN.md §3.6: "GhostSet в RhsWorkspace; вкладов к виртуальным
+// частицам нет"). Условие отбора -- БУКВАЛЬНО как в src/virt_part.cpp
+// ("sys.x[0][i] < 2 * sys.hsml[i]"). Хранит только индекс исходной реальной
+// частицы: координаты/скорости/масса/напряжения зеркала выводятся из него в
+// build_solid_extended (см. там же обоснование p_ghost == p_source).
+// ----------------------------------------------------------------------
+struct GhostSet
+{
+    std::vector<std::size_t> source_index;
+};
+
+inline void build_ghost_set(const ParticleSystem& sys, std::size_t nreal, GhostSet& out)
+{
+    out.source_index.clear();
+    if constexpr (axis_sim && dim == 2)
+    {
+        for (std::size_t i = 0; i < nreal; ++i)
+        {
+            if (sys.x[0][i] < 2.0 * sys.hsml[i]) out.source_index.push_back(i);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// SolidExtended -- readonly "расширенное" представление (реальные + ghost),
+// по которому строится поиск и по которому кернел читает состояние пары.
+// Заполняется ОДИН раз в начале RHS из sys (реальные) и из ghost-правила
+// (зеркальные), дальше НЕ мутируется -- отличие от старого virt_part.cpp,
+// который дописывал зеркальные частицы прямо в sys.
+//
+// Почему ext.p[ghost] = derived.p[source], БЕЗ отдельного вызова EOS на
+// зеркальной частице: в старом коде virt_part запускается ДО поиска/
+// density/int_force и копирует (rho, u, itype, rho_0, dp, D) зеркала из
+// ТЕКУЩЕГО (входного для этого RHS) состояния источника; следующий за этим
+// urs() внутри int_force затем вызывается для ВСЕГО диапазона [0, ntotal+
+// nvirt), в т.ч. для зеркала, с ТЕМИ ЖЕ аргументами, что и для источника.
+// EOS -- чистая функция своих аргументов, поэтому p/c зеркала совпадают с
+// p/c источника побитно, и отдельный вызов solid_eos на ghost избыточен.
+// ----------------------------------------------------------------------
+struct SolidExtended
+{
+    std::vector<double> x[dim];
+    std::vector<double> vx[dim];
+    std::vector<double> mass, rho, p, c;
+    std::vector<double> sxx, syy, szz, sxy, syz, sxz;
+    std::vector<double> hsml;
+    std::size_t nreal = 0;
+    std::size_t next = 0; // nreal + nghost
+};
+
+inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, const SolidDerived& derived,
+                                  const GhostSet& ghosts, SolidExtended& ext)
+{
+    const std::size_t nghost = ghosts.source_index.size();
+    ext.nreal = nreal;
+    ext.next = nreal + nghost;
+
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        ext.x[d].resize(ext.next);
+        ext.vx[d].resize(ext.next);
+    }
+    ext.mass.resize(ext.next); ext.rho.resize(ext.next);
+    ext.p.resize(ext.next);    ext.c.resize(ext.next);
+    ext.sxx.resize(ext.next);  ext.syy.resize(ext.next);  ext.szz.resize(ext.next);
+    ext.sxy.resize(ext.next);  ext.syz.resize(ext.next);  ext.sxz.resize(ext.next);
+    ext.hsml.resize(ext.next);
+
+    for (std::size_t i = 0; i < nreal; ++i)
+    {
+        for (std::size_t d = 0; d < dim; ++d) { ext.x[d][i] = sys.x[d][i]; ext.vx[d][i] = sys.vx[d][i]; }
+        ext.mass[i] = sys.mass[i]; ext.rho[i] = sys.rho[i];
+        ext.p[i] = derived.p[i];   ext.c[i] = derived.c[i];
+        ext.sxx[i] = sys.sxx[i];   ext.syy[i] = sys.syy[i];   ext.szz[i] = sys.szz[i];
+        ext.sxy[i] = sys.sxy[i];   ext.syz[i] = sys.syz[i];   ext.sxz[i] = sys.sxz[i];
+        ext.hsml[i] = sys.hsml[i];
+    }
+    for (std::size_t g = 0; g < nghost; ++g)
+    {
+        const std::size_t dst = nreal + g;
+        const std::size_t src = ghosts.source_index[g];
+        // Зеркалирование -- ровно как ParticleSystem::inzializ_2d_symm_index:
+        // компонента 0 (r) меняет знак у координаты и скорости, остальные --
+        // без изменений; из тензора напряжений знак меняет только sxy.
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            if (d == 0) { ext.x[d][dst] = -sys.x[d][src]; ext.vx[d][dst] = -sys.vx[d][src]; }
+            else        { ext.x[d][dst] =  sys.x[d][src]; ext.vx[d][dst] =  sys.vx[d][src]; }
+        }
+        ext.mass[dst] = sys.mass[src]; ext.rho[dst] = sys.rho[src];
+        ext.p[dst] = derived.p[src];   ext.c[dst] = derived.c[src];
+        ext.sxx[dst] = sys.sxx[src];   ext.syy[dst] = sys.syy[src];   ext.szz[dst] = sys.szz[src];
+        ext.sxy[dst] = -sys.sxy[src];  ext.syz[dst] = sys.syz[src];   ext.sxz[dst] = sys.sxz[src];
+        ext.hsml[dst] = sys.hsml[src];
+    }
+}
+
+// ----------------------------------------------------------------------
+// SolidSphPrimitive = (i, j, W_ij, grad_i W_ij) -- fiber/SPH.md, "Solid-SPH".
+// i -- всегда реальная частица (i < ext.nreal); j -- реальная ИЛИ ghost.
+// Метаданные (W, grad W) вычисляются при построении primitive из readonly
+// состояния -- SPH.md: "вычисляются... и хранятся в нём как metadata".
+// ----------------------------------------------------------------------
+struct SolidSphPrimitive
+{
+    rhs::index_t i = 0, j = 0;
+    double w = 0.0;
+    double dwdx[dim] = {};
+};
+
+struct SolidSphSearchResult
+{
+    std::vector<SolidSphPrimitive> primitives;                          // (real, real|ghost)
+    std::vector<std::pair<rhs::index_t, rhs::index_t>> real_pairs;      // подмножество (real, real)
+};
+
+// Поиск пар -- та же логика, что src/direct_find.cpp: канонический порядок
+// i<j, критерий r < scale_k*(h_i+h_j)/2 (scale_k = 2 для кубического сплайна,
+// 3 для гаусса/квинтического, src/direct_find.cpp). SpatialIndex даёт БРОУЗ-
+// фазу с фиксированным радиусом (rhs/spatial_index.hpp поддерживает только
+// его), точный per-pair критерий проверяется в accept() -- воспроизводит
+// direct_find для ЛЮБОГО (не обязательно однородного) распределения hsml.
+// ghost-ghost пары отбрасываются в accept() (i >= nreal): вклад в Solid они
+// дать не могут (обе стороны -- ghost), а старый путь их тоже фактически
+// не учитывает (обе стороны отбрасываются downstream, см. single_step.cpp).
+inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const SimulationConfig& cfg,
+                                    const SolidExtended& ext, SolidSphSearchResult& out)
+{
+    out.primitives.clear();
+    out.real_pairs.clear();
+    if (ext.next == 0) return;
+
+    double max_h = 0.0;
+    for (std::size_t k = 0; k < ext.next; ++k) max_h = std::max(max_h, ext.hsml[k]);
+    const double scale_k = (cfg.skf == 1) ? 2.0 : 3.0;
+    const double radius = scale_k * max_h;
+
+    rhs::SpatialIndex<dim> index;
+    std::array<const double*, dim> coords{};
+    for (std::size_t d = 0; d < dim; ++d) coords[d] = ext.x[d].data();
+    index.build(coords, ext.next, radius > 0.0 ? radius : 1.0);
+
+    const std::size_t nreal = ext.nreal;
+    auto accept = [&](rhs::index_t i, rhs::index_t j) -> bool {
+        if (i >= nreal) return false;
+        double r2 = 0.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            const double dd = ext.x[d][i] - ext.x[d][j];
+            r2 += dd * dd;
+        }
+        const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+        return std::sqrt(r2) < scale_k * mh;
+    };
+
+    const auto pairs = index.find_pairs_parallel(exec, radius, accept);
+
+    out.primitives.reserve(pairs.size());
+    for (const auto& pr : pairs)
+    {
+        const rhs::index_t i = pr.first, j = pr.second;
+        double dx[dim];
+        double r2 = 0.0;
+        for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
+        const double r = std::sqrt(r2);
+        const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+
+        SolidSphPrimitive prim;
+        prim.i = i; prim.j = j;
+        double w = 0.0;
+        double dwdx_buf[dim];
+        kernel(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+        prim.w = w;
+        for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
+        out.primitives.push_back(prim);
+        if (j < nreal) out.real_pairs.emplace_back(i, j);
+    }
+}
+
+// ----------------------------------------------------------------------
+// Compute interaction kernel -- по одному primitive формирует contributions
+// к i и (если j реальна) к j. Математика -- построчная копия:
+//   - неразрывность: src/density.cpp, con_density (все три density_method);
+//   - скорости деформаций/поворота: src/int_force.cpp, body1 (dim 1..3);
+//   - импульс+энергия (pa_sph 1/2) и осесимметричные члены:
+//     src/int_force.cpp, body2;
+//   - искусственная вязкость: src/art_visc.cpp;
+//   - XSPH: src/av_vel.cpp.
+// Физическая вязкость (visc) НЕ перенесена -- см. комментарий вверху файла.
+// ----------------------------------------------------------------------
+inline void compute_solid_sph_contributions(
+    const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const SolidExtended& ext,
+    const std::vector<SolidSphPrimitive>& primitives,
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& thread_buffers)
+{
+    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
+    for (auto& buf : thread_buffers) buf.clear();
+
+    const std::size_t n = primitives.size();
+    if (n == 0) return;
+
+    const int density_method = cfg.density_method;
+    const int pa_sph = cfg.pa_sph;
+    const double xi = cfg.xi;
+    const double epsilon_h = cfg.epsilon_h;
+    const double alpha = cfg.alpha, beta = cfg.beta, etq = cfg.etq;
+
+    exec.parallel_for(n, [&](std::size_t k) {
+        const SolidSphPrimitive& prim = primitives[k];
+        const rhs::index_t i = prim.i, j = prim.j;
+        const double w = prim.w;
+        const double* dwdx = prim.dwdx;
+        const bool j_real = (j < ext.nreal);
+
+        SolidDelta di{}, dj{};
+
+        // --- неразрывность (density.cpp::con_density, тело body) -----------
+        {
+            double dvx_ij[dim]; // v_i - v_j, как в density.cpp
+            for (std::size_t d = 0; d < dim; ++d) dvx_ij[d] = ext.vx[d][i] - ext.vx[d][j];
+            double vcc = 0.0;
+            for (std::size_t d = 0; d < dim; ++d) vcc += dvx_ij[d] * dwdx[d];
+
+            if (density_method == 1)
+            {
+                di.drho = ext.mass[j] * vcc;
+                dj.drho = ext.mass[i] * vcc;
+            }
+            else if (density_method == 2)
+            {
+                di.drho = (ext.rho[i] / ext.rho[j]) * ext.mass[j] * vcc;
+                dj.drho = (ext.rho[j] / ext.rho[i]) * ext.mass[i] * vcc;
+            }
+            else // density_method == 3 (искусственная диффузия, Bonet-Lok/Molteni-Colagrossi)
+            {
+                const double q_i = ext.mass[j] * vcc;
+                const double q_j = ext.mass[i] * vcc;
+                const double h_ij = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+                double rr = 0.0;
+                double dx[dim];
+                for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; rr += dx[d] * dx[d]; }
+                const double vi = 1.0 / ext.rho[i], vj = 1.0 / ext.rho[j];
+                const double denom = rr + epsilon_h * h_ij * h_ij;
+                const double coef_i = 2.0 * (vi / vj - 1.0) / denom;
+                const double coef_j = 2.0 * (vj / vi - 1.0) / denom;
+                double psi_i = 0.0, psi_j = 0.0;
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    psi_i += (coef_i * dx[d]) * dwdx[d];
+                    psi_j += (coef_j * (-dx[d])) * dwdx[d];
+                }
+                const double dVi = ext.mass[i] * vi, dVj = ext.mass[j] * vj;
+                const double c0 = 0.5 * (ext.c[i] + ext.c[j]);
+                const double D_i = xi * h_ij * c0 * psi_i * dVj;
+                const double D_j = xi * h_ij * c0 * psi_j * dVi;
+                di.drho = q_i - ext.rho[i] * D_i;
+                dj.drho = q_j - ext.rho[j] * D_j;
+            }
+        }
+
+        // --- скорости деформаций/поворота (int_force.cpp body1) ------------
+        {
+            double dvx_ji[dim]; // v_j - v_i, как в int_force.cpp body1
+            for (std::size_t d = 0; d < dim; ++d) dvx_ji[d] = ext.vx[d][j] - ext.vx[d][i];
+
+            if constexpr (dim == 1)
+            {
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+            }
+            else if constexpr (dim == 2)
+            {
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
+                di.dexy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
+                                + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
+                dj.dexy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
+                                + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                di.drxy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
+                                - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                dj.drxy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
+                                - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+            }
+            else if constexpr (dim == 3)
+            {
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
+                di.dezz = (ext.mass[j] * dvx_ji[2] * dwdx[2]) / ext.rho[j];
+                di.dexy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                di.deyz = 0.5 * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
+                di.dexz = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
+                dj.dezz = (ext.mass[i] * dvx_ji[2] * dwdx[2]) / ext.rho[i];
+                dj.dexy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                dj.deyz = 0.5 * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
+                dj.dexz = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
+                di.drxy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                di.dryz = 0.5 * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
+                di.drxz = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
+                dj.drxy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                dj.dryz = 0.5 * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
+                dj.drxz = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
+            }
+        }
+
+        // --- импульс + энергия (int_force.cpp body2, pa_sph 1/2) -----------
+        {
+            double dvx_ji[dim];
+            for (std::size_t d = 0; d < dim; ++d) dvx_ji[d] = ext.vx[d][j] - ext.vx[d][i];
+            const double rhoij = 1.0 / (ext.rho[i] * ext.rho[j]);
+            double he = 0.0;
+
+            if (pa_sph == 1)
+            {
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    double h = -(ext.p[i] + ext.p[j]) * dwdx[d];
+                    he += dvx_ji[d] * h; // he использует h ДО добавления члена напряжений (int_force.cpp)
+
+                    if (d == 0)
+                    {
+                        h += (ext.sxx[i] + ext.sxx[j]) * dwdx[0];
+                        if constexpr (dim >= 2) h += (ext.sxy[i] + ext.sxy[j]) * dwdx[1];
+                        if constexpr (dim == 3) h += (ext.sxz[i] + ext.sxz[j]) * dwdx[2];
+                    }
+                    if constexpr (dim >= 2)
+                    {
+                        if (d == 1)
+                        {
+                            h += (ext.sxy[i] + ext.sxy[j]) * dwdx[0] + (ext.syy[i] + ext.syy[j]) * dwdx[1];
+                            if constexpr (dim == 3) h += (ext.syz[i] + ext.syz[j]) * dwdx[2];
+                        }
+                    }
+                    if constexpr (dim == 3)
+                    {
+                        if (d == 2)
+                        {
+                            h += (ext.sxz[i] + ext.sxz[j]) * dwdx[0] + (ext.syz[i] + ext.syz[j]) * dwdx[1]
+                               + (ext.szz[i] + ext.szz[j]) * dwdx[2];
+                        }
+                    }
+
+                    // int_force.cpp (pa_sph==1): "h *= rhoij;" применяется к
+                    // ПОЛНОМУ h (давление+напряжения) ПЕРЕД domножением на
+                    // массу -- в отличие от he, который использует h ДО этого
+                    // домножения (см. "he += ... * h;" выше, до if(d==0)/...).
+                    h *= rhoij;
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
+                    di.dv[d] += dvxdt_i;
+                    dj.dv[d] += -dvxdt_j;
+
+                    if constexpr (axis_sim && dim == 2)
+                    {
+                        if (d == 0)
+                        {
+                            di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
+                            dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+                        }
+                        else if (d == 1)
+                        {
+                            di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
+                            dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+                        }
+                    }
+                }
+                he *= rhoij;
+                di.du += ext.mass[j] * he;
+                dj.du += ext.mass[i] * he;
+            }
+            else // pa_sph == 2
+            {
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    double h = -(ext.p[i] / (ext.rho[i] * ext.rho[i]) + ext.p[j] / (ext.rho[j] * ext.rho[j])) * dwdx[d];
+                    he += dvx_ji[d] * h;
+
+                    if (d == 0)
+                    {
+                        h += (ext.sxx[i] / (ext.rho[i] * ext.rho[i]) + ext.sxx[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0];
+                        if constexpr (dim >= 2)
+                            h += (ext.sxy[i] / (ext.rho[i] * ext.rho[i]) + ext.sxy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1];
+                        if constexpr (dim == 3)
+                            h += (ext.sxz[i] / (ext.rho[i] * ext.rho[i]) + ext.sxz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
+                    }
+                    if constexpr (dim >= 2)
+                    {
+                        if (d == 1)
+                        {
+                            h += (ext.sxy[i] / (ext.rho[i] * ext.rho[i]) + ext.sxy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0]
+                               + (ext.syy[i] / (ext.rho[i] * ext.rho[i]) + ext.syy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1];
+                            if constexpr (dim == 3)
+                                h += (ext.syz[i] / (ext.rho[i] * ext.rho[i]) + ext.syz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
+                        }
+                    }
+                    if constexpr (dim == 3)
+                    {
+                        if (d == 2)
+                        {
+                            h += (ext.sxz[i] / (ext.rho[i] * ext.rho[i]) + ext.sxz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0]
+                               + (ext.syz[i] / (ext.rho[i] * ext.rho[i]) + ext.syz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1]
+                               + (ext.szz[i] / (ext.rho[i] * ext.rho[i]) + ext.szz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
+                        }
+                    }
+
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
+                    di.dv[d] += dvxdt_i;
+                    dj.dv[d] += -dvxdt_j;
+
+                    if constexpr (axis_sim && dim == 2)
+                    {
+                        if (d == 0)
+                        {
+                            di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
+                            dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+                        }
+                        else if (d == 1)
+                        {
+                            di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
+                            dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+                        }
+                    }
+                }
+                di.du += ext.mass[j] * he;
+                dj.du += ext.mass[i] * he;
+            }
+        }
+
+        // --- искусственная вязкость (art_visc.cpp) --------------------------
+        {
+            const double mhsml = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+            double dvx_iminusj[dim], dx[dim];
+            double vr = 0.0, rr = 0.0;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                dvx_iminusj[d] = ext.vx[d][i] - ext.vx[d][j];
+                dx[d] = ext.x[d][i] - ext.x[d][j];
+                vr += dvx_iminusj[d] * dx[d];
+                rr += dx[d] * dx[d];
+            }
+            if (vr < 0.0)
+            {
+                const double muv = mhsml * vr / (rr + mhsml * mhsml * etq * etq);
+                const double mc = 0.5 * (ext.c[i] + ext.c[j]);
+                const double mrho = 0.5 * (ext.rho[i] + ext.rho[j]);
+                const double piv = (beta * muv - alpha * mc) * muv / mrho;
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    const double h = -piv * dwdx[d];
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
+                    di.dv[d] += dvxdt_i;
+                    dj.dv[d] += -dvxdt_j;
+                    const double dedt_i = ext.mass[j] * dvx_iminusj[d] * h;
+                    const double dedt_j = ext.mass[i] * dvx_iminusj[d] * h;
+                    di.du += -dedt_i; // Acc::add(dedt[i], -(dedt_i)) в art_visc.cpp
+                    dj.du += -dedt_j;
+                }
+            }
+        }
+
+        // --- XSPH (av_vel.cpp) ----------------------------------------------
+        {
+            const double rho_sum = ext.rho[i] + ext.rho[j];
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                const double dvx_ij = ext.vx[d][i] - ext.vx[d][j];
+                const double av_i = 2.0 * ext.mass[j] * dvx_ij / rho_sum * w;
+                const double av_j = 2.0 * ext.mass[i] * dvx_ij / rho_sum * w;
+                di.xsph[d] += -av_i;
+                dj.xsph[d] += av_j;
+            }
+        }
+
+        int w_id = rhs::CpuExecutor::worker_id();
+        if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
+        rhs::ContributionWriter<SolidDelta> writer(thread_buffers[static_cast<std::size_t>(w_id)], kSolidSphInteractionType);
+        writer.emit(i, di, static_cast<std::uint64_t>(k), 0);
+        if (j_real) writer.emit(j, dj, static_cast<std::uint64_t>(k), 1);
+    });
+}
+
+// ----------------------------------------------------------------------
+// Finalize -- parallel_for по РЕАЛЬНЫМ частицам (fiber/PLAN.md §3.3):
+// осевые члены (dim==2), закон Гука с производной Яуманна (ИСПРАВЛЕННЫЙ
+// знак у syz*ryz, как в текущем src/int_force.cpp), девиаторная работа
+// s:eps/rho в du, домножение накопленной энергии на 0.5.
+// ----------------------------------------------------------------------
+inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
+                            const ParticleSystem& sys, std::size_t nreal,
+                            const std::vector<SolidDelta>& reduced, std::vector<SolidFinal>& out)
+{
+    out.assign(nreal, SolidFinal{});
+    exec.parallel_for(nreal, [&](std::size_t i) {
+        SolidFinal& f = out[i];
+        const SolidDelta& d = reduced[i];
+
+        double exx = d.dexx, eyy = d.deyy, ezz = d.dezz;
+        double exy = d.dexy, exz = d.dexz, eyz = d.deyz;
+        const double rxy = d.drxy, rxz = d.drxz, ryz = d.dryz;
+
+        double drho = d.drho;
+        if constexpr (axis_sim && dim == 2)
+        {
+            // Окружная скорость деформации -- ПОЧАСТИЧНАЯ формула, не парная
+            // сумма (int_force.cpp, "Окружная скорость деформации").
+            ezz = sys.vx[0][i] / sys.x[0][i];
+            // Осевой член неразрывности (density.cpp, "Осесимметричная
+            // поправка к уравнению непрерывности").
+            drho -= sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
+        }
+        f.drho = drho;
+
+        for (std::size_t dd = 0; dd < dim; ++dd) f.dv[dd] = d.dv[dd];
+
+        // Энергия: 0.5*(сырая сумма давление+вязкость) + девиаторная работа.
+        const double dedt_half = 0.5 * d.du;
+        double deviatoric;
+        if constexpr (axis_sim && dim == 2)
+        {
+            deviatoric = (sys.sxx[i] * exx + sys.syy[i] * eyy + sys.szz[i] * ezz + 2.0 * sys.sxy[i] * exy) / sys.rho[i];
+        }
+        else
+        {
+            deviatoric = (sys.sxx[i] * exx + sys.syy[i] * eyy + sys.szz[i] * ezz
+                         + 2.0 * sys.sxy[i] * exy + 2.0 * sys.syz[i] * eyz + 2.0 * sys.sxz[i] * exz) / sys.rho[i];
+        }
+        f.du = dedt_half + deviatoric;
+
+        // Закон Гука + производная Яуманна (int_force.cpp, финальный блок).
+        if (sys.itype[i] > 2)
+        {
+            const double G_ = shear_modulus_by_itype(mats, sys.itype[i]);
+            if constexpr (dim > 1)
+            {
+                f.dsxx = 2.0 * G_ * (exx + drho / (3.0 * sys.rho[i])) + 2.0 * (sys.sxy[i] * rxy + sys.sxz[i] * rxz);
+                f.dsyy = 2.0 * G_ * (eyy + drho / (3.0 * sys.rho[i])) + 2.0 * (sys.syz[i] * ryz - sys.sxy[i] * rxy);
+                // Исправленный знак (см. src/int_force.cpp, комментарий про C2-C4).
+                f.dszz = 2.0 * G_ * (ezz + drho / (3.0 * sys.rho[i])) - 2.0 * (sys.sxz[i] * rxz + sys.syz[i] * ryz);
+                f.dsxy = 2.0 * G_ * exy + rxy * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * ryz + sys.syz[i] * rxz;
+                f.dsyz = 2.0 * G_ * eyz - sys.sxy[i] * rxz - sys.sxz[i] * rxy + ryz * (sys.szz[i] - sys.syy[i]);
+                f.dsxz = 2.0 * G_ * exz + rxz * (sys.szz[i] - sys.sxx[i]) - sys.sxy[i] * ryz + sys.syz[i] * rxy;
+            }
+            else
+            {
+                f.dsxx = 2.0 * G_ * (exx + drho / (3.0 * sys.rho[i]));
+                f.dsyy = 2.0 * G_ * (drho / (3.0 * sys.rho[i]));
+                f.dszz = 2.0 * G_ * (drho / (3.0 * sys.rho[i]));
+            }
+        }
+    });
+}
+
+} // namespace interactions
