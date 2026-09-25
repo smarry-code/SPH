@@ -193,6 +193,26 @@ endif()
 add_test(NAME fiber_model_test COMMAND test_fiber_model)
 set_tests_properties(fiber_model_test PROPERTIES LABELS "3d")
 
+# --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
+#     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit
+#     связей, предиктор-корректор для fiber::FiberState. Нити — только при
+#     SPH_DIM=3 (Р9), по образцу test_fiber_model.
+add_executable(test_fiber_bond tests/test_fiber_bond.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_bond PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_bond PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_bond PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_bond PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_bond PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_bond PRIVATE -fopenmp)
+    target_link_options(test_fiber_bond PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
+set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
+
 # --- Границы SPH_DIM != 3 для нитей (fiber/PLAN.md Ф2, пункт 5):
 #     fiber::check_fiber_requires_dim3() обязана бросать исключение. dim —
 #     compile-time constexpr (ADR-002), поэтому ветку dim != 3 нельзя

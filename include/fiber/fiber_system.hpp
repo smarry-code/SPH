@@ -114,6 +114,25 @@ struct FiberTopology
     std::size_t size() const { return prev.size(); }
 };
 
+// --- FiberDelta ---------------------------------------------------------------
+// Изменение состояния Fiber-частицы, суммируемое на стадии Reduce
+// (fiber/PLAN.md §3.3: «FiberDelta: dv[dim]»; fiber/SPH.md, «Основные
+// требования к interaction kernel», п.6: тип Delta определяется
+// compute-структурой target частицы). Единственное поле — ускорение;
+// interaction kernels (Fiber-Bond, позже Fiber-Fiber/Fiber-Solid) пишут в
+// него через rhs::ContributionWriter<FiberDelta>, суммирование —
+// rhs::reduce_contributions (operator+= ниже).
+struct FiberDelta
+{
+    double dv[dim] = {};
+
+    FiberDelta& operator+=(const FiberDelta& other)
+    {
+        for (std::size_t d = 0; d < dim; ++d) dv[d] += other.dv[d];
+        return *this;
+    }
+};
+
 // --- FiberMaterial -----------------------------------------------------------
 // Свойства материала нити (fiber/PLAN.md §3.1; fiber/SPH.md, Fiber-Bond и
 // Fiber-Solid-Contact): модуль Юнга, коэффициент Пуассона, диаметр,
