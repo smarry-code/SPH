@@ -15,7 +15,7 @@
 # time: 1.0744412817231819e-06
 # dt: 1.0631005409322825e-08
 # threads: 1
-# commit: 3b9873c+dirty
+# commit: 31c469d
 # date: 2026-09-26
 # generated: cmake --build build --target regression_golden
 # precision: 32
