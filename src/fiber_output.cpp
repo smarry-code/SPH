@@ -23,6 +23,11 @@ namespace fiber
 
 void fiber_output(const Model& model, std::size_t itimestep, double time)
 {
+    fiber_output(model.fiber, model.topology, itimestep, time);
+}
+
+void fiber_output(const FiberState& fiber, const FiberTopology& topology, std::size_t itimestep, double time)
+{
     // Формат x[dim]/vx[dim] осмыслен только при dim == 3 (см.
     // check_fiber_requires_dim3 в fiber_system.hpp); проверяем и здесь,
     // отдельно от load_fiber_file, чтобы вызов вывода в неверной сборке не
@@ -38,8 +43,8 @@ void fiber_output(const Model& model, std::size_t itimestep, double time)
         throw std::runtime_error("fiber::fiber_output: не удалось открыть файл для вывода данных нитей");
     }
 
-    const std::size_t n = model.fiber.size();
-    const std::size_t nb = model.topology.bonds.size();
+    const std::size_t n = fiber.size();
+    const std::size_t nb = topology.bonds.size();
 
     file << "TIME " << time << " STEP " << itimestep
          << " N_PARTICLES " << n << " N_BONDS " << nb << "\n";
@@ -48,9 +53,9 @@ void fiber_output(const Model& model, std::size_t itimestep, double time)
     file << "PARTICLES\n";
     for (std::size_t i = 0; i < n; ++i)
     {
-        file << i << " " << model.fiber.object_id[i] << " " << model.fiber.material_id[i];
-        for (std::size_t d = 0; d < dim; ++d) file << " " << model.fiber.x[d][i];
-        for (std::size_t d = 0; d < dim; ++d) file << " " << model.fiber.vx[d][i];
+        file << i << " " << fiber.object_id[i] << " " << fiber.material_id[i];
+        for (std::size_t d = 0; d < dim; ++d) file << " " << fiber.x[d][i];
+        for (std::size_t d = 0; d < dim; ++d) file << " " << fiber.vx[d][i];
         file << "\n";
     }
 
@@ -58,11 +63,11 @@ void fiber_output(const Model& model, std::size_t itimestep, double time)
     file << "BONDS\n";
     for (std::size_t k = 0; k < nb; ++k)
     {
-        const FiberBond& b = model.topology.bonds[k];
+        const FiberBond& b = topology.bonds[k];
         double l2 = 0.0;
         for (std::size_t d = 0; d < dim; ++d)
         {
-            const double dc = model.fiber.x[d][b.j] - model.fiber.x[d][b.i];
+            const double dc = fiber.x[d][b.j] - fiber.x[d][b.i];
             l2 += dc * dc;
         }
         const double l = std::sqrt(l2);

@@ -3,6 +3,7 @@
 // Объявления — в time_integration.hpp.
 #include "time_integration.hpp"
 #include "output.hpp"
+#include "fiber/fiber_output.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/fiber_solid_contact.hpp"
@@ -237,6 +238,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         if (time >= next_output_time)
         {
             output(sys, ntotal, time, current_ts, dt);
+            if (nfiber > 0) fiber::fiber_output(fb, topology, current_ts, time);
             next_output_time += save_t;
         }
         time += dt;
