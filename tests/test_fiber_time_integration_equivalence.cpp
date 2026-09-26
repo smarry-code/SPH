@@ -102,6 +102,24 @@ bool close(double a, double b, double floor_scale, double tol)
     return std::fabs(a - b) <= tol * scale;
 }
 
+// fiber/CUDA_PLAN.md, этап Г1: fp32-вариант (SPH_PRECISION=32) прогоняет ОБЕ
+// сигнатуры через real_t=float -- расхождение старой/новой сигнатуры остаётся
+// тем же управляющим кодом (тонкие обёртки над одной реализацией), но шесть
+// шагов Solid-SPH/контакта в float накапливают собственный дрейф округления
+// на уровне эпсилон float (~1.2e-7) на каждой из OpenMP-редукций, common-mode
+// между A и Б только частично (порядок суммирования пар может отличаться
+// между двумя процессами). Допуск ослаблен на четыре порядка -- ниже уровня,
+// на котором fp32-версия вообще может считать (test_regression_fp32,
+// tests/data/regression_fp32/), но выше шума одной float-операции.
+// Измерено (fiber/CUDA_PLAN.md, этап Г1): худшее расхождение полей девиатора
+// (sxz/syz) в fp32 на этом кейсе (6 шагов, contact_force_type 0/1/3) --
+// ~1.8e-4 отн.; допуск взят с запасом около трёх раз.
+#if SPH_PRECISION == 32
+constexpr double kEquivTol = 5e-4;  // было 1e-9 (измерено до ~1.8e-4 отн.)
+#else
+constexpr double kEquivTol = 1e-9;
+#endif
+
 struct FieldDiff
 {
     double worst = 0.0;
@@ -198,7 +216,7 @@ void run_case(int contact_force_type)
                                " == " + std::to_string(timeB));
     check(dtA == dtB, "итоговый dt совпадает после N шагов (CFL/контакт -- общая формула в обеих сигнатурах)");
 
-    const double tol = 1e-9;
+    const double tol = kEquivTol;
     const FieldDiff diff = compare_solid(sysA, modelB.solid, n, tol);
     std::ostringstream os;
     os << "Solid-состояние совпадает со старой сигнатурой (<= " << tol << " относительно): худшее поле "

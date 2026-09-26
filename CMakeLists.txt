@@ -39,6 +39,61 @@ set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") #
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
 
+# --- fp32-предупреждения (fiber/CUDA_PLAN.md, этап ГF/Г1): объявлена здесь
+#     (а не рядом с регрессией fp32 ниже), потому что fp32-варианты тестов
+#     нитей (test_fiber_*_fp32) появляются раньше по файлу и тоже должны на
+#     неё ссылаться. -Wdouble-promotion/-Wimplicit-float-conversion — см.
+#     подробное обоснование у регрессии fp32 (§ "Регрессия fp32" ниже).
+option(SPH_FP32_WARNINGS "Предупреждения о повышении float -> double в fp32-целях" ON)
+
+# --- Вспомогательная функция: fp32-двойник цели теста (fiber/CUDA_PLAN.md,
+#     этап Г1, п.4): тот же .cpp, SPH_PRECISION=32 (+ прочие ARG_DEFS),
+#     предупреждения float->double, свой ctest-таргет с суффиксом _fp32 и
+#     метками ARG_LABELS. Собрана в функцию (а не скопирована в каждый блок
+#     руками), чтобы 8 однотипных fp32-целей этапа Г1 не разошлись по флагам
+#     построчным копированием — сама структура (add_executable/target_*)
+#     дословно повторяет соседние fp64-блоки этого файла.
+#
+# LEGACY_TEST_SOURCE (опционально, первый элемент SOURCES по умолчанию не
+# предполагается): путь ИМЕННО к файлу теста (не к SPH_PIPELINE_SOURCES).
+# Тесты нитей (test_fiber_bond.cpp и однотипные) написаны ДО появления
+# SPH_PRECISION=32 у этих целей: их геометрия сцены и функции сравнения
+# (near_rel/near_abs/check) осознанно работают в double -- это тестовая
+# обвязка/сравнение, а не сама физика (SPH_PIPELINE_SOURCES остаются под
+# полными -Wdouble-promotion/-Wimplicit-float-conversion и ловят реальную
+# утечку double В РАСЧЁТ). Ровно то же обоснование, что у исключения
+# src/input.cpp ниже (§"Регрессия fp32"): граница double/real_t на входе
+# теста -- законна, не является "новым предупреждением" пайплайна.
+function(sph_add_fp32_test)
+    cmake_parse_arguments(A "" "BASE;TEST_NAME;LEGACY_TEST_SOURCE" "SOURCES;DEFS;LABELS" ${ARGN})
+    set(_t ${A_BASE}_fp32)
+    add_executable(${_t} ${A_SOURCES})
+    target_include_directories(${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${_t} PRIVATE SPH_DIM=3 SPH_PRECISION=32 ${A_DEFS})
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_t} PRIVATE -fexceptions)
+        if(SPH_FP32_WARNINGS)
+            target_compile_options(${_t} PRIVATE -Wdouble-promotion)
+            if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+                target_compile_options(${_t} PRIVATE -Wimplicit-float-conversion)
+            endif()
+        endif()
+    endif()
+    if(SPH_FP32_WARNINGS AND A_LEGACY_TEST_SOURCE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set_source_files_properties(${A_LEGACY_TEST_SOURCE} PROPERTIES
+            COMPILE_OPTIONS "-Wno-double-promotion;-Wno-implicit-float-conversion")
+    endif()
+    if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        target_compile_options(${_t} PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+        target_link_options(${_t} PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+    elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_t} PRIVATE -fopenmp)
+        target_link_options(${_t} PRIVATE -fopenmp)
+    endif()
+    add_test(NAME ${A_TEST_NAME}_fp32 COMMAND ${_t})
+    set_tests_properties(${A_TEST_NAME}_fp32 PROPERTIES LABELS "${A_LABELS}")
+endfunction()
+
 # --- CUDA-бэкенд (fiber/CUDA_PLAN.md, этап Г0): опция SPH_ENABLE_CUDA,
 #     по умолчанию OFF — тогда файл сразу возвращается через return() и не
 #     трогает ни языки, ни флаги CPU-целей. Детали — cmake/SphCuda.cmake,
@@ -118,6 +173,46 @@ endif()
 add_executable(test_contact tests/test_contact.cpp src/ext_force.cpp)
 target_include_directories(test_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME contact_test COMMAND test_contact)
+
+# --- Тест Solid-Solid-Contact новой схемы RHS (fiber/CUDA_PLAN.md, этап Г1;
+#     IMPLEMENTATION_REPORT.md §4.5): interactions/solid_contact.hpp --
+#     баланс импульса, знак силы, фильтр body[], dt_limit типов 1-3,
+#     отсутствие силы при типе 0 / без проникания. Header-only модуль (та же
+#     математика contact_force.hpp, что уже покрыта test_contact) -- своих
+#     объектников конвейера не требует, dim по умолчанию (1), как test_contact.
+add_executable(test_solid_contact tests/test_solid_contact.cpp)
+target_include_directories(test_solid_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_solid_contact PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_solid_contact PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_solid_contact PRIVATE -fopenmp)
+    target_link_options(test_solid_contact PRIVATE -fopenmp)
+endif()
+add_test(NAME solid_contact_test COMMAND test_solid_contact)
+
+# fp32-вариант (fiber/CUDA_PLAN.md, этап Г1, п.4): тот же .cpp с
+# SPH_PRECISION=32, предупреждения float->double под опцией SPH_FP32_WARNINGS
+# (объявлена в начале файла, см. sph_add_fp32_test) -- не использует саму
+# функцию sph_add_fp32_test, потому что она фиксирует SPH_DIM=3, а этот тест
+# собирается с dim по умолчанию (1), как fp64-цель выше.
+add_executable(test_solid_contact_fp32 tests/test_solid_contact.cpp)
+target_include_directories(test_solid_contact_fp32 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_solid_contact_fp32 PRIVATE SPH_PRECISION=32)
+if(SPH_FP32_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(test_solid_contact_fp32 PRIVATE -Wdouble-promotion -Wimplicit-float-conversion)
+elseif(SPH_FP32_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    target_compile_options(test_solid_contact_fp32 PRIVATE -Wdouble-promotion)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_solid_contact_fp32 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_solid_contact_fp32 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_solid_contact_fp32 PRIVATE -fopenmp)
+    target_link_options(test_solid_contact_fp32 PRIVATE -fopenmp)
+endif()
+add_test(NAME solid_contact_test_fp32 COMMAND test_solid_contact_fp32)
+set_tests_properties(solid_contact_test_fp32 PROPERTIES LABELS "fp32")
 
 # --- Тест осесимметричной ветки силового расчёта ----------------------------
 # Закрепляет соглашение об индексах девиатора при axis_sim && dim == 2
@@ -202,6 +297,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
+sph_add_fp32_test(BASE test_fiber_bond TEST_NAME fiber_bond_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_fiber_bond.cpp
+    SOURCES tests/test_fiber_bond.cpp ${SPH_PIPELINE_SOURCES})
 
 # --- ODESolver (fiber/PLAN.md, этап Ф8): интерфейс OdeSolver, PredictorCorrector
 #     и Euler (include/ode/ode_solver.hpp) -- первый порядок сходимости Эйлера
@@ -244,6 +342,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_break_test COMMAND test_fiber_break)
 set_tests_properties(fiber_break_test PROPERTIES LABELS "3d")
+sph_add_fp32_test(BASE test_fiber_break TEST_NAME fiber_break_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_fiber_break.cpp
+    SOURCES tests/test_fiber_break.cpp ${SPH_PIPELINE_SOURCES})
 
 # --- Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5): primitive/kernel
 #     пространственного контакта бусин разных нитей
@@ -265,6 +366,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_contact_test COMMAND test_fiber_contact)
 set_tests_properties(fiber_contact_test PROPERTIES LABELS "3d")
+sph_add_fp32_test(BASE test_fiber_contact TEST_NAME fiber_contact_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_fiber_contact.cpp
+    SOURCES tests/test_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
 
 # --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
 #     крест-накрест, отскакивают без взаимного проникания»).
@@ -283,6 +387,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME e2e_fiber_contact_test COMMAND test_e2e_fiber_contact)
 set_tests_properties(e2e_fiber_contact_test PROPERTIES LABELS "3d")
+sph_add_fp32_test(BASE test_e2e_fiber_contact TEST_NAME e2e_fiber_contact_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_e2e_fiber_contact.cpp
+    SOURCES tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
 
 # --- Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6): primitive/kernel
 #     механического контакта бусины нити с реальной Solid-частицей
@@ -304,6 +411,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_solid_test COMMAND test_fiber_solid)
 set_tests_properties(fiber_solid_test PROPERTIES LABELS "3d")
+sph_add_fp32_test(BASE test_fiber_solid TEST_NAME fiber_solid_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_fiber_solid.cpp
+    SOURCES tests/test_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
 
 # --- E2E-критерий готовности Ф6 (fiber/PLAN.md: «smoke одного Solid в 3D,
 #     затем нить, падающая на пластину, без проникания»).
@@ -324,6 +434,11 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME e2e_fiber_solid_test COMMAND test_e2e_fiber_solid)
 set_tests_properties(e2e_fiber_solid_test PROPERTIES LABELS "3d" TIMEOUT 300)
+sph_add_fp32_test(BASE test_e2e_fiber_solid TEST_NAME e2e_fiber_solid_test LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_e2e_fiber_solid.cpp
+    SOURCES tests/test_e2e_fiber_solid.cpp ${SPH_PIPELINE_SOURCES}
+    DEFS SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+set_tests_properties(e2e_fiber_solid_test_fp32 PROPERTIES TIMEOUT 300)
 
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
@@ -351,6 +466,53 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_time_integration_equivalence_test COMMAND test_fiber_time_integration_equivalence)
 set_tests_properties(fiber_time_integration_equivalence_test PROPERTIES LABELS "3d" TIMEOUT 300)
+sph_add_fp32_test(BASE test_fiber_time_integration_equivalence TEST_NAME fiber_time_integration_equivalence_test
+    LABELS 3d fp32
+    LEGACY_TEST_SOURCE tests/test_fiber_time_integration_equivalence.cpp
+    SOURCES tests/test_fiber_time_integration_equivalence.cpp ${SPH_PIPELINE_SOURCES}
+    DEFS SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+set_tests_properties(fiber_time_integration_equivalence_test_fp32 PROPERTIES TIMEOUT 300)
+
+# --- Продовый time_integration(fiber::Model&) с НЕПУСТЫМИ нитями
+#     (fiber/CUDA_PLAN.md, этап Г1; IMPLEMENTATION_REPORT.md §4.5): сцена
+#     "два блока Solid + две пересекающиеся нити", все пять типов
+#     взаимодействий, снимок состояния -- заготовка эталона для CPU/GPU (Г8).
+add_executable(test_time_integration_fiber tests/test_time_integration_fiber.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_time_integration_fiber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_time_integration_fiber PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_time_integration_fiber PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_time_integration_fiber PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_time_integration_fiber PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_time_integration_fiber PRIVATE -fopenmp)
+    target_link_options(test_time_integration_fiber PRIVATE -fopenmp)
+endif()
+add_test(NAME time_integration_fiber_test COMMAND test_time_integration_fiber)
+set_tests_properties(time_integration_fiber_test PROPERTIES LABELS "3d" TIMEOUT 60)
+
+sph_add_fp32_test(BASE test_time_integration_fiber TEST_NAME time_integration_fiber_test LABELS 3d fp32
+    SOURCES tests/test_time_integration_fiber.cpp ${SPH_PIPELINE_SOURCES}
+    DEFS SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+set_tests_properties(time_integration_fiber_test_fp32 PROPERTIES TIMEOUT 60)
+
+# Перегенерация эталонов test_time_integration_fiber (fp64/fp32) -- по образцу
+# regression_golden выше, но проще: сама программа принимает --emit-golden=<dir>
+# и пишет tests/data/fiber_time_integration(_fp32)/golden.txt.
+#     cmake --build build --target time_integration_fiber_golden
+add_custom_target(time_integration_fiber_golden
+    COMMAND $<TARGET_FILE:test_time_integration_fiber>
+            "--emit-golden=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/fiber_time_integration"
+    COMMAND $<TARGET_FILE:test_time_integration_fiber_fp32>
+            "--emit-golden=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/fiber_time_integration_fp32"
+    DEPENDS test_time_integration_fiber test_time_integration_fiber_fp32
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMENT "Перегенерация эталонов test_time_integration_fiber (fp64 и fp32)"
+    USES_TERMINAL VERBATIM)
 
 # --- Границы SPH_DIM != 3 для нитей (fiber/PLAN.md Ф2, пункт 5):
 #     fiber::check_fiber_requires_dim3() обязана бросать исключение. dim —
@@ -685,7 +847,8 @@ add_custom_target(regression_golden
 # float -> double в конвейере означает, что часть «fp32»-расчёта на деле идёт
 # в double (литерал 2.0 вместо real_t(2.0) и т.п.). Предупреждения, а не
 # ошибки: тестовая обвязка (геометрия, снимок) законно работает в double.
-option(SPH_FP32_WARNINGS "Предупреждения о повышении float -> double в fp32-целях" ON)
+# Опция SPH_FP32_WARNINGS объявлена выше (рядом с sph_add_fp32_test) —
+# fp32-варианты тестов нитей ссылаются на неё раньше по файлу.
 # src/input.cpp — разбор конфигурации и встроенные генераторы начальных
 # условий: значения считаются в double и записываются в поля real_t. Сужение
 # там и есть граница ввода (include/precision.hpp), а не утечка double в расчёт,

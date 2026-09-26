@@ -237,7 +237,7 @@ struct FiberOnPlateIntegrator
         {
             const interactions::FiberSolidContactGeometry g =
                 interactions::compute_fiber_solid_contact_geometry(smats, plate, fb, fmats, p);
-            if (g.contact) max_pen = std::max(max_pen, g.delta);
+            if (g.contact) max_pen = std::max(max_pen, static_cast<double>(g.delta));
         }
         last_max_penetration = max_pen;
 

@@ -38,7 +38,29 @@ void check(bool cond, const std::string& what)
 
 bool near_rel(double a, double b, double tol) { return std::fabs(a - b) <= tol * std::max(1.0, std::fabs(b)); }
 bool near_abs(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
-bool finite3(const double v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
+
+// fiber/CUDA_PLAN.md, этап Г1: fp32-вариант (SPH_PRECISION=32) считает через
+// real_t=float (эпсилон ~1.2e-7). Геометрия Fiber-Fiber-Contact решает 2x2
+// систему (denom = 1 - c*c, include/interactions/fiber_contact.hpp) -- у неё
+// собственная потеря точности вблизи kFiberContactParallelEps (см. новый тест
+// test_near_threshold_angles ниже), поэтому допуск на геометрию/баланс
+// импульса ослаблен сильнее, чем для fiber_bond/fiber_solid (не только
+// эпсилон float, но и обусловленность самой формулы). kTolFallback -- отдельно
+// для сверки с вырожденной Surface-End формулой (там уже 1e-6 в double, т.к.
+// theta=1e-5 -- не точный ноль, а конечная малая величина).
+#if SPH_PRECISION == 32
+constexpr double kTolGeomRel = 1e-4;   // было 1e-9 (D, n, P, w, F, баланс импульса)
+constexpr double kTolFallback = 1e-3;  // было 1e-6 (сверка near-parallel с формулой Surface-End)
+#else
+constexpr double kTolGeomRel = 1e-9;
+constexpr double kTolFallback = 1e-6;
+#endif
+// fiber/CUDA_PLAN.md, этап Г1: real_t, не double -- FiberContactGeometry::n
+// объявлен как real_t[3] (include/interactions/fiber_contact.hpp), и при
+// SPH_PRECISION=32 это float[3]; сигнатура с double[3] не компилировалась в
+// fp32-цели (нет неявного приведения массивов) -- обнаружено только сейчас,
+// т.к. до этапа Г1 fp32-варианта этого файла не существовало.
+bool finite3(const real_t v[3]) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 
 fiber::FiberMaterial make_material(double E, double nu, double d, double rho, double eps_break = 1.0)
 {
@@ -155,16 +177,16 @@ void test_perpendicular_manual()
 
     interactions::FiberContactGeometry geom = interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
 
-    check(near_rel(geom.D, h, 1e-9), "D == h (перпендикулярное расстояние осей)");
-    check(near_abs(geom.n[0], 0.0, 1e-9) && near_abs(geom.n[1], 0.0, 1e-9) && near_abs(geom.n[2], -1.0, 1e-9),
+    check(near_rel(geom.D, h, kTolGeomRel), "D == h (перпендикулярное расстояние осей)");
+    check(near_abs(geom.n[0], 0.0, kTolGeomRel) && near_abs(geom.n[1], 0.0, kTolGeomRel) && near_abs(geom.n[2], -1.0, kTolGeomRel),
           "n == (0,0,-1)");
-    check(near_rel(geom.P_ij, -x0, 1e-9), "P_ij == -x0");
-    check(near_rel(geom.P_ji, y0, 1e-9), "P_ji == y0");
+    check(near_rel(geom.P_ij, -x0, kTolGeomRel), "P_ij == -x0");
+    check(near_rel(geom.P_ji, y0, kTolGeomRel), "P_ji == y0");
 
     const double w_i_expected = (l0 - x0) / l0;
     const double w_j_expected = (l0 - y0) / l0;
-    check(near_rel(geom.w_i, w_i_expected, 1e-9), "w_i совпадает с ручной формулой (P_ij<=0 -> ветка d_n)");
-    check(near_rel(geom.w_j, w_j_expected, 1e-9), "w_j совпадает с ручной формулой (P_ji>0 -> ветка d_p)");
+    check(near_rel(geom.w_i, w_i_expected, kTolGeomRel), "w_i совпадает с ручной формулой (P_ij<=0 -> ветка d_n)");
+    check(near_rel(geom.w_j, w_j_expected, kTolGeomRel), "w_j совпадает с ручной формулой (P_ji>0 -> ветка d_p)");
     check(geom.i_has_neighbor && geom.i_neighbor == 2, "сосед i -- A2 (next, P_ij<=0)");
     check(geom.j_has_neighbor && geom.j_neighbor == 3, "сосед j -- B0 (prev, P_ji>0)");
 
@@ -175,7 +197,7 @@ void test_perpendicular_manual()
     const double E_star = E / (2.0 * (1.0 - nu * nu));
     const double R_star = std::sqrt(d / 4.0);
     const double F_expected = (4.0 / 3.0) * E_star * R_star * std::pow(delta_expected, 1.5);
-    check(near_rel(geom.F, F_expected, 1e-9), "F совпадает с формулой Meyer (одинаковые нити)");
+    check(near_rel(geom.F, F_expected, kTolGeomRel), "F совпадает с формулой Meyer (одинаковые нити)");
 }
 
 // -----------------------------------------------------------------------
@@ -217,10 +239,10 @@ void test_near_parallel_fallback()
     // Ручной расчёт по формуле Surface-End (i=A -- поверхность):
     // p_A = (-1,0,0) (как в тесте 1); P_ij = dot(p_A, xB1-xA1) = -x0;
     // Q_i = (x0,0,0); diff = Q_i - xB1 = (0,0,-h); D=h, n=(0,0,-1).
-    check(near_rel(geom.D, h, 1e-6), "D совпадает с формулой Surface-End (не с вырождающейся Surface-Surface)");
-    check(near_abs(geom.n[0], 0.0, 1e-6) && near_abs(geom.n[1], 0.0, 1e-6) && near_abs(geom.n[2], -1.0, 1e-6),
+    check(near_rel(geom.D, h, kTolFallback), "D совпадает с формулой Surface-End (не с вырождающейся Surface-Surface)");
+    check(near_abs(geom.n[0], 0.0, kTolFallback) && near_abs(geom.n[1], 0.0, kTolFallback) && near_abs(geom.n[2], -1.0, kTolFallback),
           "n совпадает с формулой Surface-End");
-    check(near_rel(geom.P_ij, -x0, 1e-6), "P_ij совпадает с формулой Surface-End");
+    check(near_rel(geom.P_ij, -x0, kTolFallback), "P_ij совпадает с формулой Surface-End");
     check(geom.w_j == 1.0, "j (в вырожденной ветке) получает w_j=1 -- без распределения на соседей");
     check(!geom.j_has_neighbor, "j в вырожденной ветке не имеет соседа для распределения");
 
@@ -250,7 +272,7 @@ void test_near_parallel_fallback()
             }
         if (scale < 1e-30) scale = 1.0;
         for (std::size_t dd = 0; dd < dim; ++dd)
-            check(std::fabs(total[dd]) < 1e-9 * scale,
+            check(std::fabs(total[dd]) < kTolGeomRel * scale,
                   "вырожденная ветка (near-parallel): суммарный импульс по компоненте " + std::to_string(dd) +
                       " равен нулю: " + std::to_string(total[dd]));
 
@@ -267,6 +289,138 @@ void test_near_parallel_fallback()
         }
         check(nonzero == 3, "вырожденная ветка: 3 бусины получили вклад (i, сосед i, j -- без соседа j)");
     }
+}
+
+// -----------------------------------------------------------------------
+// 1b) Почти параллельные нити НА ПОРОГЕ kFiberContactParallelEps (fiber/
+// CUDA_PLAN.md, этап Г1, п.5) -- в отличие от test_near_parallel_fallback
+// (theta=1e-5, глубоко в вырожденной ветке, B1 лежит РОВНО над точкой
+// пересечения проекции осей, y0=0), здесь B1 смещена по y на y0=1e-4 м --
+// проекции осей A и B по-прежнему пересекаются в точке (x0,0), НО числитель
+// P_ji=(rpj-c*rpi)/denom = y0*sin(theta)/denom уже НЕ обнуляется тождественно
+// (при y0=0 он обнулялся ТОЧНО, бит-в-бит -- test_near_parallel_fallback
+// в принципе не может поймать зависимость от точности denom, т.к. результат
+// не зависит от denom, каким бы неточным он ни был). Здесь P_ji, а значит и
+// D, реально зависят от точности denom = 1 - c*c.
+//
+// ДВА РАЗНЫХ ЭФФЕКТА НА ЭТОЙ СЦЕНЕ (важно не путать):
+//   (1) Алгоритмический скачок НА ГРАНИЦЕ (не связан с точностью арифметики,
+//       воспроизводится и в double): при y0=0 истинное минимальное расстояние
+//       между прямыми A и B равно h СТРОГО для любого theta!=0 (доказано
+//       вручную -- см. историю коммита), а вырожденная (Surface-End) ветка
+//       для theta->0 тоже даёт ровно h -- значит при y0=0 обе ветки согласованы
+//       и никакого скачка нет. При y0!=0 это уже не так: вырожденная ветка
+//       трактует нить B как ТОЧКУ B1 (не учитывает её протяжённость) и даёт
+//       D_fallback = sqrt(y0^2+h^2), тогда как истинная (и вычисляемая общей
+//       веткой) величина остаётся D_generic = h. Это РЕАЛЬНОЕ, хоть и мелкое
+//       при малом y0, расхождение приближения на границе -- сознательное
+//       упрощение кода (см. комментарий у SurfaceSurface в
+//       include/interactions/fiber_contact.hpp), не относится к плану Г1 и не
+//       трогается. y0 здесь взят МАЛЫМ (1e-4 м, 0.2*h) специально, чтобы этот
+//       скачок был мал (sqrt(y0^2+h^2)/h - 1 = 1.98%) и не маскировал эффект
+//       (2) ниже, но и не создавал ложных провалов теста.
+//   (2) Потеря точности float В ОБЩЕЙ ветке около порога -- см. числа ниже.
+//       Именно её и оценивает kTolThresholdD/kTolThresholdFRatio.
+//
+// ЧТО ВЫЯСНЕНО ПРО ПОРОГ 1e-3 ВО FLOAT (fiber/CUDA_PLAN.md, этап Г1, п.5;
+// числа -- прямой пересчёт формулы файла в float32/float64, округление на
+// каждой операции, y0=1e-4):
+//   - Величина, которой сравнивается порог (cr_norm = |p_i x p_j|), у этой
+//     геометрии равна sin(theta) и вычисляется через компоненты векторного
+//     произведения -- НЕ через 1-c*c, поэтому она хорошо обусловлена вплоть
+//     до очень малых theta (sin(1e-5) представим в float32 с относительной
+//     точностью ~1e-7). Порог 1e-3 сам по себе выбирается корректно, без
+//     риска ложно попасть в "общую" ветку из-за шума округления cr_norm.
+//   - НО деноминатор ОБЩЕЙ ветки denom = 1 - c*c (c = cos(theta)) считается
+//     ЧЕРЕЗ КОСИНУС, а не пересчётом sin(theta)^2 -- и при theta < ~3e-4 рад
+//     cos(theta) в float32 округляется до РОВНО 1.0f (theta^2/2 < половины
+//     ULP float32 около 1.0), что даёт denom = 1.0f - 1.0f*1.0f = 0.0f ТОЧНО
+//     (не "неточно", а бит-в-бит ноль) -- будь порог cr_norm ниже, это была
+//     бы гарантированная Inf/NaN от деления на ноль. Порог
+//     kFiberContactParallelEps=1e-3 отстоит от этой границы всего в ~3 раза
+//     (1e-3 / 3e-4 рад) -- запас есть, но небольшой, и он не документирован.
+//   - У ПОРОГА, но уже В ОБЩЕЙ ветке (theta чуть выше 1e-3, где решение по
+//     cr_norm корректно выбирает общую формулу): относительная ошибка D
+//     против истинного h в float32 (сверка с double на этой же формуле)
+//     составляет ~2.3e-3 при theta=1e-3..5e-4 (тут ещё вырожденная ветка,
+//     не считается) и по факту в общей ветке измерено до ~4.4e-5 при
+//     theta=1.2e-3..1.5e-3, ~1.7e-4 при theta=2e-3, убывая до ~1.6e-7 при
+//     theta=1e-2 -- то есть НЕ мгновенно возвращается к типичной для
+//     fp32-геометрии точности ~1e-4..1e-5 (kTolGeomRel), а делает это только
+//     за пяти-десятикратный запас по углу. Конечная величина, не NaN и не
+//     расходящаяся сила -- отсюда и допуск kTolThreshold ниже (с запасом).
+// -----------------------------------------------------------------------
+// near_rel(a,b,tol) при |b|<1 -- ФАКТИЧЕСКИ абсолютный допуск (tol*max(1,|b|)
+// = tol), поэтому числа ниже -- абсолютные, в метрах, а не относительные.
+// В обеих точностях доминирует один и тот же алгоритмический скачок (1)
+// (sqrt(y0^2+h^2)-h = 1e-5 м при y0=1e-4, h=5e-4 -- см. шапку файла), потеря
+// точности float (2) на его фоне у самого порога (~1e-7 м) -- на два порядка
+// меньше и тонет в этом же допуске.
+#if SPH_PRECISION == 32
+constexpr double kTolThresholdD = 1e-4;      // >= 1e-5 (скачок 1) с запасом; покрывает и (2)
+constexpr double kTolThresholdFRatio = 1.15; // max(F)/min(F): ~2-3% алгоритмический скачок (1) + запас на (2)
+#else
+constexpr double kTolThresholdD = 2e-5;      // >= 1e-5 (скачок 1) с двукратным запасом
+constexpr double kTolThresholdFRatio = 1.05; // те же ~3% алгоритмического скачка (1), точность double не добавляет
+#endif
+
+void test_near_threshold_angles()
+{
+    std::printf("test_near_threshold_angles:\n");
+    const double l0 = 0.01;
+    const double x0 = 0.4 * l0, y0 = 1.0e-4, h = 0.5e-3; // y0 мал -- см. шапку выше (эффект 1 vs эффект 2)
+    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+
+    // Углы по обе стороны от kFiberContactParallelEps = 1e-3 (fiber_contact.hpp):
+    // 1e-5 и 1e-4 -- глубоко в вырожденной (Surface-End) ветке; 5e-4 -- ближе к
+    // порогу, всё ещё вырожденная; 1.2e-3..2e-3 -- сразу над порогом, общая
+    // ветка в её наименее точной зоне; 1e-2, 5e-2 -- общая ветка, точность как
+    // у kTolGeomRel.
+    const std::vector<double> thetas = {1e-5, 1e-4, 5e-4, 1e-3, 1.2e-3, 1.5e-3, 2e-3, 1e-2, 5e-2};
+
+    std::vector<double> F_values;
+    for (double theta : thetas)
+    {
+        const double c = std::cos(theta), s = std::sin(theta);
+        std::array<double, 3> B1 = {x0, y0, h};
+        std::array<double, 3> dirB = {c, s, 0.0};
+        std::array<double, 3> B0 = {B1[0] - l0 * dirB[0], B1[1] - l0 * dirB[1], B1[2] - l0 * dirB[2]};
+        std::array<double, 3> B2 = {B1[0] + l0 * dirB[0], B1[1] + l0 * dirB[1], B1[2] + l0 * dirB[2]};
+
+        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
+        std::vector<std::array<double, 3>> beadsB = {B0, B1, B2};
+        std::vector<double> mA = {1e-6, 1e-6, 1e-6};
+        std::vector<double> mB = {1e-6, 1e-6, 1e-6};
+
+        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+        interactions::FiberContactPrimitive prim =
+            make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface);
+        interactions::FiberContactGeometry geom = interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
+
+        const std::string tag = "theta=" + std::to_string(theta);
+        check(std::isfinite(geom.D) && finite3(geom.n) && std::isfinite(geom.F) && std::isfinite(geom.w_i) &&
+                  std::isfinite(geom.w_j) && std::isfinite(geom.P_ij) && std::isfinite(geom.P_ji),
+              "нет NaN/Inf в геометрии (" + tag + ")");
+        check(geom.F >= 0.0, "сила неотрицательна (" + tag + "), F=" + std::to_string(geom.F));
+        // Допуск -- относительно h с запасом на алгоритмический скачок (1)
+        // (~2% на границе) плюс потерю точности float (2) у самого порога.
+        check(near_rel(geom.D, h, kTolThresholdD),
+              "D близко к h (" + tag + "): D=" + std::to_string(geom.D) + " h=" + std::to_string(h));
+
+        F_values.push_back(geom.F);
+    }
+
+    // Непрерывность через порог: контакт (проникновение d_eff-D>0) есть на
+    // всём диапазоне углов, и сила F не должна ни зануляться, ни расходиться
+    // при переходе через kFiberContactParallelEps=1e-3 -- допуск учитывает и
+    // малый алгоритмический скачок (1) на самой границе, и потерю точности
+    // float (2) сразу над ней (см. шапку файла).
+    double f_min = F_values[0], f_max = F_values[0];
+    for (double f : F_values) { f_min = std::min(f_min, f); f_max = std::max(f_max, f); }
+    check(f_min > 0.0, "сила положительна на всём диапазоне углов (проникновение d_eff-D>0 не зависит от угла)");
+    check(f_max / f_min <= kTolThresholdFRatio,
+          "сила непрерывна при переходе через порог: max(F)/min(F) = " + std::to_string(f_max / f_min) +
+              " <= " + std::to_string(kTolThresholdFRatio));
 }
 
 // -----------------------------------------------------------------------
@@ -387,11 +541,12 @@ void test_momentum_conservation()
 
     double scale = 0.0;
     for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd) scale = std::max(scale, std::fabs(fx.state.mass[i] * out[i].dv[dd]));
+        for (std::size_t dd = 0; dd < dim; ++dd)
+            scale = std::max(scale, static_cast<double>(std::fabs(fx.state.mass[i] * out[i].dv[dd])));
     if (scale < 1e-30) scale = 1.0;
 
     for (std::size_t dd = 0; dd < dim; ++dd)
-        check(std::fabs(total[dd]) < 1e-9 * scale,
+        check(std::fabs(total[dd]) < kTolGeomRel * scale,
               "суммарный импульс по компоненте " + std::to_string(dd) + " равен нулю: " + std::to_string(total[dd]));
 
     // Дополнительно: ровно 4 бусины получили ненулевой вклад (i, i_next=A2, j, j_prev=B0).
@@ -458,6 +613,7 @@ int main()
 {
     test_perpendicular_manual();
     test_near_parallel_fallback();
+    test_near_threshold_angles();
     test_surface_end_and_end_end();
     test_momentum_conservation();
     test_diagnostics_pairs_per_intersection();

@@ -9,3 +9,8 @@ tests/data/regression/*.txt -text -diff
 *.bat text eol=crlf
 # fp32-эталоны регрессии — как fp64 выше.
 tests/data/regression_fp32/*.txt -text -diff
+
+# Эталоны test_time_integration_fiber (fiber/CUDA_PLAN.md, этап Г1) —
+# заготовка для сравнения CPU/GPU (Г8), тот же принцип, что у регрессии выше.
+tests/data/fiber_time_integration/*.txt -text -diff
+tests/data/fiber_time_integration_fp32/*.txt -text -diff

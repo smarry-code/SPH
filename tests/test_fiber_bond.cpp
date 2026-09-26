@@ -56,6 +56,29 @@ bool near_rel(double a, double b, double tol)
 
 bool near_abs(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
 
+// fiber/CUDA_PLAN.md, этап Г1: fp32-вариант этого же файла (SPH_PRECISION=32,
+// include/precision.hpp) считает через real_t=float, поэтому допуски,
+// откалиброванные на double (1e-9, 1e-12), не проходят даже на чистой
+// формуле -- ошибка представления float ~ 1.2e-7 (эпсилон float) уже выше их.
+// Ослабление ~ на три порядка (до уровня, кратного эпсилон float с запасом на
+// накопление по нескольким операциям), не физика: знак силы, порог сжатия
+// (сила строго 0) и ворота волны/осциллятора (см. ниже) не меняются.
+#if SPH_PRECISION == 32
+constexpr double kTolForceRel = 1e-5;  // было 1e-9 (dv против F/m)
+constexpr double kTolZeroAbs  = 1e-5;  // было 1e-12 (поперечные компоненты, третий закон)
+constexpr double kTolDtRel    = 1e-5;  // было 1e-9 (dt_limit против формулы)
+constexpr double kTolOscS     = 2e-3;  // было 5e-4 (фаза осциллятора после T/8, накопление шагов PC)
+constexpr double kTolOscV     = 1e-2;  // было 3e-3 (относительная скорость в той же точке)
+constexpr double kTolMomentum = 1e-5;  // было 1e-9 (сохранение импульса за 25 шагов)
+#else
+constexpr double kTolForceRel = 1e-9;
+constexpr double kTolZeroAbs  = 1e-12;
+constexpr double kTolDtRel    = 1e-9;
+constexpr double kTolOscS     = 5e-4;
+constexpr double kTolOscV     = 3e-3;
+constexpr double kTolMomentum = 1e-9;
+#endif
+
 fiber::FiberMaterial make_material(double E, double d, double rho, double eps_break = 1.0)
 {
     fiber::FiberMaterial m;
@@ -132,13 +155,17 @@ void test_force_formula()
         const double strain = l / l0 - 1.0;
         const double F = E * A * strain; // F_i<-j вдоль x (xij = (l,0,0))
 
-        check(near_rel(out[0].dv[0], F / mi, 1e-9), "растяжение: dv_x бусины 0 == F/m0");
-        check(near_rel(out[1].dv[0], -F / mj, 1e-9), "растяжение: dv_x бусины 1 == -F/m1");
-        check(near_abs(out[0].dv[1], 0.0, 1e-12) && near_abs(out[0].dv[2], 0.0, 1e-12),
+        check(near_rel(out[0].dv[0], F / mi, kTolForceRel), "растяжение: dv_x бусины 0 == F/m0");
+        check(near_rel(out[1].dv[0], -F / mj, kTolForceRel), "растяжение: dv_x бусины 1 == -F/m1");
+        check(near_abs(out[0].dv[1], 0.0, kTolZeroAbs) && near_abs(out[0].dv[2], 0.0, kTolZeroAbs),
               "растяжение: поперечные компоненты dv бусины 0 нулевые");
-        check(near_abs(out[1].dv[1], 0.0, 1e-12) && near_abs(out[1].dv[2], 0.0, 1e-12),
+        check(near_abs(out[1].dv[1], 0.0, kTolZeroAbs) && near_abs(out[1].dv[2], 0.0, kTolZeroAbs),
               "растяжение: поперечные компоненты dv бусины 1 нулевые");
-        check(mi * out[0].dv[0] + mj * out[1].dv[0] < 1e-6, "растяжение: сумма m*dv по x равна нулю (3-й закон Ньютона)");
+        // fiber/CUDA_PLAN.md, этап Г1: было `< 1e-6` без модуля -- проходило
+        // при ЛЮБОМ отрицательном дисбалансе (не ловит нарушение 3-го закона,
+        // если сумма уходит в минус). near_abs(..., 0.0, ...) берёт |x-0|.
+        check(near_abs(mi * out[0].dv[0] + mj * out[1].dv[0], 0.0, kTolForceRel * F),
+              "растяжение: |сумма m*dv по x| равна нулю (3-й закон Ньютона)");
     }
 
     // --- Сжатие: l = 0.98*l0 -> сила ровно ноль ----------------------------
@@ -187,17 +214,24 @@ void test_dt_limit_formula()
 
     TwoBeadSystem stretched = make_two_bead_system(l0, 1.05 * l0, mi, mj, E, d, rho);
     double dt_stretched = interactions::compute_fiber_bond_dt_limit(exec, stretched.state, stretched.topology, stretched.materials);
-    check(near_rel(dt_stretched, expected, 1e-9), "dt_limit (растянутая связь) совпадает с формулой");
+    check(near_rel(dt_stretched, expected, kTolDtRel), "dt_limit (растянутая связь) совпадает с формулой");
 
     TwoBeadSystem compressed = make_two_bead_system(l0, 0.90 * l0, mi, mj, E, d, rho);
     double dt_compressed = interactions::compute_fiber_bond_dt_limit(exec, compressed.state, compressed.topology, compressed.materials);
-    check(near_rel(dt_compressed, expected, 1e-9), "dt_limit (сжатая связь) совпадает с формулой");
+    check(near_rel(dt_compressed, expected, kTolDtRel), "dt_limit (сжатая связь) совпадает с формулой");
     check(dt_stretched == dt_compressed, "dt_limit не зависит от знака деформации");
 
     fiber::FiberTopology empty_topology;
     empty_topology.resize(2);
     double dt_empty = interactions::compute_fiber_bond_dt_limit(exec, stretched.state, empty_topology, stretched.materials);
-    check(dt_empty == std::numeric_limits<double>::max(), "dt_limit без связей == +inf");
+    // fiber/CUDA_PLAN.md, этап Г1: compute_fiber_bond_dt_limit() возвращает
+    // real_t (include/interactions/fiber_bond.hpp: kInf =
+    // std::numeric_limits<real_t>::max()) -- при SPH_PRECISION=32 это FLOAT
+    // max (~3.4e38), а не double max (~1.8e308). Сравнение с double max было
+    // ошибочным независимо от точности (в fp64 real_t==double, поэтому
+    // совпадало случайно); обнаружено только сейчас, при первом fp32-прогоне
+    // этого файла.
+    check(dt_empty == static_cast<double>(std::numeric_limits<real_t>::max()), "dt_limit без связей == +inf");
 }
 
 // -----------------------------------------------------------------------
@@ -301,13 +335,13 @@ void test_oscillation_frequency()
     const double v_exact = -s0 * omega * std::sin(omega * t1);
 
     check(s_exact > 0.0, "самопроверка: t1 < T/4, s_exact ещё положительно (растяжение)");
-    check(near_rel(s_sim, s_exact, 5e-4), "удлинение s(t1) совпадает с аналитикой гармонического осциллятора");
+    check(near_rel(s_sim, s_exact, kTolOscS), "удлинение s(t1) совпадает с аналитикой гармонического осциллятора");
     // Схема (fiber/SPH.md, «ODESolver») вычисляет силу по координате ДО
     // текущего шага (сила от скорости не зависит), т.е. эквивалентна
     // симплектическому Эйлеру для Fiber-only системы -- скорость несёт
     // небольшой фазовый сдвиг относительно координаты того же порядка dt,
     // поэтому допуск для неё шире, чем для s(t1).
-    check(near_rel(v_rel_sim, v_exact, 3e-3), "относительная скорость v(t1) близка к аналитике (допуск шире -- фазовый сдвиг схемы)");
+    check(near_rel(v_rel_sim, v_exact, kTolOscV), "относительная скорость v(t1) близка к аналитике (допуск шире -- фазовый сдвиг схемы)");
 }
 
 // -----------------------------------------------------------------------
@@ -371,7 +405,28 @@ void test_wave_speed()
 
     const std::size_t probeA = 40;
     const std::size_t probeB = 220;
+    // fiber/CUDA_PLAN.md, этап Г1: порог первого заметного отклика. В fp32
+    // (SPH_PRECISION=32) порог 0.02 (как в fp64) ловит НЕ фронт волны, а
+    // локальный шум округления начальных координат: state.x[0][i] = i*l0
+    // округляется до float с АБСОЛЮТНОЙ ошибкой ~|x|*2^-23 (у пробной бусины
+    // B, i=220, |x|=0.22 м -- это ~2.6e-8 м), что даёт паразитную деформацию
+    // связи (i-1,i) относительно l0=1e-3 м порядка 2.6e-5 отн. -- и КАЖДАЯ
+    // бусина уже при t=0 колеблется на своей локальной частоте omega
+    // (=sqrt(k_eff/m_red), одна и та же для всех связей) с амплитудой
+    // скорости ~ omega*l0*(эта деформация) ~ 0.05-0.06 м/с -- БЕЗ какого-либо
+    // распространения от источника. Порог 0.02 <= этого шума, поэтому обе
+    // зондовые бусины пересекают его почти одновременно (измерено: c_measured
+    // ~ 47000-61000 м/с вместо 1291 -- "фронт" на деле локальный шум).
+    // Эмпирически: порог 0.08 всё ещё ловит шум (c_measured~7000), порог 0.10
+    // уже ловит настоящий фронт (c_measured~1246, 3.5% от c) -- граница между
+    // шумом и сигналом лежит между ними. 0.15 -- тот же порядок, что 0.10,
+    // но с полуторакратным запасом от этой границы, и всё ещё на порядок
+    // меньше амплитуды самого пришедшего импульса (~v_pulse=1.0).
+#if SPH_PRECISION == 32
+    const double threshold = 0.15 * v_pulse;
+#else
     const double threshold = 0.02 * v_pulse; // порог первого заметного отклика
+#endif
 
     const double target_time = 1.3 * (static_cast<double>(probeB) * l0) / c; // время с запасом, чтобы фронт дошёл до probeB
     const std::size_t max_steps = static_cast<std::size_t>(target_time / dt) + 10;
@@ -489,7 +544,7 @@ void test_momentum_conservation()
 
     for (std::size_t d = 0; d < dim; ++d)
     {
-        check(std::fabs(p1[d] - p0[d]) < 1e-9 * p0_scale,
+        check(std::fabs(p1[d] - p0[d]) < kTolMomentum * p0_scale,
               "импульс сохраняется (компонента " + std::to_string(d) + "): p0=" + std::to_string(p0[d]) +
                   " p_after=" + std::to_string(p1[d]));
     }

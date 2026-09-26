@@ -44,6 +44,22 @@ void check(bool cond, const std::string& what)
 bool near_rel(double a, double b, double tol) { return std::fabs(a - b) <= tol * std::max(1.0, std::fabs(b)); }
 bool near_abs(double a, double b, double tol) { return std::fabs(a - b) <= tol; }
 
+// fiber/CUDA_PLAN.md, этап Г1: fp32-вариант (SPH_PRECISION=32) считает через
+// real_t=float (эпсилон ~1.2e-7), допуски на геометрию/баланс сил,
+// откалиброванные на double (1e-9, 1e-12, 1e-15), ослаблены на несколько
+// порядков. Проверки elastic_by_itype (E/nu против справочных значений,
+// допуски 5-30%) НЕ трогаются -- это физический допуск на материал, не
+// точность арифметики.
+#if SPH_PRECISION == 32
+constexpr double kTolGeomRel = 1e-5;   // было 1e-9 (lambda, D, F, баланс F_a+F_b+F_s)
+constexpr double kTolClampAbs = 1e-5;  // было 1e-12 (клэмп lambda в 0/1)
+constexpr double kTolNodeAbs = 1e-6;   // было 1e-15 (узел: бусина без вклада)
+#else
+constexpr double kTolGeomRel = 1e-9;
+constexpr double kTolClampAbs = 1e-12;
+constexpr double kTolNodeAbs = 1e-15;
+#endif
+
 fiber::FiberMaterial make_material(double E, double nu, double d, double rho, double eps_break = 1.0)
 {
     fiber::FiberMaterial m;
@@ -146,8 +162,8 @@ void test_lambda_and_clamp()
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t=0.5 (середина внутреннего сегмента): контакт есть");
-        check(near_rel(geom.lambda, 0.5, 1e-9), "t=0.5: lambda == 0.5");
-        check(near_rel(geom.D, h, 1e-9), "t=0.5: D == h");
+        check(near_rel(geom.lambda, 0.5, kTolGeomRel), "t=0.5: lambda == 0.5");
+        check(near_rel(geom.D, h, kTolGeomRel), "t=0.5: D == h");
     }
 
     // (b) t ~ -0.3*l0/l0 = -0.3 (Solid ближе к бусине 0, ЗА пределами сегмента
@@ -183,7 +199,7 @@ void test_lambda_and_clamp()
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t<0 у ПЕРВОГО сегмента: клэмп в 0 -- контакт есть");
-        check(near_abs(geom.lambda, 0.0, 1e-12), "t<0 у первого сегмента: lambda == 0 (клэмп)");
+        check(near_abs(geom.lambda, 0.0, kTolClampAbs), "t<0 у первого сегмента: lambda == 0 (клэмп)");
     }
 
     // (e) ПОСЛЕДНИЙ сегмент (2,3): b_is_last=true -- t>=1 клэмпится в 1
@@ -194,7 +210,7 @@ void test_lambda_and_clamp()
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t>=1 у ПОСЛЕДНЕГО сегмента: клэмп в 1 -- контакт есть");
-        check(near_abs(geom.lambda, 1.0, 1e-12), "t>=1 у последнего сегмента: lambda == 1 (клэмп)");
+        check(near_abs(geom.lambda, 1.0, kTolClampAbs), "t>=1 у последнего сегмента: lambda == 1 (клэмп)");
     }
 }
 
@@ -221,8 +237,8 @@ void test_end_of_fiber_point_contact()
     interactions::FiberSolidContactGeometry geom =
         interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
     check(geom.contact, "точечный контакт: есть проникновение");
-    check(near_rel(geom.D, h, 1e-9), "точечный контакт: D == h (расстояние до самой бусины)");
-    check(near_abs(geom.n[0], 0.0, 1e-9) && near_abs(geom.n[1], 0.0, 1e-9) && near_abs(geom.n[2], 1.0, 1e-9),
+    check(near_rel(geom.D, h, kTolGeomRel), "точечный контакт: D == h (расстояние до самой бусины)");
+    check(near_abs(geom.n[0], 0.0, kTolGeomRel) && near_abs(geom.n[1], 0.0, kTolGeomRel) && near_abs(geom.n[2], 1.0, kTolGeomRel),
           "точечный контакт: n вдоль +z (от бусины к Solid)");
 
     rhs::CpuExecutor exec(2);
@@ -237,7 +253,7 @@ void test_end_of_fiber_point_contact()
     const double Fs = sys.mass[0] * sd[0].dv[2];
     check(Fa < 0.0, "точечный контакт: сила на бусину -- в сторону -z (от Solid)");
     check(Fs > 0.0, "точечный контакт: сила на Solid -- в сторону +z (от бусины)");
-    check(near_rel(Fa, -Fs, 1e-9), "точечный контакт: F_a == -F_s (вся сила -- одной бусине, распределения нет)");
+    check(near_rel(Fa, -Fs, kTolGeomRel), "точечный контакт: F_a == -F_s (вся сила -- одной бусине, распределения нет)");
 }
 
 // -----------------------------------------------------------------------
@@ -279,7 +295,7 @@ void test_node_no_double_force()
         interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, seg12);
     check(!g01.contact, "узел: сегмент (0,1) НЕ даёт вклад (t=1 у не-последнего сегмента -- пропуск)");
     check(g12.contact, "узел: сегмент (1,2) даёт вклад (t=0 -- обычный нижний конец диапазона)");
-    check(near_abs(g12.lambda, 0.0, 1e-12), "узел: сегмент (1,2) -- lambda==0 (вся сила бусине 1)");
+    check(near_abs(g12.lambda, 0.0, kTolClampAbs), "узел: сегмент (1,2) -- lambda==0 (вся сила бусине 1)");
 
     // Суммарный вклад через kernel по ОБОИМ primitives.
     rhs::CpuExecutor exec(2);
@@ -296,17 +312,17 @@ void test_node_no_double_force()
     interactions::FiberSolidContactGeometry gpoint =
         interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, point1);
     check(gpoint.contact, "самопроверка эталона: точечный контакт бусины 1 тоже даёт проникновение");
-    check(near_rel(gpoint.F, g12.F, 1e-9), "самопроверка эталона: F совпадает с F сегмента (1,2) при lambda=0 (та же геометрия)");
+    check(near_rel(gpoint.F, g12.F, kTolGeomRel), "самопроверка эталона: F совпадает с F сегмента (1,2) при lambda=0 (та же геометрия)");
 
     const double F_solid_total = sys.mass[0] * sd[0].dv[2];
     const double F_solid_single = gpoint.F; // F^c_fs, приложенная к Solid вдоль +n (n==+z здесь)
-    check(near_rel(F_solid_total, F_solid_single, 1e-9),
+    check(near_rel(F_solid_total, F_solid_single, kTolGeomRel),
           "узел: суммарная сила на Solid равна силе ОДНОГО контакта (не удвоена)");
 
     const double F_bead1 = fx.state.mass[1] * fd[1].dv[2];
-    check(near_rel(F_bead1, -F_solid_single, 1e-9),
+    check(near_rel(F_bead1, -F_solid_single, kTolGeomRel),
           "узел: сила на бусину 1 равна -F одного контакта (не удвоена, вся сила -- узлу, не бусине 2)");
-    check(near_abs(fx.state.mass[2] * fd[2].dv[2], 0.0, 1e-15),
+    check(near_abs(fx.state.mass[2] * fd[2].dv[2], 0.0, kTolNodeAbs),
           "узел: бусина 2 не получает вклада (lambda=0 у сегмента (1,2), сегмент (0,1) пропущен целиком)");
 }
 
@@ -358,7 +374,7 @@ void test_momentum_conservation()
     }
     if (scale < 1e-30) scale = 1.0;
     for (std::size_t d = 0; d < dim; ++d)
-        check(std::fabs(total[d]) < 1e-9 * scale,
+        check(std::fabs(total[d]) < kTolGeomRel * scale,
               "F_a+F_b+F_s == 0 по компоненте " + std::to_string(d) + ": " + std::to_string(total[d]));
 }
 
