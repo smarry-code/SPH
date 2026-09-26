@@ -28,6 +28,8 @@ ctest --test-dir build --output-on-failure
 | `e2e_3d_full_contact0..3` | `test_e2e_3d --full --contact-type=N` | Тот же кейс до 3,5 мкс. Метка `slow`, по умолчанию **не регистрируются** |
 | `regression_selfcheck_3d` | `test_regression_3d --selfcheck` | Самопроверка компаратора в сборке `dim = 3` (19 полей) |
 | `regression_bc2mini3d_contact0..3` | `test_regression_3d --case=bc2mini3d --contact-type=N` | Регрессия уменьшенного BC2 в 3D: все поля всех частиц после 1 и 50 шагов. Метки `regression` и `3d` |
+| `regression_fp32_*` | `test_regression_fp32`, `test_regression_3d_fp32` | Та же регрессия (самопроверки, BC2, BC6, уменьшенный BC2 в 3D) в сборке `SPH_PRECISION=32` против эталонов `tests/data/regression_fp32/`. Метки `regression` и `fp32` |
+| `e2e_fp32_bc2_smoke_contact0..3` | `test_e2e_bc2_fp32 --contact-type=N` | Сквозной BC2 в сборке `SPH_PRECISION=32`. Метки `e2e` и `fp32` |
 
 !!! note "Почему по тесту на тип контакта"
     Прежде один тест делал базовый прогон и следом три сценария §6. Обрыв любого
@@ -228,6 +230,43 @@ cmake --build build --target regression_golden
 cp tests/data/bc2_initial_conditions.txt /tmp/bc2_alpha.txt   # alpha = 1.001
 ./build/test_regression --case=bc2 --contact-type=0 --config=/tmp/bc2_alpha.txt
 ```
+
+### Регрессия fp32
+
+```bash
+ctest --test-dir build -L fp32 --output-on-failure -j8
+```
+
+Точность расчёта задаётся в одном месте — [`include/precision.hpp`](../../../include/precision.hpp):
+тип `real_t` равен `double` при `SPH_PRECISION=64` (по умолчанию) и `float`
+при `SPH_PRECISION=32`. Основная программа собирается в fp32 так:
+
+```bash
+cmake -S . -B build -DSPH_PRECISION=32
+```
+
+Регрессия fp32 — та же программа `tests/test_regression.cpp`, собранная с
+`SPH_PRECISION=32` (`test_regression_fp32`, `test_regression_3d_fp32`): те же
+кейсы, контрольные точки и нормы, но свои эталоны в `tests/data/regression_fp32/`
+и свои допуски. fp32-расчёт сверяется с fp32-эталоном, а не с fp64: это ловит
+изменения fp32-расчёта, а не потерю точности float. Эталон fp32 несёт в шапке
+`precision: 32`, и программа не примет эталон другой точности.
+
+Перегенерация fp32-эталонов — по тем же правилам, что у fp64:
+
+```bash
+cmake --build build --target regression_golden_fp32
+```
+
+Кроме регрессии в fp32 собран сквозной BC2 (`test_e2e_bc2_fp32`, тесты
+`e2e_fp32_bc2_smoke_contact0..3`, полные — под `SPH_E2E_SLOW_TESTS`). Он
+отвечает на вопрос, которого регрессия не задаёт: остаётся ли fp32-расчёт
+физикой.
+
+fp32-цели собираются с `-Wdouble-promotion` и `-Wimplicit-float-conversion`.
+Предупреждение в файлах конвейера (`src/`, `include/`) означает, что часть
+«fp32»-расчёта на деле считается в `double` — обычно из-за литерала `2.0`
+вместо `real_t(2.0)`.
 
 ## Бенчмарк
 

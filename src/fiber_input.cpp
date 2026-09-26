@@ -116,7 +116,10 @@ void load_fiber_file(const std::string& filename, Model& model)
                 materials.resize(uid + 1);
                 material_defined.resize(uid + 1, 0);
             }
-            materials[uid] = FiberMaterial{E, nu, d, rho, eps_break};
+            // Разбор и подготовка геометрии -- в double; в модель -- real_t
+            // (include/precision.hpp).
+            materials[uid] = FiberMaterial{static_cast<real_t>(E), static_cast<real_t>(nu), static_cast<real_t>(d),
+                                           static_cast<real_t>(rho), static_cast<real_t>(eps_break)};
             material_defined[uid] = 1;
         }
         else if (kw == "FIBER")
@@ -189,7 +192,9 @@ void load_fiber_file(const std::string& filename, Model& model)
         const RawFiber& f = fibers[fid];
         const std::size_t n = f.points.size();
         const FiberMaterial& mat = model.materials[static_cast<std::size_t>(f.material_id)];
-        const double A = pi * mat.d * mat.d / 4.0;
+        // Подготовка геометрии -- в double при любом SPH_PRECISION; результат
+        // (x, mass, l0, l_break) записывается в real_t (include/precision.hpp).
+        const double A = static_cast<double>(pi) * static_cast<double>(mat.d) * static_cast<double>(mat.d) / 4.0;
 
         std::vector<double> seg(n - 1);
         for (std::size_t k = 0; k + 1 < n; ++k)
@@ -214,12 +219,12 @@ void load_fiber_file(const std::string& filename, Model& model)
             const std::size_t gi = base + k;
             for (std::size_t d = 0; d < dim; ++d)
             {
-                model.fiber.x[d][gi] = f.points[k][d];
+                model.fiber.x[d][gi] = static_cast<real_t>(f.points[k][d]);
                 model.fiber.vx[d][gi] = 0.0;
             }
             const double l_prev = (k > 0) ? seg[k - 1] : 0.0;
             const double l_next = (k + 1 < n) ? seg[k] : 0.0;
-            model.fiber.mass[gi] = mat.rho * A * (l_prev + l_next) / 2.0;
+            model.fiber.mass[gi] = static_cast<real_t>(static_cast<double>(mat.rho) * A * (l_prev + l_next) / 2.0);
             model.fiber.object_id[gi] = static_cast<int>(fid);
             model.fiber.material_id[gi] = f.material_id;
 
@@ -232,8 +237,8 @@ void load_fiber_file(const std::string& filename, Model& model)
             FiberBond b;
             b.i = base + k;
             b.j = base + k + 1;
-            b.l0 = seg[k];
-            b.l_break = (1.0 + mat.eps_break) * seg[k];
+            b.l0 = static_cast<real_t>(seg[k]);
+            b.l_break = static_cast<real_t>((1.0 + static_cast<double>(mat.eps_break)) * seg[k]);
             model.topology.bonds.push_back(b);
         }
 

@@ -88,10 +88,10 @@ void time_print()
 // обоснование, ПОЧЕМУ именно это место (а не буквально "после corrector'а")
 // обязательно для нулевого изменения численного результата.
 // ============================================================================
-void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, double dt, size_t ntotal, std::vector<double>& t, std::vector<double>& tdsdt,
-                 std::vector<std::vector<double>>& dx, std::vector<std::vector<double>>& dvx, std::vector<double>& du, std::vector<double>& ds,
-                 std::vector<double>& drho, std::vector<std::vector<double>>& av, std::vector<double>& dsxx, std::vector<double>& dsyy,
-                 std::vector<double>& dszz, std::vector<double>& dsxy, std::vector<double>& dsyz, std::vector<double>& dsxz, WorkBuffers& wb)
+void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, real_t dt, size_t ntotal, std::vector<real_t>& t, std::vector<real_t>& tdsdt,
+                 std::vector<std::vector<real_t>>& dx, std::vector<std::vector<real_t>>& dvx, std::vector<real_t>& du, std::vector<real_t>& ds,
+                 std::vector<real_t>& drho, std::vector<std::vector<real_t>>& av, std::vector<real_t>& dsxx, std::vector<real_t>& dsyy,
+                 std::vector<real_t>& dszz, std::vector<real_t>& dsxy, std::vector<real_t>& dsyz, std::vector<real_t>& dsxz, WorkBuffers& wb)
 {
     // itimestep — нужен был только link_list (старый поиск соседей с кэшем
     // по шагам, nnps == 2, удалён на Ф4-B2); новый путь строит SpatialIndex
@@ -153,8 +153,9 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         const interactions::SolidContactDiagnostics diag = interactions::compute_solid_contact_diagnostics(
             exec, cfg, cfg.mats, sys, derived.c, dt, search.real_pairs);
         wb.contact_pair_count = diag.pair_count;
-        wb.contact_max_delta = diag.max_delta;
-        wb.min_dt_contact = diag.min_dt;
+        // WorkBuffers -- часы/диагностика шага, double (include/precision.hpp).
+        wb.contact_max_delta = static_cast<double>(diag.max_delta);
+        wb.min_dt_contact = static_cast<double>(diag.min_dt);
     }
 
     // --- Запись в выходные параметры + шим совместимости в sys -------------
@@ -169,7 +170,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
             dx[d][i] = sys.vx[d][i]; // dx/dt = vx, как в старом пути
             // XSPH: СЫРАЯ сумма (SolidDelta::xsph) -> *cfg.epsilon, как
             // старый av_vel.cpp ("Масштабирование средней скорости").
-            av[d][i] = reduced[i].xsph[d] * cfg.epsilon;
+            av[d][i] = reduced[i].xsph[d] * static_cast<real_t>(cfg.epsilon);
         }
         dsxx[i] = f.dsxx; dsyy[i] = f.dsyy; dszz[i] = f.dszz;
         dsxy[i] = f.dsxy; dsyz[i] = f.dsyz; dsxz[i] = f.dsxz;
@@ -185,7 +186,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         sys.exy[i] = f.exy; sys.exz[i] = f.exz; sys.eyz[i] = f.eyz;
         sys.rxy[i] = f.rxy; sys.rxz[i] = f.rxz; sys.ryz[i] = f.ryz;
 
-        tdsdt[i] = 0.0; // физическая вязкость (visc) выключена constexpr -- как в старом int_force
+        tdsdt[i] = 0; // физическая вязкость (visc) выключена constexpr -- как в старом int_force
     }
 
     // h_upgrade (sle) -- этап Ф7: вызов вынесен ИЗ single_step в

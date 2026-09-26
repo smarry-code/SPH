@@ -112,7 +112,51 @@ constexpr size_t kStepsLong  = (dim == 3) ? 50 : 100;
 // даёт шум того же порядка, что потоки, и проходит. Если такая правка всё же
 // не прошла, это повод искать ошибку, а не поднимать число. Переносить
 // допуск на другую машину или компилятор можно только после перекалибровки.
+#if SPH_PRECISION == 32
+// fp32 (include/precision.hpp, SPH_PRECISION=32; fiber/FP32_REPORT.md).
+// КАЛИБРОВКА (2026-09-26, Windows 11, Ryzen 5 7535HS, clang++ 22.1.5, Release
+// -O3 -march=native). Процедура та же, что у fp64: однопоточный эталон
+// (tests/data/regression_fp32/) против прогонов при OMP_NUM_THREADS = 2, 4,
+// 12 (по 3 повтора) и 1 (контроль детерминизма: побайтно совпал с эталоном),
+// все 12 кейсов, N = 1 и N = K. tol = max(100·s, 1e-6), округлено вверх до
+// ряда 1-2-5, где s — худший наблюдаемый разброс поля по всем кейсам.
+//
+// Пол 1e-6 (~8 ULP float) — для полей, у которых разброс на N = 1 ровно ноль
+// (x, rho, p, c, hsml, D: на первом шаге они не зависят от порядка
+// суммирования). Ошибка представления %.12e для float-значений пренебрежима.
+//
+// Что показала калибровка:
+//   * N = 1: s ~ 1e-7..5e-7 (порядок ULP float), максимум — sxy BC6 1.1e-5
+//     (девиатор после первого шага почти нулевой, относительная норма велика);
+//   * N = K: шум потоков растёт с числом шагов на 2–3 порядка, в отличие от
+//     fp64. Худшие s: 2D — e_pl 7.2e-4 (BC6, контакт 0), D 5.3e-4, szz 2.1e-4;
+//     3D — v2 2.1e-4 и szz 6.5e-5 (контакт 3). Основной разброс дают пороговые
+//     поля (e_pl, D) и контакт 3 — те же, что в fp64, но на float-уровне шума.
+// Проверка, что допуски не слишком широки: прогон BC2 с alpha = 1.001
+// проваливает сверку (fiber/FP32_REPORT.md).
+//
+// Согласование Linf и L2: L2-допуск не уже Linf/50. Иначе самопроверка
+// компаратора (comparator_selfcheck: возмущение 0,1·Linf-допуска у одной
+// частицы из 64 обязано пройти) ловит его по L2. Единственная правка
+// калибровки по этому правилу — L2 для D, 2D, N = K: 1e-3 -> 2e-3.
+//
+// Допуск не расширять вслепую — правила те же, что у fp64 ниже.
 #if SPH_DIM == 2
+//                             x0     x1     v0     v1     rho    p      u      c      hsml   e_pl   D      sxx    syy    szz    sxy
+constexpr std::array<double, reg::kFieldCount> kInfShort = {1e-06, 1e-06, 2e-05, 5e-06, 1e-06, 1e-06, 5e-05, 1e-06, 1e-06, 5e-05, 1e-06, 5e-05, 5e-05, 5e-05, 2e-03};
+constexpr std::array<double, reg::kFieldCount> kL2Short  = {1e-06, 1e-06, 1e-05, 1e-06, 1e-06, 1e-06, 5e-06, 1e-06, 1e-06, 1e-06, 1e-06, 1e-05, 1e-05, 1e-05, 1e-04};
+constexpr std::array<double, reg::kFieldCount> kInfLong  = {1e-05, 1e-05, 5e-03, 5e-03, 5e-04, 5e-03, 1e-03, 5e-04, 5e-04, 1e-01, 1e-01, 2e-02, 1e-02, 5e-02, 5e-03};
+constexpr std::array<double, reg::kFieldCount> kL2Long   = {2e-06, 2e-06, 2e-03, 5e-04, 2e-05, 2e-03, 2e-04, 2e-05, 2e-05, 5e-03, 2e-03, 2e-03, 2e-03, 5e-03, 2e-03};
+constexpr double kTimeRelLong = 2e-05, kDtRelLong = 5e-05;
+#elif SPH_DIM == 3
+//                             x0     x1     x2     v0     v1     v2     rho    p      u      c      hsml   e_pl   D      sxx    syy    szz    sxy    syz    sxz
+constexpr std::array<double, reg::kFieldCount> kInfShort = {1e-06, 1e-06, 1e-06, 5e-05, 5e-05, 5e-06, 1e-05, 1e-06, 1e-04, 1e-06, 1e-06, 5e-05, 1e-06, 5e-05, 5e-05, 1e-04, 1e-06, 1e-04, 5e-05};
+constexpr std::array<double, reg::kFieldCount> kL2Short  = {1e-06, 1e-06, 1e-06, 1e-05, 2e-05, 1e-06, 1e-06, 1e-06, 1e-05, 1e-06, 1e-06, 2e-06, 1e-06, 1e-05, 1e-05, 2e-05, 1e-06, 5e-05, 2e-05};
+constexpr std::array<double, reg::kFieldCount> kInfLong  = {2e-05, 2e-05, 1e-05, 5e-04, 5e-04, 5e-02, 2e-04, 1e-03, 5e-04, 2e-04, 5e-04, 2e-03, 1e-03, 2e-03, 2e-03, 1e-02, 5e-04, 1e-02, 5e-03};
+constexpr std::array<double, reg::kFieldCount> kL2Long   = {2e-06, 2e-06, 1e-06, 1e-04, 5e-05, 1e-03, 5e-06, 2e-04, 5e-05, 1e-05, 1e-05, 2e-04, 5e-05, 2e-04, 2e-04, 1e-03, 2e-04, 1e-03, 5e-04};
+constexpr double kTimeRelLong = 5e-06, kDtRelLong = 2e-05;
+#endif
+#elif SPH_DIM == 2
 //                             x0     x1     v0     v1     rho    p      u      c      hsml   e_pl   D      sxx    syy    szz    sxy
 constexpr std::array<double, reg::kFieldCount> kInfShort = {2e-11, 2e-11, 5e-11, 5e-11, 2e-11, 1e-11, 1e-11, 1e-11, 5e-11, 1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 2e-11};
 constexpr std::array<double, reg::kFieldCount> kL2Short  = {1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 5e-11, 1e-11, 1e-11, 1e-11, 1e-11, 1e-11, 2e-11};
@@ -145,12 +189,32 @@ reg::Tolerances tolerances_for(size_t steps)
                               : reg::Tolerance{kInfLong[k], kL2Long[k]};
     }
     // t и dt: наблюдаемый разброс не больше 6.3e-15 (dt, N = 100) — пол.
+#if SPH_PRECISION == 32
+    // fp32: на N = 1 разброс t и dt ровно ноль (пол 1e-6); на N = K — по
+    // калибровке (kTimeRelLong/kDtRelLong выше).
+    t.time_rel = shortrun ? 1e-6 : kTimeRelLong;
+    t.dt_rel   = shortrun ? 1e-6 : kDtRelLong;
+#else
     t.time_rel = 1e-11;
     t.dt_rel   = 1e-11;
+#endif
     return t;
 }
 
-fs::path golden_dir_default() { return fs::path(SPH_TEST_DATA_DIR) / "regression"; }
+// fp64 и fp32 (include/precision.hpp) — разные расчёты с разными эталонами.
+fs::path golden_dir_default()
+{
+    return fs::path(SPH_TEST_DATA_DIR) / (precision_bits == 64 ? "regression" : "regression_fp32");
+}
+
+// Точность, при которой снят эталон: ключ шапки «precision» (пишется только
+// не-fp64 эталонам, чтобы fp64-эталоны при перегенерации не менялись); нет
+// ключа — fp64.
+int snapshot_precision(const reg::Snapshot& s)
+{
+    const auto it = s.extra.find("precision");
+    return it == s.extra.end() ? 64 : std::stoi(it->second);
+}
 
 std::string golden_name(reg::Case c, int contact, size_t steps)
 {
@@ -458,6 +522,7 @@ void run_checkpoint(const Options& o, size_t steps)
     {
         reg::Snapshot s = r.snap;
         for (const auto& [k, v] : o.meta) s.extra[k] = v;
+        if (precision_bits != 64) s.extra["precision"] = std::to_string(precision_bits);
         std::error_code ec;
         fs::create_directories(o.emit_dir, ec);
         const fs::path out = o.emit_dir / name;
@@ -473,6 +538,13 @@ void run_checkpoint(const Options& o, size_t steps)
     if (!reg::read_snapshot(gpath.string(), ref, err))
     {
         check(false, err + "\n         сгенерировать: cmake --build build --target regression_golden");
+        return;
+    }
+    if (snapshot_precision(ref) != precision_bits)
+    {
+        check(false, "эталон " + gpath.string() + " снят при precision = " +
+                         std::to_string(snapshot_precision(ref)) + ", а программа собрана с " +
+                         std::to_string(precision_bits));
         return;
     }
     const reg::Tolerances tol = tolerances_for(steps);

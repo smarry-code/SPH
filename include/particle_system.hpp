@@ -35,20 +35,20 @@
 struct ParticleSystem
 {
     // --- кинематика (по компонентам; все доступы только [0,dim)) ---
-    std::vector<double> x[dim];
-    std::vector<double> vx[dim];
+    std::vector<real_t> x[dim];
+    std::vector<real_t> vx[dim];
 
     // --- термодинамика / скаляры ---
-    std::vector<double> mass, rho, rho_0, p, u, c, s, e, hsml, dp, e_pl, D;
+    std::vector<real_t> mass, rho, rho_0, p, u, c, s, e, hsml, dp, e_pl, D;
 
     // --- тензор напряжений (девиатор) ---
-    std::vector<double> sxx, syy, szz, sxy, syz, sxz;
+    std::vector<real_t> sxx, syy, szz, sxy, syz, sxz;
 
     // --- тензор скоростей деформаций ---
-    std::vector<double> exx, eyy, ezz, exy, exz, eyz;
+    std::vector<real_t> exx, eyy, ezz, exy, exz, eyz;
 
     // --- тензор скоростей поворота ---
-    std::vector<double> rxy, rxz, ryz;
+    std::vector<real_t> rxy, rxz, ryz;
 
     // --- классификация ---
     std::vector<int> itype;
@@ -107,15 +107,15 @@ struct ParticleSystem
     // Обнулить все поля частицы i (эквивалент Particle::obnul).
     void obnul_index(size_t i)
     {
-        for (size_t d = 0; d < dim; ++d) { x[d][i] = 0.0; vx[d][i] = 0.0; }
-        itype[i] = 0; mass[i] = 0.0; rho[i] = 0.0; rho_0[i] = 0.0;
-        p[i] = 0.0; u[i] = 0.0; c[i] = 0.0; s[i] = 0.0; e[i] = 0.0;
-        hsml[i] = 0.0; dp[i] = 0.0; e_pl[i] = 0.0; D[i] = 0.0;
-        sxx[i] = 0.0; syy[i] = 0.0; szz[i] = 0.0;
-        sxy[i] = 0.0; syz[i] = 0.0; sxz[i] = 0.0;
-        exx[i] = 0.0; eyy[i] = 0.0; ezz[i] = 0.0;
-        exy[i] = 0.0; exz[i] = 0.0; eyz[i] = 0.0;
-        rxy[i] = 0.0; rxz[i] = 0.0; ryz[i] = 0.0;
+        for (size_t d = 0; d < dim; ++d) { x[d][i] = 0; vx[d][i] = 0; }
+        itype[i] = 0; mass[i] = 0; rho[i] = 0; rho_0[i] = 0;
+        p[i] = 0; u[i] = 0; c[i] = 0; s[i] = 0; e[i] = 0;
+        hsml[i] = 0; dp[i] = 0; e_pl[i] = 0; D[i] = 0;
+        sxx[i] = 0; syy[i] = 0; szz[i] = 0;
+        sxy[i] = 0; syz[i] = 0; sxz[i] = 0;
+        exx[i] = 0; eyy[i] = 0; ezz[i] = 0;
+        exy[i] = 0; exz[i] = 0; eyz[i] = 0;
+        rxy[i] = 0; rxz[i] = 0; ryz[i] = 0;
         axis[i] = 0;
         body[i] = 0;
     }
@@ -132,10 +132,10 @@ struct ParticleSystem
         filename << " " << mass[i];
         for (size_t d = 0; d < dim; ++d) filename << " " << x[d][i];
         for (size_t d = 0; d < dim; ++d) filename << " " << vx[d][i];
-        double sigma_i = std::sqrt((sxx[i] - syy[i]) * (sxx[i] - syy[i]) +
+        real_t sigma_i = std::sqrt((sxx[i] - syy[i]) * (sxx[i] - syy[i]) +
                                    (sxx[i] - szz[i]) * (sxx[i] - szz[i]) +
                                    (syy[i] - szz[i]) * (syy[i] - szz[i]) +
-                                   6 * (sxy[i] * sxy[i] + syz[i] * syz[i] + sxz[i] * sxz[i])) / std::sqrt(2.0);
+                                   6 * (sxy[i] * sxy[i] + syz[i] * syz[i] + sxz[i] * sxz[i])) / std::sqrt(real_t(2.0));
         filename << " " << rho[i] << " " << p[i] << " " << u[i] << " " << c[i] << " " << sigma_i
                  << " " << e_pl[i] << " " << D[i] << " " << hsml[i]
                  << " " << sxx[i] << " " << syy[i] << " " << szz[i]

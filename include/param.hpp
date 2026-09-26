@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 #include <cstddef>
+#include "precision.hpp"
 // Размерность задачи (1, 2 или 3).
 // Значение задаётся при сборке макросом SPH_DIM (решение E1,
 // contact/04-e2e-test-brief.md §2); без него — 1, как раньше. Семантика
@@ -277,7 +278,7 @@ constexpr int save_step = 4;    // Шаги для сохранения на д�
 // print_step, save_t, t_total, moni_particle перенесены в SimulationConfig.
 
 // Математические константы
-constexpr double pi = 3.14159265358979323846; // Число Пи
+constexpr real_t pi = real_t(3.14159265358979323846); // Число Пи (в типе расчёта, precision.hpp)
 
 // Режимы работы
 constexpr bool shocktube = true;    // Тест "ударная трубка"

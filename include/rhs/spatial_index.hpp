@@ -10,6 +10,7 @@
 
 #include "rhs/cpu_executor.hpp"
 #include "rhs/types.hpp"
+#include "precision.hpp"
 
 // ============================================================================
 // rhs/spatial_index.hpp — SpatialIndex<Dim>: обобщение прежней фиксированной
@@ -42,7 +43,7 @@ template <std::size_t Dim>
 class SpatialIndex
 {
 public:
-    using Coords = std::array<const double*, Dim>;
+    using Coords = std::array<const real_t*, Dim>;
 
     SpatialIndex() = default;
 
@@ -51,10 +52,10 @@ public:
     // SpatialIndex — часть RhsWorkspace и должен пережить возможную
     // перестройку readonly-состояния между вызовами RHS без dangling-
     // указателей (владение, а не заимствование).
-    void build(Coords coords, std::size_t n, double cell_size)
+    void build(Coords coords, std::size_t n, real_t cell_size)
     {
         n_ = n;
-        cell_size_ = (cell_size > 0.0) ? cell_size : 1.0;
+        cell_size_ = (cell_size > 0) ? cell_size : real_t(1.0);
 
         for (std::size_t d = 0; d < Dim; ++d)
         {
@@ -64,13 +65,13 @@ public:
         if (n_ == 0)
         {
             ncell_.fill(1);
-            origin_.fill(0.0);
+            origin_.fill(real_t(0.0));
             offset_.assign(2, 0);
             sorted_idx_.clear();
             return;
         }
 
-        std::array<double, Dim> lo{}, hi{};
+        std::array<real_t, Dim> lo{}, hi{};
         for (std::size_t d = 0; d < Dim; ++d)
         {
             lo[d] = hi[d] = coord_[d][0];
@@ -101,14 +102,14 @@ public:
     }
 
     std::size_t size() const { return n_; }
-    double cell_size() const { return cell_size_; }
+    real_t cell_size() const { return cell_size_; }
 
     // "Свой тип": пары (i, j), i < j, |x_i - x_j| <= radius, accept(i, j).
     // accept — дополнительный фильтр (например, object_id[i] != object_id[j]
     // для Fiber-Fiber-Contact); по умолчанию пропускает все пары.
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs(
-        double radius, Accept accept = [](index_t, index_t) { return true; }) const
+        real_t radius, Accept accept = [](index_t, index_t) { return true; }) const
     {
         std::vector<std::pair<index_t, index_t>> out;
         if (n_ == 0) return out;
@@ -124,7 +125,7 @@ public:
     // "Fiber -> Solid само обеспечивает однократную генерацию пары").
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_cross(
-        Coords other_coords, std::size_t n_other, double radius,
+        Coords other_coords, std::size_t n_other, real_t radius,
         Accept accept = [](index_t, index_t) { return true; }) const
     {
         std::vector<std::pair<index_t, index_t>> out;
@@ -139,7 +140,7 @@ public:
     // find_pairs*/find_pairs_cross с точностью до порядка следования.
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_parallel(
-        const CpuExecutor& exec, double radius,
+        const CpuExecutor& exec, real_t radius,
         Accept accept = [](index_t, index_t) { return true; }) const
     {
         const std::size_t nc = total_cells();
@@ -150,7 +151,7 @@ public:
 
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_cross_parallel(
-        const CpuExecutor& exec, Coords other_coords, std::size_t n_other, double radius,
+        const CpuExecutor& exec, Coords other_coords, std::size_t n_other, real_t radius,
         Accept accept = [](index_t, index_t) { return true; }) const
     {
         return parallel_merge(exec, n_other, [&](std::size_t a, std::vector<std::pair<index_t, index_t>>& local) {
@@ -159,10 +160,10 @@ public:
     }
 
 private:
-    std::array<std::vector<double>, Dim> coord_;
+    std::array<std::vector<real_t>, Dim> coord_;
     std::size_t n_ = 0;
-    double cell_size_ = 1.0;
-    std::array<double, Dim> origin_{};
+    real_t cell_size_ = real_t(1.0);
+    std::array<real_t, Dim> origin_{};
     std::array<int, Dim> ncell_{};
     std::vector<std::size_t> offset_;
     std::vector<std::size_t> sorted_idx_;
@@ -174,7 +175,7 @@ private:
         return nc;
     }
 
-    std::array<int, Dim> cell_of_point(const std::array<double, Dim>& p) const
+    std::array<int, Dim> cell_of_point(const std::array<real_t, Dim>& p) const
     {
         std::array<int, Dim> c{};
         for (std::size_t d = 0; d < Dim; ++d)
@@ -187,7 +188,7 @@ private:
 
     std::array<int, Dim> cell_of_index(std::size_t i) const
     {
-        std::array<double, Dim> p{};
+        std::array<real_t, Dim> p{};
         for (std::size_t d = 0; d < Dim; ++d) p[d] = coord_[d][i];
         return cell_of_point(p);
     }
@@ -220,12 +221,12 @@ private:
         return {offset_[lin], offset_[lin + 1]};
     }
 
-    double dist2(std::size_t i, std::size_t j) const
+    real_t dist2(std::size_t i, std::size_t j) const
     {
-        double d2 = 0.0;
+        real_t d2 = 0;
         for (std::size_t d = 0; d < Dim; ++d)
         {
-            const double dd = coord_[d][i] - coord_[d][j];
+            const real_t dd = coord_[d][i] - coord_[d][j];
             d2 += dd * dd;
         }
         return d2;
@@ -245,7 +246,7 @@ private:
     // самая узкая) оценка: |floor(a/h)-floor(b/h)| <= floor(|a-b|/h)+1 для
     // любых a,b,h>0; использована вместо ceil(...), чтобы не зависеть от
     // округления чисел с плавающей точкой around точных кратных cell_size.
-    int neighbor_reach(double radius) const
+    int neighbor_reach(real_t radius) const
     {
         return static_cast<int>(std::floor(radius / cell_size_)) + 1;
     }
@@ -282,10 +283,10 @@ private:
     }
 
     template <class Accept>
-    void collect_same_type_cell(std::size_t cell_lin, double radius, const Accept& accept,
+    void collect_same_type_cell(std::size_t cell_lin, real_t radius, const Accept& accept,
                                  std::vector<std::pair<index_t, index_t>>& out) const
     {
-        const double r2 = radius * radius;
+        const real_t r2 = radius * radius;
         auto [b, e] = cell_range(cell_lin);
         if (b == e) return;
         const std::array<int, Dim> center = decode(cell_lin);
@@ -306,11 +307,11 @@ private:
     }
 
     template <class Accept>
-    void collect_cross_one(Coords other_coords, std::size_t a, double radius, const Accept& accept,
+    void collect_cross_one(Coords other_coords, std::size_t a, real_t radius, const Accept& accept,
                             std::vector<std::pair<index_t, index_t>>& out) const
     {
-        const double r2 = radius * radius;
-        std::array<double, Dim> p{};
+        const real_t r2 = radius * radius;
+        std::array<real_t, Dim> p{};
         for (std::size_t d = 0; d < Dim; ++d) p[d] = other_coords[d][a];
         const std::array<int, Dim> cell = cell_of_point(p);
         const int reach = neighbor_reach(radius);
@@ -320,10 +321,10 @@ private:
             for (std::size_t pb = nb; pb < ne; ++pb)
             {
                 const std::size_t b = sorted_idx_[pb];
-                double d2 = 0.0;
+                real_t d2 = 0;
                 for (std::size_t d = 0; d < Dim; ++d)
                 {
-                    const double dd = p[d] - coord_[d][b];
+                    const real_t dd = p[d] - coord_[d][b];
                     d2 += dd * dd;
                 }
                 if (d2 <= r2 && accept(a, b)) out.emplace_back(a, b);

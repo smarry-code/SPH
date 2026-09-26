@@ -17,20 +17,28 @@
 #include <vector>
 #include <cstddef>
 #include <optional>
+#include "precision.hpp"
 
 struct Materials
 {
     // Смещение индекса материала: itype металла/полимера -> [itype - n_Me].
     static constexpr size_t n_Me = 3;
 
+    // Таблица констант задана литералами double и хранится в real_t
+    // (include/precision.hpp): при SPH_PRECISION=32 константы округляются до
+    // float -- намеренно, fp32-расчёт работает с fp32-константами.
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wimplicit-float-conversion"
+#endif
     // Модуль сдвига (Мизес).
-    std::vector<double> G{69e9, 26e9, 5.5e+10, 5.27e7, 1.836e8, 4e+08, 3e+09};
+    std::vector<real_t> G{69e9, 26e9, 5.5e+10, 5.27e7, 1.836e8, 4e+08, 3e+09};
     // Предел текучести для модели Мизеса.
-    std::vector<double> sigy{450e6, 240e6, 2e+07, 1e+06, 3.0e+6, 4e+06, 7.7e+07};
+    std::vector<real_t> sigy{450e6, 240e6, 2e+07, 1e+06, 3.0e+6, 4e+06, 7.7e+07};
     // Константы для УА Тэта и УРС Ми-Грюнайзена.
-    std::vector<double> aa{1.4506e11, 1.97e+10, 1.6659e+10, 2.1953e8, 3.595e8, 3.0227e8, 1.8797e9};
-    std::vector<double> zz{1.987, 4.2, 4.272, 1.245, 1.736, 3.5, 4.668};
-    std::vector<double> gamm{2.6, 1.97};
+    std::vector<real_t> aa{1.4506e11, 1.97e+10, 1.6659e+10, 2.1953e8, 3.595e8, 3.0227e8, 1.8797e9};
+    std::vector<real_t> zz{1.987, 4.2, 4.272, 1.245, 1.736, 3.5, 4.668};
+    std::vector<real_t> gamm{2.6, 1.97};
     // Наборы констант модели керамики JH-2; 0 - B4C, 1 - Al2O3.
     // Порядок столбцов:
     //  [0]-плотность [1]-G [2]-P_hel [3]-s_hel [4]-T_n [5]-A [6]-N [7]-B [8]-M
@@ -46,9 +54,12 @@ struct Materials
     //     Они остались прежними и откалиброваны под ПРЕЖНИЕ K/G, поэтому
     //     формально не согласованы с упругой частью. Менять их без источника
     //     нельзя — это была бы подгонка.
-    std::vector<std::vector<double>> const_JH_2{
+    std::vector<std::vector<real_t>> const_JH_2{
         {2517, 199.4e9, 8.71e9, 15.44e9, 0.03, 0.927, 0.67, 0.70, 0.85, 0.2, 0.005, 0.001, 0.5, 230.5e9, -593e9, 2800e9, 0.26e9},
         {3555, 1.165e11, 2.626e9, 3.561e9, 0.137, 0.930, 0.600, 0.110, 0.600, 1.0, 0.0, 0.005, 1.000, 1.692e11, 0.0, 0.0, 0.2e9}};
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 };
 
 // Модуль сдвига по номеру материала (поле itype частицы).
@@ -56,7 +67,7 @@ struct Materials
 // int_force.cpp:636-652. Возвращает 0.0 для материалов без G
 // (газ/вода, itype 1-2, виртуальные частицы itype < 0) — вызывающая
 // сторона обязана трактовать 0 как «G неизвестен», а не как нулевую жёсткость.
-inline double shear_modulus_by_itype(const Materials& m, int itype)
+inline real_t shear_modulus_by_itype(const Materials& m, int itype)
 {
     if (itype >= 3 && itype <= 9)
     {
@@ -95,13 +106,13 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
 // поэтому результат по построению не зависит от текущего повреждения.
 struct ElasticProps
 {
-    double E = 0.0;
-    double nu = 0.0;
+    real_t E = 0.0;
+    real_t nu = 0.0;
 };
 
 inline std::optional<ElasticProps> elastic_by_itype(const Materials& m, int itype)
 {
-    double K = 0.0;
+    real_t K = 0.0;
     bool have_K = false;
     if (itype >= 3 && itype <= 9)
     {
@@ -121,15 +132,15 @@ inline std::optional<ElasticProps> elastic_by_itype(const Materials& m, int ityp
             have_K = true;
         }
     }
-    if (!have_K || !(K > 0.0)) return std::nullopt;
+    if (!have_K || !(K > 0)) return std::nullopt;
 
-    const double G = shear_modulus_by_itype(m, itype);
-    if (!(G > 0.0)) return std::nullopt; // газ/вода (itype 1-2) и прочие без G
+    const real_t G = shear_modulus_by_itype(m, itype);
+    if (!(G > 0)) return std::nullopt; // газ/вода (itype 1-2) и прочие без G
 
-    const double denom = 3.0 * K + G;
-    if (!(denom > 0.0)) return std::nullopt;
-    const double E = 9.0 * K * G / denom;
-    if (!(E > 0.0)) return std::nullopt;
-    const double nu = (3.0 * K - 2.0 * G) / (2.0 * denom);
+    const real_t denom = real_t(3.0) * K + G;
+    if (!(denom > 0)) return std::nullopt;
+    const real_t E = real_t(9.0) * K * G / denom;
+    if (!(E > 0)) return std::nullopt;
+    const real_t nu = (real_t(3.0) * K - real_t(2.0) * G) / (real_t(2.0) * denom);
     return ElasticProps{E, nu};
 }

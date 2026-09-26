@@ -7,8 +7,8 @@
 #include "particle_system.hpp"
 #include "materials.hpp"
 
-double sigma_i(double &sxx, double &syy, double &sxy, double &syz, double &sxz);
+real_t sigma_i(real_t &sxx, real_t &syy, real_t &sxy, real_t &syz, real_t &sxz);
 
-void prochnost_mises(const Materials& mats, size_t nmat, double &sxx, double &syy, double &szz, double &sxy, double &syz, double &sxz);
+void prochnost_mises(const Materials& mats, size_t nmat, real_t &sxx, real_t &syy, real_t &szz, real_t &sxy, real_t &syz, real_t &sxz);
 
-void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, double dt, double drho);
+void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, real_t dt, real_t drho);

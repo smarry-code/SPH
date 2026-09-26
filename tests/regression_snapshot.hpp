@@ -124,7 +124,9 @@ inline Snapshot capture(const ParticleSystem& sys, size_t ntotal)
 {
     Snapshot s;
     s.itype.assign(sys.itype.begin(), sys.itype.begin() + static_cast<std::ptrdiff_t>(ntotal));
-    auto take = [&](size_t k, const std::vector<double>& src) {
+    // Поля конвейера — real_t (include/precision.hpp); снимок всегда double:
+    // float -> double без потерь, формат эталона от точности не зависит.
+    auto take = [&](size_t k, const std::vector<real_t>& src) {
         s.f[k].assign(src.begin(), src.begin() + static_cast<std::ptrdiff_t>(ntotal));
     };
     for (size_t d = 0; d < dim; ++d)

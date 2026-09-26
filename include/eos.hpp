@@ -14,12 +14,12 @@
 #include <cstddef>
 #include "materials.hpp"
 
-void p_gas(double rho, double u, double& p, double& c);
+void p_gas(real_t rho, real_t u, real_t& p, real_t& c);
 
-void p_art_water(double rho, double& p, double& c);
+void p_art_water(real_t rho, real_t& p, real_t& c);
 
-void eos_mi_grunaizen(const Materials& mats, size_t nmat, double rho, double rho_0, double u, double& p, double& c);
+void eos_mi_grunaizen(const Materials& mats, size_t nmat, real_t rho, real_t rho_0, real_t u, real_t& p, real_t& c);
 
-void eos_ua_teta(const Materials& mats, size_t nmat, double rho, double rho_0, double &p, double &c);
+void eos_ua_teta(const Materials& mats, size_t nmat, real_t rho, real_t rho_0, real_t &p, real_t &c);
 
-void urs_cem_JH2(const Materials& mats, size_t nmat, double qo, double qo0, double dp, double &as, double &pv, double &D);
+void urs_cem_JH2(const Materials& mats, size_t nmat, real_t qo, real_t qo0, real_t dp, real_t &as, real_t &pv, real_t &D);

@@ -39,9 +39,9 @@ constexpr std::uint32_t kFiberBondInteractionType = 1;
 // ВНИМАНИЕ: модуль Юнга нити — FiberMaterial.E, не FiberMaterial.nu
 // (коэффициент Пуассона, в Fiber-Bond не используется — постановка проекта
 // работает только с осевой жёсткостью EA, изгиб не моделируется).
-inline double fiber_cross_section_area(const fiber::FiberMaterial& mat)
+inline real_t fiber_cross_section_area(const fiber::FiberMaterial& mat)
 {
-    return pi * mat.d * mat.d / 4.0;
+    return pi * mat.d * mat.d / real_t(4.0);
 }
 
 // ----------------------------------------------------------------------
@@ -76,29 +76,29 @@ inline void compute_fiber_bond_contributions(
         const std::size_t i = b.i;
         const std::size_t j = b.j;
         const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[i])];
-        const double A = fiber_cross_section_area(mat);
+        const real_t A = fiber_cross_section_area(mat);
 
-        double xij[dim];
-        double l2 = 0.0;
+        real_t xij[dim];
+        real_t l2 = 0;
         for (std::size_t d = 0; d < dim; ++d)
         {
             xij[d] = state.x[d][j] - state.x[d][i];
             l2 += xij[d] * xij[d];
         }
-        const double l = std::sqrt(l2);
+        const real_t l = std::sqrt(l2);
 
         fiber::FiberDelta delta_i{};
         fiber::FiberDelta delta_j{};
 
-        if (l > b.l0 && l > 0.0) // только растяжение (fiber/SPH.md, "Постановка проекта")
+        if (l > b.l0 && l > 0) // только растяжение (fiber/SPH.md, "Постановка проекта")
         {
-            const double strain = l / b.l0 - 1.0;
-            const double coeff = mat.E * A * strain / l; // F_i<-j = coeff * xij
-            const double mi = state.mass[i];
-            const double mj = state.mass[j];
+            const real_t strain = l / b.l0 - real_t(1.0);
+            const real_t coeff = mat.E * A * strain / l; // F_i<-j = coeff * xij
+            const real_t mi = state.mass[i];
+            const real_t mj = state.mass[j];
             for (std::size_t d = 0; d < dim; ++d)
             {
-                const double f = coeff * xij[d];
+                const real_t f = coeff * xij[d];
                 delta_i.dv[d] = f / mi;  // +F_i<-j / m_i
                 delta_j.dv[d] = -f / mj; // -F_i<-j / m_j == F_j<-i / m_j
             }
@@ -138,27 +138,27 @@ inline std::vector<fiber::FiberDelta> compute_fiber_bond(
 // нет — так вызывающая сторона может безусловно брать min(..., это
 // значение) без отдельной проверки на пустоту.
 // ----------------------------------------------------------------------
-inline double compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+inline real_t compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                            const fiber::FiberTopology& topology,
                                            const std::vector<fiber::FiberMaterial>& materials)
 {
     const std::size_t nbonds = topology.bonds.size();
-    const double kInf = std::numeric_limits<double>::max();
+    const real_t kInf = std::numeric_limits<real_t>::max();
     if (nbonds == 0) return kInf;
 
     return exec.parallel_reduce(
         nbonds, kInf,
-        [&](std::size_t k) -> double {
+        [&](std::size_t k) -> real_t {
             const fiber::FiberBond& b = topology.bonds[k];
             const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
-            const double A = fiber_cross_section_area(mat);
-            const double k_eff = mat.E * A / b.l0;
-            const double mi = state.mass[b.i];
-            const double mj = state.mass[b.j];
-            const double m_red = (mi * mj) / (mi + mj);
-            return 0.8 / std::sqrt(k_eff / m_red);
+            const real_t A = fiber_cross_section_area(mat);
+            const real_t k_eff = mat.E * A / b.l0;
+            const real_t mi = state.mass[b.i];
+            const real_t mj = state.mass[b.j];
+            const real_t m_red = (mi * mj) / (mi + mj);
+            return real_t(0.8) / std::sqrt(k_eff / m_red);
         },
-        [](double a, double b2) { return std::min(a, b2); });
+        [](real_t a, real_t b2) { return std::min(a, b2); });
 }
 
 } // namespace interactions

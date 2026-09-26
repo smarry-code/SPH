@@ -58,10 +58,10 @@ bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j, siz
 // rho <= 0 — состояние, из которого размер не восстановить; возвращаем 0,
 // тогда порог R_i + R_j обращается в нуль и контакт для пары не возникает
 // (диагностику отрицательной плотности ведёт int_force).
-double particle_radius(const ParticleSystem& sys, size_t k)
+real_t particle_radius(const ParticleSystem& sys, size_t k)
 {
-    const double rho = sys.rho[k];
-    if (!(rho > 0.0)) return 0.0;
+    const real_t rho = sys.rho[k];
+    if (!(rho > 0)) return real_t(0.0);
     // Потолок по невозмущённой плотности. По одному лишь mass/rho радиус при
     // разгрузке (rho -> 0) растёт неограниченно, и порог R_i + R_j объявляет
     // проникание у частиц, которые на самом деле РАСХОДЯТСЯ: на BC2 центры
@@ -69,29 +69,29 @@ double particle_radius(const ParticleSystem& sys, size_t k)
     // Физически тело при разрежении не становится больше — материал расходится,
     // и занимаемый им объём перестаёт быть мерой размера. Сжатие радиус
     // по-прежнему уменьшает, разрежение его больше не увеличивает.
-    const double rho_eff = std::max(rho, sys.rho_0[k]);
-    const double volume = sys.mass[k] / rho_eff;
-    return 0.5 * std::pow(volume, 1.0 / static_cast<double>(dim));
+    const real_t rho_eff = std::max(rho, sys.rho_0[k]);
+    const real_t volume = sys.mass[k] / rho_eff;
+    return real_t(0.5) * std::pow(volume, real_t(1.0) / static_cast<real_t>(dim));
 }
 
 // Локальный CFL-шаг пары: тот же критерий, что compute_cfl_timestep
 // (time_integration.cpp:13-27), суженный на пару. Гарантирует
 // dt_applied <= dt_ref, поэтому жёсткость от dt_ref не образует петли
 // «жёсткость -> шаг -> жёсткость».
-double pair_dt_ref(const SimulationConfig& cfg, const ParticleSystem& sys, size_t k)
+real_t pair_dt_ref(const SimulationConfig& cfg, const ParticleSystem& sys, size_t k)
 {
-    double v2 = 0.0;
+    real_t v2 = 0;
     for (size_t d = 0; d < dim; ++d) v2 += sys.vx[d][k] * sys.vx[d][k];
-    const double denom = sys.c[k] + std::sqrt(v2);
-    return denom > 0.0 ? cfg.CFL * sys.hsml[k] / denom : 1e30;
+    const real_t denom = sys.c[k] + std::sqrt(v2);
+    return denom > 0 ? static_cast<real_t>(cfg.CFL) * sys.hsml[k] / denom : real_t(1e30);
 }
 
 } // namespace
 
 void virtual_symm_2d (ParticleSystem& sys, size_t i, size_t j, std::vector<std::vector<double>>& dvxdt)
 {
-    constexpr double rr0 = 1.25e-5;  // Пороговое расстояние
-    constexpr double dd = 1.0e-2;    // Сила отталкивания
+    constexpr real_t rr0 = real_t(1.25e-5);  // Пороговое расстояние
+    constexpr real_t dd = real_t(1.0e-2);    // Сила отталкивания
     constexpr int p1 = 12;           // Степень для отталкивающей силы
     constexpr int p2 = 4;            // Степень для притягивающей силы
     if (axis_sim == true && dim == 2)
@@ -100,8 +100,8 @@ void virtual_symm_2d (ParticleSystem& sys, size_t i, size_t j, std::vector<std::
         {
             // Зеркальный образ частицы j: координата x[0] отражается (-> -x[0][j]).
             // Работаем напрямую с полями sys, без создания локальной Particle.
-            std::array<double, dim> dx{};
-            double rr = 0.0;
+            std::array<real_t, dim> dx{};
+            real_t rr = 0;
             dx[0] = sys.x[0][i] - (-sys.x[0][j]);
             rr += dx[0] * dx[0];
             for (size_t d = 1; d < dim; ++d)
@@ -112,15 +112,15 @@ void virtual_symm_2d (ParticleSystem& sys, size_t i, size_t j, std::vector<std::
             rr = std::sqrt(rr);
             if (rr < rr0)
             {
-                double inv_rr = 1.0 / rr;
-                double force = ((std::pow(rr0 * inv_rr, p1)) - (std::pow(rr0 * inv_rr, p2))) * inv_rr * inv_rr;
+                real_t inv_rr = real_t(1.0) / rr;
+                real_t force = ((std::pow(rr0 * inv_rr, static_cast<real_t>(p1))) - (std::pow(rr0 * inv_rr, static_cast<real_t>(p2)))) * inv_rr * inv_rr;
 
                 // Применение силы
                 for (size_t d = 0; d < dim; ++d)
                 {
-                    double f = dd * dx[d] * force;
-                    dvxdt[d][i] += f;
-                    dvxdt[d][j] -= f;
+                    real_t f = dd * dx[d] * force;
+                    dvxdt[d][i] += static_cast<double>(f);
+                    dvxdt[d][j] -= static_cast<double>(f);
                 }
             }
         }
@@ -128,7 +128,7 @@ void virtual_symm_2d (ParticleSystem& sys, size_t i, size_t j, std::vector<std::
 }
 
 // Основная функция ext_force
-void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
+void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, real_t dt,
                size_t ntotal, size_t nreal, size_t niac,
                const std::vector<size_t>& pair_i, const std::vector<size_t>& pair_j,
                std::vector<std::vector<double>>& dvxdt, WorkBuffers& wb)
@@ -142,8 +142,8 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
     }
 
     // Параметры для силы отталкивания
-    constexpr double rr0 = 1.25e-5;  // Пороговое расстояние
-    constexpr double dd = 1.0e-2;    // Сила отталкивания
+    constexpr real_t rr0 = real_t(1.25e-5);  // Пороговое расстояние
+    constexpr real_t dd = real_t(1.0e-2);    // Сила отталкивания
     constexpr int p1 = 12;           // Степень для отталкивающей силы
     constexpr int p2 = 4;            // Степень для притягивающей силы
 
@@ -152,7 +152,7 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
     {
         for (size_t d = 0; d < dim; ++d)
         {
-            dvxdt[d][i] = 0.0;
+            dvxdt[d][i] = 0;
         }
     }
     wb.reset_contact();
@@ -180,8 +180,8 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
         if (is_real_virtual_pair)
         {
             // Вычисление разности координат
-            std::array<double, dim> dx{};
-            double rr = 0.0;
+            std::array<real_t, dim> dx{};
+            real_t rr = 0;
 
             for (size_t d = 0; d < dim; ++d)
             {
@@ -194,36 +194,36 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
             // Проверка на близость частиц
             if (rr < rr0)
             {
-                double inv_rr = 1.0 / rr;
-                double force = ((std::pow(rr0 * inv_rr, p1)) - (std::pow(rr0 * inv_rr, p2))) * inv_rr * inv_rr;
+                real_t inv_rr = real_t(1.0) / rr;
+                real_t force = ((std::pow(rr0 * inv_rr, static_cast<real_t>(p1))) - (std::pow(rr0 * inv_rr, static_cast<real_t>(p2)))) * inv_rr * inv_rr;
 
                 // Применение силы
                 for (size_t d = 0; d < dim; ++d)
                 {
-                    double f = dd * dx[d] * force;
-                    dvxdt[d][i] += f;
-                    dvxdt[d][j] -= f;
+                    real_t f = dd * dx[d] * force;
+                    dvxdt[d][i] += static_cast<double>(f);
+                    dvxdt[d][j] -= static_cast<double>(f);
                 }
             }
         }
         if (contact_type != contact::Off && is_contact_material_pair(sys, i, j, nreal))
         {
-            std::array<double, dim> dx{};      // x_i - x_j
-            double r2 = 0.0;
+            std::array<real_t, dim> dx{};      // x_i - x_j
+            real_t r2 = 0;
             for (size_t d = 0; d < dim; ++d) { dx[d] = sys.x[d][i] - sys.x[d][j]; r2 += dx[d]*dx[d]; }
-            const double r = std::sqrt(r2);
+            const real_t r = std::sqrt(r2);
             // (2.1) с радиусами тел вместо длин сглаживания (см. particle_radius):
             // тела касаются при r = R_i + R_j, проникают при r < R_i + R_j.
-            const double Ri = particle_radius(sys, i);
-            const double Rj = particle_radius(sys, j);
-            const double p = (Ri + Rj) - r;
+            const real_t Ri = particle_radius(sys, i);
+            const real_t Rj = particle_radius(sys, j);
+            const real_t p = (Ri + Rj) - r;
 
-            if (r > 0.0 && p > 0.0)
+            if (r > 0 && p > 0)
             {
-                double dot = 0.0, v2 = 0.0;
+                real_t dot = 0, v2 = 0;
                 for (size_t d = 0; d < dim; ++d)
                 {
-                    const double dv = sys.vx[d][i] - sys.vx[d][j];
+                    const real_t dv = sys.vx[d][i] - sys.vx[d][j];
                     dot += dx[d] * dv;
                     v2  += dv * dv;
                 }
@@ -232,33 +232,34 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
                 g.pdot  = -dot / r;                 // > 0 при сближении
                 g.v_rel = std::sqrt(v2);
 
-                const double Gi = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
-                const double Gj = shear_modulus_by_itype(cfg.mats, sys.itype[j]);
+                const real_t Gi = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
+                const real_t Gj = shear_modulus_by_itype(cfg.mats, sys.itype[j]);
 
                 contact::PairProps pr;
                 pr.m_red  = sys.mass[i] * sys.mass[j] / (sys.mass[i] + sys.mass[j]);
                 pr.c_pair = std::min(sys.c[i], sys.c[j]);
-                pr.g_eff  = (Gi > 0.0 && Gj > 0.0) ? Gi * Gj / (Gi + Gj) : 0.0;
+                pr.g_eff  = (Gi > 0 && Gj > 0) ? Gi * Gj / (Gi + Gj) : real_t(0.0);
                 // p > 0 гарантирует Ri + Rj > r > 0, поэтому деление безопасно.
                 pr.r_eff  = Ri * Rj / (Ri + Rj);
                 pr.dt_ref = std::min(pair_dt_ref(cfg, sys, i), pair_dt_ref(cfg, sys, j));
 
                 const contact::Result res =
-                    contact::penalty_force(contact_type, g, pr, cfg.contact_penalty_scale,
-                                           dt, cfg.contact_impulse_gamma);
+                    contact::penalty_force(contact_type, g, pr, static_cast<real_t>(cfg.contact_penalty_scale),
+                                           dt, static_cast<real_t>(cfg.contact_impulse_gamma));
 
                 ++wb.contact_pair_count;
-                if (p > wb.contact_max_delta) wb.contact_max_delta = p;
-                if (res.dt_limit < wb.min_dt_contact) wb.min_dt_contact = res.dt_limit;
+                // WorkBuffers -- диагностика/часы шага в double (precision.hpp).
+                if (static_cast<double>(p) > wb.contact_max_delta) wb.contact_max_delta = static_cast<double>(p);
+                if (static_cast<double>(res.dt_limit) < wb.min_dt_contact) wb.min_dt_contact = static_cast<double>(res.dt_limit);
 
-                if (res.fn > 0.0)
+                if (res.fn > 0)
                 {
-                    const double inv_r = 1.0 / r;
+                    const real_t inv_r = real_t(1.0) / r;
                     for (size_t d = 0; d < dim; ++d)
                     {
-                        const double f = res.fn * dx[d] * inv_r;    // вдоль n = (x_i - x_j)/r
-                        dvxdt[d][i] += f / sys.mass[i];             // dvxdt — ускорения
-                        dvxdt[d][j] -= f / sys.mass[j];             // точный баланс импульса
+                        const real_t f = res.fn * dx[d] * inv_r;    // вдоль n = (x_i - x_j)/r
+                        dvxdt[d][i] += static_cast<double>(f / sys.mass[i]);   // dvxdt — ускорения
+                        dvxdt[d][j] -= static_cast<double>(f / sys.mass[j]);   // точный баланс импульса
                     }
                 }
             }

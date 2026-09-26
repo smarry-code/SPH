@@ -89,8 +89,8 @@ namespace interactions
 // чистотой на этом этапе (задача допускает оба варианта, см. fiber/PLAN.md
 // §Ф7, пункт 5 обоснования координатора).
 // ----------------------------------------------------------------------
-inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem& sys, std::size_t ntotal, double dt,
-                                     const std::vector<double>& drho)
+inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem& sys, std::size_t ntotal, real_t dt,
+                                     const std::vector<real_t>& drho)
 {
     for (std::size_t i = 0; i < ntotal; ++i)
     {
@@ -115,7 +115,7 @@ inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem&
 // текущий конфиг (BC2/BC6 -> sle=1) sle=2 не использует. ПРО МЕСТО ВЫЗОВА --
 // см. большой комментарий в шапке файла.
 // ----------------------------------------------------------------------
-inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem& sys, double dt, std::size_t ntotal)
+inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem& sys, real_t dt, std::size_t ntotal)
 {
     if (cfg.sle == 2)
     {
@@ -128,7 +128,7 @@ inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem&
     if (cfg.sle == 1)
     {
         static const std::vector<size_t> kEmptyPairIdx;
-        static const std::vector<std::vector<double>> kEmptyDwdx(dim);
+        static const std::vector<std::vector<real_t>> kEmptyDwdx(dim);
         h_upgrade(cfg, sys, dt, ntotal, 0, kEmptyPairIdx, kEmptyPairIdx, kEmptyDwdx);
     }
     // sle == 0 (и любое иное непредусмотренное значение) -- h_upgrade не
@@ -173,13 +173,13 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 
     exec.parallel_for(nbonds, [&](std::size_t k) {
         const fiber::FiberBond& b = topology.bonds[k];
-        double l2 = 0.0;
+        real_t l2 = 0;
         for (std::size_t d = 0; d < dim; ++d)
         {
-            const double dx = state.x[d][b.j] - state.x[d][b.i];
+            const real_t dx = state.x[d][b.j] - state.x[d][b.i];
             l2 += dx * dx;
         }
-        const double l = std::sqrt(l2);
+        const real_t l = std::sqrt(l2);
         if (l > b.l_break)
         {
             int w = rhs::CpuExecutor::worker_id();

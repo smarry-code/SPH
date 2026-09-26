@@ -4,7 +4,7 @@
 // FiberState (переменные состояния бусин), FiberTopology (связи и соседство
 // по нити), FiberMaterial (свойства материала нити).
 //
-// Все поля — double, хранение — Structure of Arrays, частицы всех нитей
+// Все поля — real_t, хранение — Structure of Arrays, частицы всех нитей
 // одного типа лежат в общих массивах (fiber/SPH.md, «Организация хранения
 // частиц»), по образцу ParticleSystem (particle_system.hpp).
 //
@@ -57,9 +57,9 @@ inline void check_fiber_requires_dim3()
 // разрыве, этап Ф7) и индекс материала (не меняется при разрыве).
 struct FiberState
 {
-    std::vector<double> x[dim];
-    std::vector<double> vx[dim];
-    std::vector<double> mass;
+    std::vector<real_t> x[dim];
+    std::vector<real_t> vx[dim];
+    std::vector<real_t> mass;
     std::vector<int> object_id;
     std::vector<int> material_id;
 
@@ -89,8 +89,8 @@ struct FiberBond
 {
     std::size_t i = 0;
     std::size_t j = 0;
-    double l0 = 0.0;
-    double l_break = 0.0;
+    real_t l0 = 0.0;
+    real_t l_break = 0.0;
 };
 
 // prev[]/next[] — соседи по нити, -1 на конце (частица — конец нити, если
@@ -124,7 +124,7 @@ struct FiberTopology
 // rhs::reduce_contributions (operator+= ниже).
 struct FiberDelta
 {
-    double dv[dim] = {};
+    real_t dv[dim] = {};
 
     FiberDelta& operator+=(const FiberDelta& other)
     {
@@ -139,11 +139,11 @@ struct FiberDelta
 // плотность, критическое удлинение разрыва.
 struct FiberMaterial
 {
-    double E = 0.0;
-    double nu = 0.0;
-    double d = 0.0;
-    double rho = 0.0;
-    double eps_break = 0.0;
+    real_t E = 0.0;
+    real_t nu = 0.0;
+    real_t d = 0.0;
+    real_t rho = 0.0;
+    real_t eps_break = 0.0;
 };
 
 } // namespace fiber

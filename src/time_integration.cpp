@@ -19,21 +19,24 @@
 #include <windows.h>
 #endif
 
+// Вычисление в real_t (precision.hpp), результат -- double: dt живёт в часах
+// расчёта (double), float -> double без потерь.
 double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal)
 {
-    double min_dt = 1e6;                      // шаг по куранту
+    const real_t cfl = static_cast<real_t>(cfg.CFL);
+    real_t min_dt = real_t(1e6);              // шаг по куранту
     for (size_t i = 0; i < ntotal; ++i)
     {
-        double v = 0.0;
+        real_t v = real_t(0.0);
         for (size_t d = 0; d < dim; ++d)
         {
              v +=  sys.vx[d][i] * sys.vx[d][i];
         }
         v = std::sqrt(v);  // Скорость частицы
-        double dt = cfg.CFL * sys.hsml[i] / (sys.c[i] + v);
+        real_t dt = cfl * sys.hsml[i] / (sys.c[i] + v);
         if (dt < min_dt) min_dt = dt;
     }
-    return min_dt;
+    return static_cast<double>(min_dt);
 }
 
 namespace detail
@@ -134,10 +137,10 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 
         // OdeSolver: предиктор (State::save + полушаг по f^{n-1}; нет-оп у
         // Эйлера и на первом шаге PredictorCorrector).
-        solver.predict(sys, ntotal, fb, nfiber, dt);
+        solver.predict(sys, ntotal, fb, nfiber, static_cast<real_t>(dt));
 
         // RHS: Solid (SPH+контакт, как раньше) -- пишет f^n в solver.solid_rhs.
-        single_step(cfg, sys, current_ts, dt, ntotal, solver.solid_rhs.t, solver.solid_rhs.tdsdt, solver.solid_rhs.dx,
+        single_step(cfg, sys, current_ts, static_cast<real_t>(dt), ntotal, solver.solid_rhs.t, solver.solid_rhs.tdsdt, solver.solid_rhs.dx,
                     solver.solid_rhs.dvx, solver.solid_rhs.du, solver.solid_rhs.ds, solver.solid_rhs.drho,
                     solver.solid_rhs.av, solver.solid_rhs.dsxx, solver.solid_rhs.dsyy, solver.solid_rhs.dszz,
                     solver.solid_rhs.dsxy, solver.solid_rhs.dsyz, solver.solid_rhs.dsxz, wb);
@@ -148,7 +151,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // (include/interactions/postprocessing.hpp) -- почему это обязательно
         // для бит-в-бит совпадения с прежним поведением (h_upgrade раньше
         // вызывался отсюда же, изнутри single_step.cpp).
-        interactions::update_smoothing_length(cfg, sys, dt, ntotal);
+        interactions::update_smoothing_length(cfg, sys, static_cast<real_t>(dt), ntotal);
 
         // RHS: Fiber-Bond (fiber/PLAN.md, этап Ф3) — readonly search по
         // topology.bonds, contributions -> reduce (fiber/SPH.md, «Основные
@@ -175,9 +178,10 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 for (size_t i = 0; i < nfiber; ++i)
                     solver.fiber_rhs.dv[d][i] = fiber_bond_delta[i].dv[d] + fiber_contact_delta[i].dv[d];
 
-            fiber_dt_limit = interactions::compute_fiber_bond_dt_limit(fiber_exec, fb, topology, materials);
-            const double fiber_contact_dt_limit = interactions::compute_fiber_contact_dt_limit(
-                fiber_exec, fb, materials, fiber_contact_search.primitives);
+            // dt_limit взаимодействий -- real_t, итоговый dt -- double (precision.hpp).
+            fiber_dt_limit = static_cast<double>(interactions::compute_fiber_bond_dt_limit(fiber_exec, fb, topology, materials));
+            const double fiber_contact_dt_limit = static_cast<double>(interactions::compute_fiber_contact_dt_limit(
+                fiber_exec, fb, materials, fiber_contact_search.primitives));
             if (fiber_contact_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_contact_dt_limit;
 
             // RHS: Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6) -- механический
@@ -199,8 +203,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 for (size_t i = 0; i < ntotal; ++i)
                     solver.solid_rhs.dvx[d][i] += fiber_solid_result.solid_delta[i].dv[d];
 
-            const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
-                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_result.primitives);
+            const double fiber_solid_dt_limit = static_cast<double>(interactions::compute_fiber_solid_contact_dt_limit(
+                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_result.primitives));
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
         }
 
@@ -212,7 +216,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/
         // v/x с правилами, специфичными для Solid (u>=0, XSPH), — внутри
         // решателя, fiber/PLAN.md §3.9; Fiber: только x, v).
-        solver.advance(sys, ntotal, fb, nfiber, dt);
+        solver.advance(sys, ntotal, fb, nfiber, static_cast<real_t>(dt));
 
         // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8) -- ПОСЛЕ шага
         // ODESolver (predictor-corrector/Euler Solid И Fiber уже завершены
@@ -229,7 +233,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         //      из topology/object_id на КАЖДОМ вызове RHS -- отдельной
         //      инвалидации кэша не требуется (fiber/SPH.md, «Postprocessing и
         //      изменение topology»).
-        interactions::apply_material_strength(cfg, sys, ntotal, dt, solver.solid_rhs.drho);
+        interactions::apply_material_strength(cfg, sys, ntotal, static_cast<real_t>(dt), solver.solid_rhs.drho);
         if (nfiber > 0)
         {
             interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, fiber_break_thread_buffers);

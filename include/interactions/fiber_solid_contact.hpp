@@ -111,7 +111,7 @@ namespace interactions
 constexpr std::uint32_t kFiberSolidContactFiberType = 3;
 constexpr std::uint32_t kFiberSolidContactSolidType = 12;
 
-constexpr double kFiberSolidContactMinD = 1e-12;
+constexpr real_t kFiberSolidContactMinD = real_t(1e-12);
 
 // ----------------------------------------------------------------------
 // FiberSolidContactPrimitive = (a, b, s) -- fiber/SPH.md, «Fiber-Solid-
@@ -148,13 +148,13 @@ struct FiberSolidContactPrimitive
 // (l_max -- максимум l0 ПО ВСЕМ связям расчёта, значит l0(prev(f),f) <= l_max
 // для любой конкретной связи).
 // ----------------------------------------------------------------------
-inline double fiber_solid_contact_search_radius(const fiber::FiberTopology& topology,
+inline real_t fiber_solid_contact_search_radius(const fiber::FiberTopology& topology,
                                                   const std::vector<fiber::FiberMaterial>& materials,
-                                                  double r_s_max_contact)
+                                                  real_t r_s_max_contact)
 {
-    double r_f_max = 0.0;
-    for (const auto& m : materials) r_f_max = std::max(r_f_max, 0.5 * m.d);
-    double l_max = 0.0;
+    real_t r_f_max = 0;
+    for (const auto& m : materials) r_f_max = std::max(r_f_max, real_t(0.5) * m.d);
+    real_t l_max = 0;
     for (const auto& b : topology.bonds) l_max = std::max(l_max, b.l0);
     return r_f_max + r_s_max_contact + l_max;
 }
@@ -207,7 +207,7 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
     {
         std::vector<rhs::index_t> eligible;
         eligible.reserve(ntotal);
-        double r_s_max = 0.0;
+        real_t r_s_max = 0;
         for (std::size_t i = 0; i < ntotal; ++i)
         {
             const auto es = elastic_by_itype(mats, sys.itype[i]);
@@ -221,19 +221,19 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
         }
         if (eligible.empty()) return;
 
-        const double radius = fiber_solid_contact_search_radius(topology, materials, r_s_max);
+        const real_t radius = fiber_solid_contact_search_radius(topology, materials, r_s_max);
 
-        std::vector<double> sx[dim];
+        std::vector<real_t> sx[dim];
         for (std::size_t d = 0; d < dim; ++d) sx[d].resize(eligible.size());
         for (std::size_t k = 0; k < eligible.size(); ++k)
             for (std::size_t d = 0; d < dim; ++d) sx[d][k] = sys.x[d][eligible[k]];
 
         rhs::SpatialIndex<dim> index;
-        std::array<const double*, dim> scoords{};
+        std::array<const real_t*, dim> scoords{};
         for (std::size_t d = 0; d < dim; ++d) scoords[d] = sx[d].data();
-        index.build(scoords, eligible.size(), radius > 0.0 ? radius : 1.0);
+        index.build(scoords, eligible.size(), radius > 0 ? radius : real_t(1.0));
 
-        std::array<const double*, dim> fcoords{};
+        std::array<const real_t*, dim> fcoords{};
         for (std::size_t d = 0; d < dim; ++d) fcoords[d] = state.x[d].data();
 
         const auto pairs = index.find_pairs_cross_parallel(exec, fcoords, nfiber, radius);
@@ -283,11 +283,11 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
 struct FiberSolidContactGeometry
 {
     bool contact = false;
-    double n[dim] = {};
-    double D = 0.0;
-    double delta = 0.0;
-    double F = 0.0;      // >= 0
-    double lambda = 0.0; // значим только при has_b
+    real_t n[dim] = {};
+    real_t D = 0;
+    real_t delta = 0;
+    real_t F = 0;      // >= 0
+    real_t lambda = 0; // значим только при has_b
 };
 
 inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
@@ -301,19 +301,19 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
     }
     else
     {
-        using Vec3 = std::array<double, 3>;
+        using Vec3 = std::array<real_t, 3>;
         auto sub = [](const Vec3& x, const Vec3& y) -> Vec3 { return {x[0] - y[0], x[1] - y[1], x[2] - y[2]}; };
-        auto dot = [](const Vec3& x, const Vec3& y) -> double { return x[0] * y[0] + x[1] * y[1] + x[2] * y[2]; };
-        auto norm = [&](const Vec3& x) -> double { return std::sqrt(dot(x, x)); };
+        auto dot = [](const Vec3& x, const Vec3& y) -> real_t { return x[0] * y[0] + x[1] * y[1] + x[2] * y[2]; };
+        auto norm = [&](const Vec3& x) -> real_t { return std::sqrt(dot(x, x)); };
         auto point_f = [&](rhs::index_t k) -> Vec3 { return {state.x[0][k], state.x[1][k], state.x[2][k]}; };
         auto point_s = [&](rhs::index_t k) -> Vec3 { return {sys.x[0][k], sys.x[1][k], sys.x[2][k]}; };
 
         const Vec3 xs = point_s(prim.s);
         const fiber::FiberMaterial& mat_a = materials[static_cast<std::size_t>(state.material_id[prim.a])];
-        const double r_f = 0.5 * mat_a.d;
+        const real_t r_f = real_t(0.5) * mat_a.d;
 
         Vec3 q{};
-        double lambda = 0.0;
+        real_t lambda = 0;
         if (!prim.has_b)
         {
             q = point_f(prim.a);
@@ -323,23 +323,23 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
             const Vec3 xa = point_f(prim.a);
             const Vec3 xb = point_f(prim.b);
             const Vec3 e = sub(xb, xa);
-            const double e2 = dot(e, e);
-            if (!(e2 > 0.0)) return geom; // вырожденный сегмент (совпадающие бусины) -- защита от деления на 0
+            const real_t e2 = dot(e, e);
+            if (!(e2 > 0)) return geom; // вырожденный сегмент (совпадающие бусины) -- защита от деления на 0
 
             // Сырой (до clamp) параметр t -- решение 3 в шапке файла:
             // клэмп в границу разрешён ТОЛЬКО когда дальше по нити клэмпить
             // некому (конец/начало нити), иначе примитив пропускается --
             // ответственность за эту зону несёт соседний сегмент.
-            const double t = dot(sub(xs, xa), e) / e2;
-            if (t >= 1.0)
+            const real_t t = dot(sub(xs, xa), e) / e2;
+            if (t >= real_t(1.0))
             {
                 if (!prim.b_is_last) return geom;
-                lambda = 1.0;
+                lambda = real_t(1.0);
             }
-            else if (t < 0.0)
+            else if (t < 0)
             {
                 if (!prim.a_is_first) return geom;
-                lambda = 0.0;
+                lambda = 0;
             }
             else
             {
@@ -349,24 +349,24 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
         }
 
         const Vec3 diff = sub(xs, q);
-        const double D = norm(diff);
+        const real_t D = norm(diff);
         if (D < kFiberSolidContactMinD) return geom; // совпадающие точки -- пропуск, защита от NaN
         const Vec3 n = {diff[0] / D, diff[1] / D, diff[2] / D};
 
-        const double r_s = solid_contact_radius(sys, prim.s);
-        const double delta = r_f + r_s - D;
-        if (!(delta > 0.0)) return geom; // нет проникновения
+        const real_t r_s = solid_contact_radius(sys, prim.s);
+        const real_t delta = r_f + r_s - D;
+        if (!(delta > 0)) return geom; // нет проникновения
 
         const auto es = elastic_by_itype(mats, sys.itype[prim.s]);
         if (!es.has_value()) return geom; // защита (search уже отфильтровал такие s)
 
-        const double inv_Estar = (mat_a.E > 0.0 ? (1.0 - mat_a.nu * mat_a.nu) / mat_a.E : 0.0) +
-                                  (es->E > 0.0 ? (1.0 - es->nu * es->nu) / es->E : 0.0);
-        if (!(inv_Estar > 0.0)) return geom;
-        const double E_star = 1.0 / inv_Estar;
-        const double R_star = (r_f > 0.0 && r_s > 0.0) ? (r_f * r_s) / (r_f + r_s) : 0.0;
-        const double K_fs = (4.0 / 3.0) * E_star * std::sqrt(R_star);
-        const double F = K_fs * std::pow(delta, 1.5);
+        const real_t inv_Estar = (mat_a.E > 0 ? (real_t(1.0) - mat_a.nu * mat_a.nu) / mat_a.E : real_t(0.0)) +
+                                  (es->E > 0 ? (real_t(1.0) - es->nu * es->nu) / es->E : real_t(0.0));
+        if (!(inv_Estar > 0)) return geom;
+        const real_t E_star = real_t(1.0) / inv_Estar;
+        const real_t R_star = (r_f > 0 && r_s > 0) ? (r_f * r_s) / (r_f + r_s) : real_t(0.0);
+        const real_t K_fs = (real_t(4.0) / real_t(3.0)) * E_star * std::sqrt(R_star);
+        const real_t F = K_fs * std::pow(delta, real_t(1.5));
 
         geom.contact = true;
         geom.n[0] = n[0]; geom.n[1] = n[1]; geom.n[2] = n[2];
@@ -413,26 +413,26 @@ inline void compute_fiber_solid_contact_contributions(
         rhs::ContributionWriter<SolidDelta> sw(solid_buffers[static_cast<std::size_t>(w)],
                                                 kFiberSolidContactSolidType);
 
-        const double ms = sys.mass[prim.s];
+        const real_t ms = sys.mass[prim.s];
         SolidDelta ds{};
         for (std::size_t d = 0; d < dim; ++d) ds.dv[d] = geom.F * geom.n[d] / ms;
         sw.emit(prim.s, ds, static_cast<std::uint64_t>(k), 0);
 
         if (!prim.has_b)
         {
-            const double ma = state.mass[prim.a];
+            const real_t ma = state.mass[prim.a];
             fiber::FiberDelta da{};
             for (std::size_t d = 0; d < dim; ++d) da.dv[d] = -geom.F * geom.n[d] / ma;
             fw.emit(prim.a, da, static_cast<std::uint64_t>(k), 1);
         }
         else
         {
-            const double ma = state.mass[prim.a];
-            const double mb = state.mass[prim.b];
+            const real_t ma = state.mass[prim.a];
+            const real_t mb = state.mass[prim.b];
             fiber::FiberDelta da{}, db{};
             for (std::size_t d = 0; d < dim; ++d)
             {
-                da.dv[d] = -(1.0 - geom.lambda) * geom.F * geom.n[d] / ma;
+                da.dv[d] = -(real_t(1.0) - geom.lambda) * geom.F * geom.n[d] / ma;
                 db.dv[d] = -geom.lambda * geom.F * geom.n[d] / mb;
             }
             fw.emit(prim.a, da, static_cast<std::uint64_t>(k), 1);
@@ -475,30 +475,30 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
 // при фактическом контакте (geom.contact, delta>0) -- как Fiber-Fiber-
 // Contact/Solid-Solid-Contact. +inf, если контактов нет.
 // ----------------------------------------------------------------------
-inline double compute_fiber_solid_contact_dt_limit(const rhs::CpuExecutor& exec, const Materials& mats,
+inline real_t compute_fiber_solid_contact_dt_limit(const rhs::CpuExecutor& exec, const Materials& mats,
                                                      const ParticleSystem& sys, const fiber::FiberState& state,
                                                      const std::vector<fiber::FiberMaterial>& materials,
                                                      const std::vector<FiberSolidContactPrimitive>& primitives)
 {
-    const double kInf = std::numeric_limits<double>::max();
+    const real_t kInf = std::numeric_limits<real_t>::max();
     const std::size_t n = primitives.size();
     if (n == 0) return kInf;
 
     return exec.parallel_reduce(
         n, kInf,
-        [&](std::size_t k) -> double {
+        [&](std::size_t k) -> real_t {
             const FiberSolidContactPrimitive& prim = primitives[k];
             const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
-            if (!geom.contact || !(geom.delta > 0.0)) return kInf;
+            if (!geom.contact || !(geom.delta > 0)) return kInf;
 
-            const double ma = state.mass[prim.a];
-            const double ms = sys.mass[prim.s];
-            const double m_red = (ma * ms) / (ma + ms);
-            const double k_eff = 1.5 * geom.F / geom.delta;
-            if (!(k_eff > 0.0)) return kInf;
-            return 0.8 / std::sqrt(k_eff / m_red);
+            const real_t ma = state.mass[prim.a];
+            const real_t ms = sys.mass[prim.s];
+            const real_t m_red = (ma * ms) / (ma + ms);
+            const real_t k_eff = real_t(1.5) * geom.F / geom.delta;
+            if (!(k_eff > 0)) return kInf;
+            return real_t(0.8) / std::sqrt(k_eff / m_red);
         },
-        [](double x, double y) { return std::min(x, y); });
+        [](real_t x, real_t y) { return std::min(x, y); });
 }
 
 } // namespace interactions

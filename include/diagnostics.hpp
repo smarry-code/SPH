@@ -25,7 +25,7 @@ struct Diagnostics
         bool ok = true;
         for (size_t i = 0; i < ntotal; ++i)
         {
-            auto bad = [&](const char* f, double v)
+            auto bad = [&](const char* f, real_t v)
             {
                 if (!std::isfinite(v))
                 {

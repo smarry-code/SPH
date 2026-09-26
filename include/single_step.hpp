@@ -29,7 +29,7 @@ void time_print();
 // чтобы prochnost_mises/prochnost_cem_JH2 (src/ppochnost.cpp, вызываются в
 // time_integration.cpp ПОСЛЕ single_step) и compute_cfl_timestep (читает
 // sys.c) продолжали работать без изменений.
-void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, double dt, size_t ntotal, std::vector<double>& t, std::vector<double>& tdsdt,
-                 std::vector<std::vector<double>>& dx, std::vector<std::vector<double>>& dvx, std::vector<double>& du, std::vector<double>& ds,
-                 std::vector<double>& drho, std::vector<std::vector<double>>& av, std::vector<double>& dsxx, std::vector<double>& dsyy,
-                 std::vector<double>& dszz, std::vector<double>& dsxy, std::vector<double>& dsyz, std::vector<double>& dsxz, WorkBuffers& wb);
+void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimestep, real_t dt, size_t ntotal, std::vector<real_t>& t, std::vector<real_t>& tdsdt,
+                 std::vector<std::vector<real_t>>& dx, std::vector<std::vector<real_t>>& dvx, std::vector<real_t>& du, std::vector<real_t>& ds,
+                 std::vector<real_t>& drho, std::vector<std::vector<real_t>>& av, std::vector<real_t>& dsxx, std::vector<real_t>& dsyy,
+                 std::vector<real_t>& dszz, std::vector<real_t>& dsxy, std::vector<real_t>& dsyz, std::vector<real_t>& dsxz, WorkBuffers& wb);

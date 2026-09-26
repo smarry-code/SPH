@@ -3,18 +3,18 @@
 // Объявление — в kernel.hpp.
 #include "kernel.hpp"
 
-void kernel(int skf, double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
+void kernel(int skf, real_t r, std::span<const real_t> dx, real_t mhsml, real_t& w, real_t* dwdx)
 {
     // Инициализация выходных значений
-    w = 0.0;
+    w = 0;
 
     for (size_t d = 0; d < dim; d++)
     {
-        dwdx[d] = 0.0;
+        dwdx[d] = 0;
     }
     // Вычисление относительного расстояния
-    double q = r / mhsml;
-    double factor = 0.0;
+    real_t q = r / mhsml;
+    real_t factor = 0;
 
     // Выбор ядра в зависимости от skf
     if (skf == 1)    // Кубический сплайн (Monaghan 1985)
@@ -22,15 +22,15 @@ void kernel(int skf, double r, std::span<const double> dx, double mhsml, double&
         // Определение нормировочного фактора в зависимости от размерности
         if (dim == 1)
         {
-            factor = 1.0 / mhsml;
+            factor = real_t(1.0) / mhsml;
         }
         else if (dim == 2)
         {
-            factor = 15.0 / (7.0 * pi * mhsml * mhsml);
+            factor = real_t(15.0) / (real_t(7.0) * pi * mhsml * mhsml);
         }
         else if (dim == 3)
         {
-            factor = 3.0 / (2.0 * pi * mhsml * mhsml * mhsml);
+            factor = real_t(3.0) / (real_t(2.0) * pi * mhsml * mhsml * mhsml);
         }
         else
         {
@@ -38,22 +38,22 @@ void kernel(int skf, double r, std::span<const double> dx, double mhsml, double&
         }
 
         // Вычисление ядра и его производной
-        if (q >= 0.0 && q <= 1.0)
+        if (q >= 0 && q <= real_t(1.0))
         {
-            w = factor * (2.0/3.0 - q*q + q*q*q / 2.0);
+            w = factor * (real_t(2.0)/real_t(3.0) - q*q + q*q*q / real_t(2.0));
             for (size_t d = 0; d < dim; ++d)
             {
-                dwdx[d] = factor * (-2.0 + 1.5 * q) * dx[d] / (mhsml * mhsml);
+                dwdx[d] = factor * (-real_t(2.0) + real_t(1.5) * q) * dx[d] / (mhsml * mhsml);
             }
         }
-        else if (q > 1.0 && q <= 2.0)
+        else if (q > real_t(1.0) && q <= real_t(2.0))
         {
-            double t = 2.0 - q;
-            w = factor * (1.0/6.0) * ((2.0 - q)*(2.0 - q)*(2.0 - q));
+            real_t t = real_t(2.0) - q;
+            w = factor * (real_t(1.0)/real_t(6.0)) * ((real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q));
             //w = factor * (1.0/6.0) * t * t * t;
             for (size_t d = 0; d < dim; ++d)
             {
-                dwdx[d] = -factor * 0.5 * ((2.0 - q)*(2.0 - q)) * dx[d] / (r * mhsml);
+                dwdx[d] = -factor * real_t(0.5) * ((real_t(2.0) - q)*(real_t(2.0) - q)) * dx[d] / (r * mhsml);
                 //dwdx[d] = -factor * 0.5 * t * t * dx[d] / (r * mhsml);
             }
         }
@@ -62,14 +62,14 @@ void kernel(int skf, double r, std::span<const double> dx, double mhsml, double&
     }
     else if (skf == 2)      // Гауссово ядро
     {
-        factor = 1.0 / (std::pow(mhsml, dim) * std::pow(pi, dim/2.0));
+        factor = real_t(1.0) / (std::pow(mhsml, static_cast<real_t>(dim)) * std::pow(pi, dim/real_t(2.0)));
 
-        if (q >= 0.0 && q <= 3.0)
+        if (q >= 0 && q <= real_t(3.0))
         {
             w = factor * std::exp(-q*q);
             for (size_t d = 0; d < dim; ++d)
             {
-                dwdx[d] = w * (-2.0 * dx[d]) / (mhsml * mhsml);
+                dwdx[d] = w * (-real_t(2.0) * dx[d]) / (mhsml * mhsml);
             }
         }
         // Иначе w и dwdx остаются нулевыми
@@ -79,48 +79,48 @@ void kernel(int skf, double r, std::span<const double> dx, double mhsml, double&
     {
         if (dim == 1)
         {
-            factor = 1.0 / (120.0 * mhsml);
+            factor = real_t(1.0) / (real_t(120.0) * mhsml);
         }
         else if (dim == 2)
         {
-            factor = 7.0 / (478.0 * pi * mhsml * mhsml);
+            factor = real_t(7.0) / (real_t(478.0) * pi * mhsml * mhsml);
         }
         else if (dim == 3)
         {
-            factor = 1.0 / (120.0 * pi * mhsml * mhsml * mhsml);
+            factor = real_t(1.0) / (real_t(120.0) * pi * mhsml * mhsml * mhsml);
         }
         else
         {
             throw std::runtime_error("Неверная размерность: dim = " + std::to_string(dim));
         }
 
-        if (q >= 0.0 && q <= 1.0)
+        if (q >= 0 && q <= real_t(1.0))
         {
-            w = factor * (((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) - 6.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)) + 15.0 * ((1.0 - q)*(1.0 - q)*(1.0 - q)*(1.0 - q)*(1.0 - q)));
+            w = factor * (((real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)) - real_t(6.0) * ((real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)) + real_t(15.0) * ((real_t(1.0) - q)*(real_t(1.0) - q)*(real_t(1.0) - q)*(real_t(1.0) - q)*(real_t(1.0) - q)));
             for (size_t d = 0; d < dim; ++d)
             {
-                dwdx[d] = factor * (-120.0 + 120.0*q - 50.0*q*q) * dx[d] / (mhsml * mhsml);
+                dwdx[d] = factor * (-real_t(120.0) + real_t(120.0)*q - real_t(50.0)*q*q) * dx[d] / (mhsml * mhsml);
             }
         }
-        else if (q > 1.0 && q <= 2.0)
+        else if (q > real_t(1.0) && q <= real_t(2.0))
         {
-            w = factor * (((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) - 6.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)));
+            w = factor * (((real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)) - real_t(6.0) * ((real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)));
             for (size_t d = 0; d < dim; ++d)
             {
-                if (r > 1e-8)
+                if (r > real_t(1e-8))
                 {
-                    dwdx[d] = factor * (-5.0 * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) + 30.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q))) * dx[d] / (r * mhsml);
+                    dwdx[d] = factor * (-real_t(5.0) * ((real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)) + real_t(30.0) * ((real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q)*(real_t(2.0) - q))) * dx[d] / (r * mhsml);
                 }
             }
         }
-        else if (q > 2.0 && q <= 3.0)
+        else if (q > real_t(2.0) && q <= real_t(3.0))
         {
-            w = factor * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q));
+            w = factor * ((real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q));
             for (size_t d = 0; d < dim; ++d)
             {
-                if (r > 1e-8)
+                if (r > real_t(1e-8))
                 {
-                    dwdx[d] = -factor * 5.0 * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) * dx[d] / (r * mhsml);
+                    dwdx[d] = -factor * real_t(5.0) * ((real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)*(real_t(3.0) - q)) * dx[d] / (r * mhsml);
                 }
             }
         }

@@ -668,6 +668,133 @@ add_custom_target(regression_golden
     COMMENT "Перегенерация регрессионных эталонов в tests/data/regression"
     USES_TERMINAL VERBATIM)
 
+# --- Регрессия fp32 (fiber/CUDA_PLAN.md, этап Г0-FP32) -----------------------
+# Та же программа и те же кейсы, но конвейер собран с SPH_PRECISION=32
+# (include/precision.hpp: real_t = float). Свои эталоны —
+# tests/data/regression_fp32/ (снимаются этой же программой, цель
+# regression_golden_fp32), свои допуски (tests/test_regression.cpp, блок
+# SPH_PRECISION == 32). fp64-эталоны и fp64-цели выше не затрагиваются.
+#
+# -Wdouble-promotion / -Wimplicit-float-conversion: любое неявное повышение
+# float -> double в конвейере означает, что часть «fp32»-расчёта на деле идёт
+# в double (литерал 2.0 вместо real_t(2.0) и т.п.). Предупреждения, а не
+# ошибки: тестовая обвязка (геометрия, снимок) законно работает в double.
+option(SPH_FP32_WARNINGS "Предупреждения о повышении float -> double в fp32-целях" ON)
+# src/input.cpp — разбор конфигурации и встроенные генераторы начальных
+# условий: значения считаются в double и записываются в поля real_t. Сужение
+# там и есть граница ввода (include/precision.hpp), а не утечка double в расчёт,
+# поэтому для этого файла оба предупреждения выключены.
+if(SPH_FP32_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(src/input.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wno-double-promotion;-Wno-implicit-float-conversion")
+endif()
+foreach(_dim 2 3)
+    if(_dim EQUAL 2)
+        set(_t test_regression_fp32)
+    else()
+        set(_t test_regression_3d_fp32)
+    endif()
+    add_executable(${_t} tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
+    target_include_directories(${_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${_t} PRIVATE
+        SPH_DIM=${_dim}
+        SPH_PRECISION=32
+        SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_t} PRIVATE -fexceptions)
+        if(SPH_FP32_WARNINGS)
+            target_compile_options(${_t} PRIVATE -Wdouble-promotion)
+            if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+                target_compile_options(${_t} PRIVATE -Wimplicit-float-conversion)
+            endif()
+        endif()
+    endif()
+    if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        target_compile_options(${_t} PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+        target_link_options(${_t} PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+    elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_t} PRIVATE -fopenmp)
+        target_link_options(${_t} PRIVATE -fopenmp)
+    endif()
+endforeach()
+
+add_test(NAME regression_fp32_selfcheck COMMAND test_regression_fp32 --selfcheck)
+set_tests_properties(regression_fp32_selfcheck PROPERTIES LABELS "regression;fp32" TIMEOUT 60)
+foreach(_case bc2 bc6)
+    foreach(_type RANGE 0 3)
+        add_test(NAME regression_fp32_${_case}_contact${_type}
+                 COMMAND test_regression_fp32 --case=${_case} --contact-type=${_type}
+                         --time-limit=240)
+        set_tests_properties(regression_fp32_${_case}_contact${_type}
+                             PROPERTIES LABELS "regression;fp32" TIMEOUT 300)
+    endforeach()
+endforeach()
+add_test(NAME regression_fp32_selfcheck_3d COMMAND test_regression_3d_fp32 --selfcheck)
+set_tests_properties(regression_fp32_selfcheck_3d PROPERTIES LABELS "regression;fp32;3d" TIMEOUT 60)
+foreach(_type RANGE 0 3)
+    add_test(NAME regression_fp32_bc2mini3d_contact${_type}
+             COMMAND test_regression_3d_fp32 --case=bc2mini3d --contact-type=${_type}
+                     --time-limit=240)
+    set_tests_properties(regression_fp32_bc2mini3d_contact${_type}
+                         PROPERTIES LABELS "regression;fp32;3d" TIMEOUT 300)
+endforeach()
+
+# Перегенерация fp32-эталонов — тот же скрипт, что у regression_golden
+# (OMP_NUM_THREADS=1, commit и дата в шапке), другие программы и каталог.
+#     cmake --build build --target regression_golden_fp32
+add_custom_target(regression_golden_fp32
+    COMMAND ${CMAKE_COMMAND}
+            -DSPH_REG_EXE=$<TARGET_FILE:test_regression_fp32>
+            -DSPH_REG_EXE_3D=$<TARGET_FILE:test_regression_3d_fp32>
+            "-DSPH_REG_OUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/regression_fp32"
+            "-DSPH_REG_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/regression_golden.cmake"
+    DEPENDS test_regression_fp32 test_regression_3d_fp32
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMENT "Перегенерация fp32-эталонов в tests/data/regression_fp32"
+    USES_TERMINAL VERBATIM)
+
+# Сквозной BC2 в fp32: тот же tests/test_e2e_bc2.cpp (приборный эталон, грубые
+# ворота формы кривой), конвейер с SPH_PRECISION=32. Отвечает на вопрос
+# «остаётся ли fp32-расчёт физикой», которого регрессия (сверка fp32 с самим
+# собой) не задаёт. Smoke — в обычном прогоне, полный — под SPH_E2E_SLOW_TESTS.
+add_executable(test_e2e_bc2_fp32 tests/test_e2e_bc2.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_bc2_fp32 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_bc2_fp32 PRIVATE
+    SPH_DIM=2
+    SPH_PRECISION=32
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc2_fp32 PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_bc2_fp32 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_bc2_fp32 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_bc2_fp32 PRIVATE -fopenmp)
+    target_link_options(test_e2e_bc2_fp32 PRIVATE -fopenmp)
+endif()
+foreach(_type RANGE 0 3)
+    add_test(NAME e2e_fp32_bc2_smoke_contact${_type}
+             COMMAND test_e2e_bc2_fp32 --contact-type=${_type} --time-limit=120)
+    set_tests_properties(e2e_fp32_bc2_smoke_contact${_type} PROPERTIES LABELS "e2e;fp32" TIMEOUT 300)
+endforeach()
+if(SPH_E2E_SLOW_TESTS)
+    foreach(_type RANGE 0 3)
+        add_test(NAME e2e_fp32_bc2_full_contact${_type}
+                 COMMAND test_e2e_bc2_fp32 --full --contact-type=${_type}
+                         --time-limit=${SPH_BC2_RUN_TIME_LIMIT})
+        set_tests_properties(e2e_fp32_bc2_full_contact${_type}
+                             PROPERTIES LABELS "slow;e2e;fp32" TIMEOUT 1800)
+    endforeach()
+endif()
+
+# --- Точность расчёта основной программы (include/precision.hpp): 64 — double
+#     (по умолчанию, эталонный расчёт), 32 — float.
+set(SPH_PRECISION "64" CACHE STRING "Точность расчёта цели SPH: 64 (double) | 32 (float)")
+set_property(CACHE SPH_PRECISION PROPERTY STRINGS 64 32)
+target_compile_definitions(SPH PRIVATE SPH_PRECISION=${SPH_PRECISION})
+
 # --- Предупреждения: воспроизводим -Weverything (Clang) с прежними подавлениями
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(SPH PRIVATE

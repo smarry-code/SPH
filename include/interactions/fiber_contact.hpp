@@ -103,10 +103,10 @@ constexpr std::uint32_t kFiberFiberContactInteractionType = 2;
 // приводит к NaN/Inf: итоговая проверка D_ij>=d_eff (нет контакта) либо
 // weight-формула (branch "иначе -> 0") гасят большие |P| корректно
 // (test_fiber_contact.cpp, "почти параллельные нити").
-constexpr double kFiberContactParallelEps = 1e-3;
+constexpr real_t kFiberContactParallelEps = real_t(1e-3);
 
 // Защита от деления на ~0 при нормировке n (совпадающие точки/оси).
-constexpr double kFiberContactMinD = 1e-12;
+constexpr real_t kFiberContactMinD = real_t(1e-12);
 
 // ----------------------------------------------------------------------
 // FiberContactCase, FiberContactPrimitive -- primitive Fiber-Fiber-Contact
@@ -133,12 +133,12 @@ struct FiberContactPrimitive
 // ----------------------------------------------------------------------
 // fiber_contact_search_radius -- d_max + l_max (см. пункт 3 в шапке файла).
 // ----------------------------------------------------------------------
-inline double fiber_contact_search_radius(const fiber::FiberTopology& topology,
+inline real_t fiber_contact_search_radius(const fiber::FiberTopology& topology,
                                            const std::vector<fiber::FiberMaterial>& materials)
 {
-    double d_max = 0.0;
+    real_t d_max = 0;
     for (const auto& m : materials) d_max = std::max(d_max, m.d);
-    double l_max = 0.0;
+    real_t l_max = 0;
     for (const auto& b : topology.bonds) l_max = std::max(l_max, b.l0);
     return d_max + l_max;
 }
@@ -176,12 +176,12 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
     }
     else
     {
-        const double radius = fiber_contact_search_radius(topology, materials);
+        const real_t radius = fiber_contact_search_radius(topology, materials);
 
         rhs::SpatialIndex<dim> index;
-        std::array<const double*, dim> coords{};
+        std::array<const real_t*, dim> coords{};
         for (std::size_t d = 0; d < dim; ++d) coords[d] = state.x[d].data();
-        index.build(coords, n, radius > 0.0 ? radius : 1.0);
+        index.build(coords, n, radius > 0 ? radius : real_t(1.0));
 
         auto accept = [&](rhs::index_t a, rhs::index_t b) -> bool {
             return state.object_id[a] != state.object_id[b];
@@ -226,24 +226,24 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
 struct FiberContactGeometry
 {
     bool contact = false;
-    double n[dim] = {};
-    double D = 0.0;
-    double F = 0.0;     // сила Герца, >=0
-    double delta = 0.0; // проникновение d_eff - D_ij, >0 при контакте
+    real_t n[dim] = {};
+    real_t D = 0;
+    real_t F = 0;     // сила Герца, >=0
+    real_t delta = 0; // проникновение d_eff - D_ij, >0 при контакте
 
     // P_ij/P_ji -- параметры ближайших точек вдоль p_i/p_j (см. шапку файла,
     // пункт 1); заполняются ВСЕГДА, когда геометрия найдена (даже без
     // контакта, D>=d_eff) -- удобно для тестов и диагностики. Остаются 0.0
     // для End-роли соответствующей стороны (см. side_weight ниже -- там P не
     // применяется).
-    double P_ij = 0.0;
-    double P_ji = 0.0;
+    real_t P_ij = 0;
+    real_t P_ji = 0;
 
-    double w_i = 0.0;
+    real_t w_i = 0;
     bool i_has_neighbor = false;
     rhs::index_t i_neighbor = 0;
 
-    double w_j = 0.0;
+    real_t w_j = 0;
     bool j_has_neighbor = false;
     rhs::index_t j_neighbor = 0;
 };
@@ -259,10 +259,10 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
     }
     else
     {
-        using Vec3 = std::array<double, 3>;
+        using Vec3 = std::array<real_t, 3>;
         auto sub = [](const Vec3& a, const Vec3& b) -> Vec3 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };
-        auto dot = [](const Vec3& a, const Vec3& b) -> double { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
-        auto norm = [&](const Vec3& a) -> double { return std::sqrt(dot(a, a)); };
+        auto dot = [](const Vec3& a, const Vec3& b) -> real_t { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+        auto norm = [&](const Vec3& a) -> real_t { return std::sqrt(dot(a, a)); };
         auto cross = [](const Vec3& a, const Vec3& b) -> Vec3 {
             return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
         };
@@ -273,8 +273,8 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
             const Vec3 xp = point(static_cast<rhs::index_t>(prev));
             const Vec3 xn = point(static_cast<rhs::index_t>(next));
             Vec3 v = sub(xp, xn);
-            const double len = norm(v);
-            if (len > 0.0) { v[0] /= len; v[1] /= len; v[2] /= len; }
+            const real_t len = norm(v);
+            if (len > 0) { v[0] /= len; v[1] /= len; v[2] /= len; }
             return v;
         };
 
@@ -283,11 +283,11 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
         const Vec3 xj = point(j);
         const Vec3 r = sub(xi, xj); // x_ij := x_i - x_j (см. шапку файла)
 
-        double P_ij = 0.0, P_ji = 0.0;
+        real_t P_ij = 0, P_ji = 0;
         bool i_surface = false; // используется ли Surface-формула (P_ij) для i
         bool j_surface = false;
         Vec3 n{};
-        double D = 0.0;
+        real_t D = 0;
 
         if (prim.case_ == FiberContactCase::EndEnd)
         {
@@ -323,7 +323,7 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
             const Vec3 p_i = direction_backward(prim.i_prev, prim.i_next);
             const Vec3 p_j = direction_backward(prim.j_prev, prim.j_next);
             const Vec3 cr = cross(p_i, p_j);
-            const double cr_norm = norm(cr);
+            const real_t cr_norm = norm(cr);
 
             if (cr_norm < kFiberContactParallelEps)
             {
@@ -348,10 +348,10 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
                 // перпендикулярности Q_i-Q_j обеим p_i,p_j -- эквивалентна
                 // решению [p_i n -p_j]*[P_ij,D_ij,P_ji]^T=x_ij относительно
                 // P_ij,P_ji при уже известной n=+-(p_i x p_j)/|..|):
-                const double c = dot(p_i, p_j);
-                const double denom = 1.0 - c * c; // == cr_norm^2 (>= eps^2 здесь)
-                const double rpi = dot(r, p_i);
-                const double rpj = dot(r, p_j);
+                const real_t c = dot(p_i, p_j);
+                const real_t denom = real_t(1.0) - c * c; // == cr_norm^2 (>= eps^2 здесь)
+                const real_t rpi = dot(r, p_i);
+                const real_t rpj = dot(r, p_j);
                 P_ji = (rpj - c * rpi) / denom;
                 P_ij = c * P_ji - rpi;
                 const Vec3 Q_i = {xi[0] + P_ij * p_i[0], xi[1] + P_ij * p_i[1], xi[2] + P_ij * p_i[2]};
@@ -363,8 +363,8 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
                     // Оси фактически пересекаются (D==0) -- нормаль берём из
                     // p_i x p_j, ориентированную "от j к i" (dot(n,r)>=0).
                     n = {cr[0] / cr_norm, cr[1] / cr_norm, cr[2] / cr_norm};
-                    if (dot(n, r) < 0.0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
-                    D = 0.0;
+                    if (dot(n, r) < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
+                    D = 0;
                 }
                 else
                 {
@@ -384,18 +384,18 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
         // --- Hertz-сила (см. пункт 2 в шапке файла) -------------------------
         const fiber::FiberMaterial& mat_i = materials[static_cast<std::size_t>(state.material_id[i])];
         const fiber::FiberMaterial& mat_j = materials[static_cast<std::size_t>(state.material_id[j])];
-        const double ri = 0.5 * mat_i.d;
-        const double rj = 0.5 * mat_j.d;
-        const double d_eff = ri + rj;
+        const real_t ri = real_t(0.5) * mat_i.d;
+        const real_t rj = real_t(0.5) * mat_j.d;
+        const real_t d_eff = ri + rj;
         if (!(D < d_eff)) return geom; // нет проникновения
 
-        const double delta = d_eff - D;
-        const double inv_Estar = (mat_i.E > 0.0 ? (1.0 - mat_i.nu * mat_i.nu) / mat_i.E : 0.0) +
-                                  (mat_j.E > 0.0 ? (1.0 - mat_j.nu * mat_j.nu) / mat_j.E : 0.0);
-        if (!(inv_Estar > 0.0)) return geom; // некорректный материал (E<=0 с обеих сторон) -- защита
-        const double E_star = 1.0 / inv_Estar;
-        const double R_star = (ri > 0.0 && rj > 0.0) ? (ri * rj) / (ri + rj) : 0.0;
-        const double F = (4.0 / 3.0) * E_star * std::sqrt(R_star) * std::pow(delta, 1.5);
+        const real_t delta = d_eff - D;
+        const real_t inv_Estar = (mat_i.E > 0 ? (real_t(1.0) - mat_i.nu * mat_i.nu) / mat_i.E : real_t(0.0)) +
+                                  (mat_j.E > 0 ? (real_t(1.0) - mat_j.nu * mat_j.nu) / mat_j.E : real_t(0.0));
+        if (!(inv_Estar > 0)) return geom; // некорректный материал (E<=0 с обеих сторон) -- защита
+        const real_t E_star = real_t(1.0) / inv_Estar;
+        const real_t R_star = (ri > 0 && rj > 0) ? (ri * rj) / (ri + rj) : real_t(0.0);
+        const real_t F = (real_t(4.0) / real_t(3.0)) * E_star * std::sqrt(R_star) * std::pow(delta, real_t(1.5));
 
         geom.contact = true;
         geom.D = D;
@@ -408,11 +408,11 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
         // --- Веса и соседи (SPH.md, "w_ij") ----------------------------------
         // surface_role==false (End) -> w=1, соседа нет (SPH.md: контакт с
         // концом нити прикладывается целиком к концевой бусине).
-        auto side_weight = [&](bool surface_role, double P, long long prev, long long next, const Vec3& xs,
-                                double& w_out, bool& has_nb, rhs::index_t& nb_out) {
+        auto side_weight = [&](bool surface_role, real_t P, long long prev, long long next, const Vec3& xs,
+                                real_t& w_out, bool& has_nb, rhs::index_t& nb_out) {
             if (!surface_role)
             {
-                w_out = 1.0;
+                w_out = real_t(1.0);
                 has_nb = false;
                 return;
             }
@@ -420,15 +420,15 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
             // primitive (Р8) => частица внутренняя => prev!=-1 && next!=-1
             // ГАРАНТИРОВАННО (build_fiber_contact_search формирует case
             // именно из этого условия) -- static_cast ниже безопасен.
-            const double d_p = norm(sub(xs, point(static_cast<rhs::index_t>(prev))));
-            const double d_n = norm(sub(xs, point(static_cast<rhs::index_t>(next))));
-            double w;
-            if (P > 0.0 && P < d_p) w = (d_p - P) / d_p;
-            else if (P <= 0.0 && P > -d_n) w = (d_n + P) / d_n;
-            else w = 0.0; // контакт проецируется дальше ближайшего соседа -- см. шапку файла, диагностика "пар на пересечение"
+            const real_t d_p = norm(sub(xs, point(static_cast<rhs::index_t>(prev))));
+            const real_t d_n = norm(sub(xs, point(static_cast<rhs::index_t>(next))));
+            real_t w;
+            if (P > 0 && P < d_p) w = (d_p - P) / d_p;
+            else if (P <= 0 && P > -d_n) w = (d_n + P) / d_n;
+            else w = 0; // контакт проецируется дальше ближайшего соседа -- см. шапку файла, диагностика "пар на пересечение"
             w_out = w;
             has_nb = true;
-            nb_out = static_cast<rhs::index_t>(P > 0.0 ? prev : next);
+            nb_out = static_cast<rhs::index_t>(P > 0 ? prev : next);
         };
 
         side_weight(i_surface, P_ij, prim.i_prev, prim.i_next, xi, geom.w_i, geom.i_has_neighbor, geom.i_neighbor);
@@ -468,8 +468,8 @@ inline void compute_fiber_contact_contributions(
         rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[static_cast<std::size_t>(w)],
                                                             kFiberFiberContactInteractionType);
 
-        const double mi = state.mass[prim.i];
-        const double mj = state.mass[prim.j];
+        const real_t mi = state.mass[prim.i];
+        const real_t mj = state.mass[prim.j];
 
         fiber::FiberDelta di{}, dj{};
         for (std::size_t d = 0; d < dim; ++d)
@@ -482,16 +482,16 @@ inline void compute_fiber_contact_contributions(
 
         if (geom.i_has_neighbor)
         {
-            const double m_nb = state.mass[geom.i_neighbor];
-            const double rem = 1.0 - geom.w_i;
+            const real_t m_nb = state.mass[geom.i_neighbor];
+            const real_t rem = real_t(1.0) - geom.w_i;
             fiber::FiberDelta dnb{};
             for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] = rem * geom.F * geom.n[d] / m_nb;
             writer.emit(geom.i_neighbor, dnb, static_cast<std::uint64_t>(k), 1);
         }
         if (geom.j_has_neighbor)
         {
-            const double m_nb = state.mass[geom.j_neighbor];
-            const double rem = 1.0 - geom.w_j;
+            const real_t m_nb = state.mass[geom.j_neighbor];
+            const real_t rem = real_t(1.0) - geom.w_j;
             fiber::FiberDelta dnb{};
             for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] = -rem * geom.F * geom.n[d] / m_nb;
             writer.emit(geom.j_neighbor, dnb, static_cast<std::uint64_t>(k), 3);
@@ -526,29 +526,29 @@ inline std::vector<fiber::FiberDelta> compute_fiber_contact(
 // парам, contact_force.hpp/ADR-007), а не Fiber-Bond. +inf, если контактов
 // нет -- вызывающая сторона берёт min(...) безусловно.
 // ----------------------------------------------------------------------
-inline double compute_fiber_contact_dt_limit(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+inline real_t compute_fiber_contact_dt_limit(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                               const std::vector<fiber::FiberMaterial>& materials,
                                               const std::vector<FiberContactPrimitive>& primitives)
 {
-    const double kInf = std::numeric_limits<double>::max();
+    const real_t kInf = std::numeric_limits<real_t>::max();
     const std::size_t n = primitives.size();
     if (n == 0) return kInf;
 
     return exec.parallel_reduce(
         n, kInf,
-        [&](std::size_t k) -> double {
+        [&](std::size_t k) -> real_t {
             const FiberContactPrimitive& prim = primitives[k];
             const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
-            if (!geom.contact || !(geom.delta > 0.0)) return kInf;
+            if (!geom.contact || !(geom.delta > 0)) return kInf;
 
-            const double mi = state.mass[prim.i];
-            const double mj = state.mass[prim.j];
-            const double m_red = (mi * mj) / (mi + mj);
-            const double k_eff = 1.5 * geom.F / geom.delta;
-            if (!(k_eff > 0.0)) return kInf;
-            return 0.8 / std::sqrt(k_eff / m_red);
+            const real_t mi = state.mass[prim.i];
+            const real_t mj = state.mass[prim.j];
+            const real_t m_red = (mi * mj) / (mi + mj);
+            const real_t k_eff = real_t(1.5) * geom.F / geom.delta;
+            if (!(k_eff > 0)) return kInf;
+            return real_t(0.8) / std::sqrt(k_eff / m_red);
         },
-        [](double a, double b) { return std::min(a, b); });
+        [](real_t a, real_t b) { return std::min(a, b); });
 }
 
 // ----------------------------------------------------------------------
@@ -571,8 +571,8 @@ struct FiberContactDiagnostics
 {
     std::size_t pair_count = 0;
     std::size_t contact_count = 0;
-    double max_penetration = 0.0;
-    double min_dt = std::numeric_limits<double>::max();
+    real_t max_penetration = 0;
+    real_t min_dt = std::numeric_limits<real_t>::max();
 };
 
 inline FiberContactDiagnostics compute_fiber_contact_diagnostics(const rhs::CpuExecutor& exec,
@@ -607,11 +607,11 @@ inline FiberContactDiagnostics compute_fiber_contact_diagnostics(const rhs::CpuE
             {
                 d1.contact_count = 1;
                 d1.max_penetration = geom.delta;
-                const double mi = state.mass[prim.i];
-                const double mj = state.mass[prim.j];
-                const double m_red = (mi * mj) / (mi + mj);
-                const double k_eff = (geom.delta > 0.0) ? 1.5 * geom.F / geom.delta : 0.0;
-                d1.min_dt = (k_eff > 0.0) ? 0.8 / std::sqrt(k_eff / m_red) : std::numeric_limits<double>::max();
+                const real_t mi = state.mass[prim.i];
+                const real_t mj = state.mass[prim.j];
+                const real_t m_red = (mi * mj) / (mi + mj);
+                const real_t k_eff = (geom.delta > 0) ? real_t(1.5) * geom.F / geom.delta : real_t(0.0);
+                d1.min_dt = (k_eff > 0) ? real_t(0.8) / std::sqrt(k_eff / m_red) : std::numeric_limits<real_t>::max();
             }
             return d1;
         },

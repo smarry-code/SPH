@@ -62,11 +62,12 @@ void fiber_output(const Model& model, std::size_t itimestep, double time)
         double l2 = 0.0;
         for (std::size_t d = 0; d < dim; ++d)
         {
-            const double dc = model.fiber.x[d][b.j] - model.fiber.x[d][b.i];
+            const double dc = static_cast<double>(model.fiber.x[d][b.j]) - static_cast<double>(model.fiber.x[d][b.i]);
             l2 += dc * dc;
         }
         const double l = std::sqrt(l2);
-        const double elongation = (b.l0 > 0.0) ? (l - b.l0) / b.l0 : 0.0;
+        const double l0 = static_cast<double>(b.l0); // вывод -- в double (precision.hpp)
+        const double elongation = (l0 > 0.0) ? (l - l0) / l0 : 0.0;
         file << b.i << " " << b.j << " " << b.l0 << " " << l << " " << b.l_break << " " << elongation << "\n";
     }
 
