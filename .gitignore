@@ -11,6 +11,7 @@ Thumbs.db
 
 # CMake and native build output
 /build/
+/build-cuda/
 /cmake-build-*/
 CMakeFiles/
 CMakeCache.txt

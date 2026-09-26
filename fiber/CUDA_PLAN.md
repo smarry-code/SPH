@@ -287,6 +287,8 @@ stream F:  FiberIndex → Fiber-Fiber search+prim → compute (+dt) ────
 
 ### Г0. Инструменты и каркас сборки
 
+**Выполнено 2026-09-27.** `cmake/SphCuda.cmake`, пресеты `cuda`/`cuda-linux`, `tools/cuda_env.bat`, `test_cuda_toolchain(_fp32)`, `cuda_microbench`, how-to и ADR-009. Микробенчмарк RTX 4050: память 170 ГБ/с, FP32 9.4 TFLOP/s, FP64 0.17 TFLOP/s (1:55). CUDA 12.6 с MSVC 14.51 не собирает даже с `-allow-unsupported-compiler` (падение `cudafe++`) — проверка 12.x переносится на Linux-машину. Пресет `cuda-linux` не проверен.
+
 Спайк выбора компилятора **выполнен 2026-09-27** вне репозитория (§1.1), связка выбрана владельцем (Р-Г1). Осталось встроить это в сборку проекта:
 
 - `cmake/SphCuda.cmake`: опция `SPH_ENABLE_CUDA` (OFF по умолчанию), `enable_language(CUDA)` с `CMAKE_CUDA_COMPILER=nvcc`, `find_package(CUDAToolkit 12.4)`, `SPH_CUDA_ARCHITECTURES` (Р-Г1а), `CUDA::cudart_static`, `CMAKE_CUDA_STANDARD 20`. Флаги `nvcc`: `--extended-lambda`, `-DNOMINMAX`; при MSVC-хосте — `-Xcompiler=/Zc:preprocessor,/Zc:__cplusplus,/utf-8,/EHsc,/W4`. На Linux — `CMAKE_CUDA_HOST_COMPILER=clang++` (с откатом на GCC, если `nvcc` не поддерживает эту версию Clang). Понятная ошибка конфигурации при CUDA < 12.4, при попытке взять Clang как компилятор CUDA и при конфигурации вне окружения MSVC на Windows (`cl` не найден).

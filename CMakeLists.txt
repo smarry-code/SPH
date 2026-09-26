@@ -39,6 +39,12 @@ set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") #
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
 
+# --- CUDA-бэкенд (fiber/CUDA_PLAN.md, этап Г0): опция SPH_ENABLE_CUDA,
+#     по умолчанию OFF — тогда файл сразу возвращается через return() и не
+#     трогает ни языки, ни флаги CPU-целей. Детали — cmake/SphCuda.cmake,
+#     функция sph_cuda_configure_target() используется ниже для CUDA-целей.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SphCuda.cmake)
+
 # --- Конфигурация по умолчанию ----------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -871,4 +877,49 @@ if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
 elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(demo_fiber_net PRIVATE -fopenmp)
     target_link_options(demo_fiber_net PRIVATE -fopenmp)
+endif()
+
+# --- CUDA-бэкенд: цели существуют, только если конфигурация прошла через
+#     cmake/SphCuda.cmake с SPH_ENABLE_CUDA=ON (пресет cuda/cuda-linux,
+#     см. docs/02-how-to). При OFF (по умолчанию) этот блок не выполняется
+#     и не влияет ни на цель SPH, ни на тесты выше (fiber/CUDA_PLAN.md, Г0).
+if(SPH_ENABLE_CUDA)
+    # Первый CUDA-тест проекта (tests/cuda/test_cuda_toolchain.cu): ловит
+    # поломку тулчейна (обновление CUDA/драйвера/MSVC/Clang), а не физику —
+    # device-лямбда, cub::DeviceRadixSort/DeviceScan/DeviceReduce, математика
+    # в real_t против CPU, включение заголовков проекта через хост-компилятор
+    # nvcc (cl на Windows). Пара целей по образцу test_regression_fp32: одна
+    # и та же .cu, разный SPH_PRECISION.
+    foreach(_sph_cuda_prec 64 32)
+        if(_sph_cuda_prec EQUAL 64)
+            set(_sph_cuda_t test_cuda_toolchain)
+            set(_sph_cuda_labels "cuda")
+        else()
+            set(_sph_cuda_t test_cuda_toolchain_fp32)
+            set(_sph_cuda_labels "cuda;fp32")
+        endif()
+        add_executable(${_sph_cuda_t} tests/cuda/test_cuda_toolchain.cu)
+        target_include_directories(${_sph_cuda_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_definitions(${_sph_cuda_t} PRIVATE SPH_PRECISION=${_sph_cuda_prec})
+        sph_cuda_configure_target(${_sph_cuda_t})
+        add_test(NAME ${_sph_cuda_t} COMMAND ${_sph_cuda_t})
+        # SKIP_RETURN_CODE 77: тест сам решает, что GPU недоступен
+        # (cudaGetDeviceCount == 0 или ошибка), и возвращает 77 — CTest
+        # показывает "Not Run", а не "Failed".
+        set_tests_properties(${_sph_cuda_t} PROPERTIES
+            LABELS "${_sph_cuda_labels}"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 120)
+    endforeach()
+    unset(_sph_cuda_prec)
+    unset(_sph_cuda_t)
+    unset(_sph_cuda_labels)
+
+    # Микробенчмарк тулчейна (bench/cuda_microbench.cu) — НЕ тест ctest,
+    # отдельная цель: пропускная способность памяти и пиковая арифметика
+    # FP32/FP64 на этой карте, чтобы заранее знать потолок ускорения
+    # каждого режима точности (Р-Г6: рабочий режим — fp32). Числа — в
+    # ADR-009 и fiber/CUDA_PLAN.md §1.1.
+    add_executable(cuda_microbench bench/cuda_microbench.cu)
+    sph_cuda_configure_target(cuda_microbench)
 endif()

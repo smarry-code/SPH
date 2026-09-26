@@ -37,11 +37,43 @@
         "SPH_NATIVE_ARCH": "ON",
         "SPH_OLEVEL": "3"
       }
+    },
+    {
+      "name": "cuda",
+      "displayName": "CUDA (Windows) — nvcc + Clang, SPH_ENABLE_CUDA=ON",
+      "description": "Р-Г1 (fiber/CUDA_PLAN.md): .cu компилирует nvcc, остальной проект — Clang. Требует окружения MSVC (cl в PATH) — запускать через tools\\cuda_env.bat, например: tools\\cuda_env.bat cmake --preset cuda",
+      "inherits": "clang-windows",
+      "binaryDir": "${sourceDir}/build-cuda",
+      "cacheVariables": {
+        "SPH_ENABLE_CUDA": "ON",
+        "CMAKE_CUDA_COMPILER": "nvcc"
+      }
+    },
+    {
+      "name": "cuda-linux",
+      "displayName": "CUDA (Linux) — nvcc + Clang, SPH_ENABLE_CUDA=ON",
+      "description": "Р-Г1а: вторая машина владельца — Linux с NVIDIA неизвестной модели. SPH_CUDA_ARCHITECTURES=native определяет карту сборочной машины на месте (CMake >= 3.24). Пресет не проверен — нет доступа к машине (Г0).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-cuda",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "SPH_USE_OPENMP": "ON",
+        "SPH_NATIVE_ARCH": "OFF",
+        "SPH_OLEVEL": "2",
+        "SPH_ENABLE_CUDA": "ON",
+        "CMAKE_CUDA_COMPILER": "nvcc",
+        "CMAKE_CUDA_HOST_COMPILER": "clang++",
+        "SPH_CUDA_ARCHITECTURES": "native"
+      }
     }
   ],
   "buildPresets": [
     { "name": "clang-windows",        "configurePreset": "clang-windows" },
     { "name": "clang-windows-debug",  "configurePreset": "clang-windows-debug" },
-    { "name": "clang-windows-native", "configurePreset": "clang-windows-native" }
+    { "name": "clang-windows-native", "configurePreset": "clang-windows-native" },
+    { "name": "cuda",                 "configurePreset": "cuda" },
+    { "name": "cuda-linux",           "configurePreset": "cuda-linux" }
   ]
 }
