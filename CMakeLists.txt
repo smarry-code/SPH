@@ -724,3 +724,24 @@ endif()
 
 # --- Каталоги include: заголовки — в include/, исходники — в src/ ------------
 target_include_directories(SPH PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# --- Демонстрационный расчёт: снаряд из SPH-частиц пробивает крестообразную
+#     сеть из двух нитей (fiber/DEMO_VISUALIZATION_TASK.md). НЕ тест: строит
+#     сцену и прогоняет её через продовый time_integration(cfg, fiber::Model&,
+#     ...), чтобы получить кадры sph_output_*.txt/fiber_output_*.txt для
+#     внешней Python-визуализации (experiments/2026-09-26-fiber-net-demo/).
+#     add_test() сознательно не добавляется — это демо-артефакт, не
+#     регрессионный тест (постановка, раздел 8 «Вне скоупа»).
+add_executable(demo_fiber_net experiments/2026-09-26-fiber-net-demo/demo_fiber_net.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(demo_fiber_net PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(demo_fiber_net PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(demo_fiber_net PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(demo_fiber_net PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(demo_fiber_net PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(demo_fiber_net PRIVATE -fopenmp)
+    target_link_options(demo_fiber_net PRIVATE -fopenmp)
+endif()
