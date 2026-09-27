@@ -745,3 +745,22 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(demo_fiber_net PRIVATE -fopenmp)
     target_link_options(demo_fiber_net PRIVATE -fopenmp)
 endif()
+
+# --- Демонстрационный расчёт: менее массивный снаряд пробивает/не пробивает
+#     сеть из 4 слоёв нитей (x,y,x,y), experiments/2026-09-27-fiber-layers-demo/.
+#     НЕ тест: та же архитектура, что demo_fiber_net (продовый
+#     time_integration(cfg, fiber::Model&, ...)), два сценария (pierce/stop)
+#     через argv, add_test() сознательно не добавляется.
+add_executable(demo_fiber_layers experiments/2026-09-27-fiber-layers-demo/demo_fiber_layers.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(demo_fiber_layers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(demo_fiber_layers PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(demo_fiber_layers PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(demo_fiber_layers PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(demo_fiber_layers PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(demo_fiber_layers PRIVATE -fopenmp)
+    target_link_options(demo_fiber_layers PRIVATE -fopenmp)
+endif()
