@@ -98,12 +98,12 @@ std::size_t add_solid_particle(ParticleSystem& sys, std::size_t i, double x0, do
 }
 
 interactions::FiberSolidContactPrimitive make_segment(rhs::index_t a, rhs::index_t b, rhs::index_t s,
-                                                        bool a_is_first, bool b_is_last)
+                                                        long long a_prev, bool b_is_last)
 {
     interactions::FiberSolidContactPrimitive p;
     p.a = a; p.b = b; p.s = s;
     p.has_b = true;
-    p.a_is_first = a_is_first;
+    p.a_prev = a_prev;
     p.b_is_last = b_is_last;
     return p;
 }
@@ -113,12 +113,12 @@ interactions::FiberSolidContactPrimitive make_point(rhs::index_t a, rhs::index_t
     interactions::FiberSolidContactPrimitive p;
     p.a = a; p.s = s;
     p.has_b = false;
-    p.a_is_first = true; // изолированная бусина -- начало и конец совпадают
+    // a_prev остаётся -1 по умолчанию -- изолированная бусина без соседей.
     return p;
 }
 
 // -----------------------------------------------------------------------
-// 1) lambda и clamp: сегмент (a=1,b=2) ВНУТРЕННИЙ (a_is_first=false,
+// 1) lambda и clamp: сегмент (a=1,b=2) ВНУТРЕННИЙ (a_prev=0!=-1,
 //    b_is_last=false) у 4-бусинной прямой нити 0-1-2-3 вдоль оси x, шаг l0;
 //    Solid-частица смещена по z на h < r_f+r_s (гарантированный контакт,
 //    если сегмент примет вклад).
@@ -142,7 +142,7 @@ void test_lambda_and_clamp()
     // (a) t=0.5 (середина сегмента 1-2, x=1.5*l0) -- нормальный контакт.
     {
         add_solid_particle(sys, 0, 1.5 * l0, 0.0, h, mass_s, rho_s, 4);
-        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 0, false, false);
+        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 0, /*a_prev=*/0, false);
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t=0.5 (середина внутреннего сегмента): контакт есть");
@@ -155,7 +155,7 @@ void test_lambda_and_clamp()
     //     ответственность передана сегменту (0,1).
     {
         add_solid_particle(sys, 1, 0.7 * l0, 0.0, h, mass_s, rho_s, 4);
-        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 1, false, false);
+        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 1, /*a_prev=*/0, false);
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(!geom.contact, "t<0 у НЕ первого сегмента: primitive пропущен (ответственность у предыдущего сегмента)");
@@ -165,13 +165,13 @@ void test_lambda_and_clamp()
     //     НЕ последний (next(2)=3!=-1) -> пропуск.
     {
         add_solid_particle(sys, 2, 2.3 * l0, 0.0, h, mass_s, rho_s, 4);
-        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 2, false, false);
+        interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 2, /*a_prev=*/0, false);
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(!geom.contact, "t>=1 у НЕ последнего сегмента: primitive пропущен (ответственность у следующего сегмента)");
     }
 
-    // (d) ПЕРВЫЙ сегмент (0,1): a_is_first=true -- t<0 клэмпится в 0 (законно).
+    // (d) ПЕРВЫЙ сегмент (0,1): a_prev=-1 -- t<0 клэмпится в 0 (законно).
     // Небольшой (не 0.3*l0, как в (b)) отрицательный оффсет по x: клэмп
     // проецирует Solid-частицу на q=x[0] (не на исходную точку под ней), а
     // проникновение delta=r_f+r_s-D считается уже от q -- слишком большой
@@ -179,7 +179,7 @@ void test_lambda_and_clamp()
     // Здесь цель -- проверить именно факт клэмпа при t<0, а не геометрию D.
     {
         add_solid_particle(sys, 3, -0.05 * l0, 0.0, h, mass_s, rho_s, 4);
-        interactions::FiberSolidContactPrimitive prim = make_segment(0, 1, 3, true, false);
+        interactions::FiberSolidContactPrimitive prim = make_segment(0, 1, 3, /*a_prev=*/-1, false);
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t<0 у ПЕРВОГО сегмента: клэмп в 0 -- контакт есть");
@@ -190,7 +190,7 @@ void test_lambda_and_clamp()
     // (тот же небольшой оффсет, см. комментарий у (d)).
     {
         add_solid_particle(sys, 4, 3.05 * l0, 0.0, h, mass_s, rho_s, 4);
-        interactions::FiberSolidContactPrimitive prim = make_segment(2, 3, 4, false, true);
+        interactions::FiberSolidContactPrimitive prim = make_segment(2, 3, 4, /*a_prev=*/1, true);
         interactions::FiberSolidContactGeometry geom =
             interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
         check(geom.contact, "t>=1 у ПОСЛЕДНЕГО сегмента: клэмп в 1 -- контакт есть");
@@ -267,11 +267,13 @@ void test_node_no_double_force()
     // Сегмент (0,1): b=1 -- узел, next(1)=2 -> b_is_last=false. Solid у x=l0
     // даёт t=1 РОВНО -- сегмент НЕ последний -> пропуск (см. решение 3 в
     // шапке fiber_solid_contact.hpp).
-    interactions::FiberSolidContactPrimitive seg01 = make_segment(0, 1, 0, /*a_is_first=*/true, /*b_is_last=*/false);
-    // Сегмент (1,2): a=1 -- узел, prev(1)=0 -> a_is_first=false. Solid у
-    // x=l0=x[a] даёт t=0 РОВНО -- это НЕ ветка "t<0" (обычный нижний конец
-    // диапазона [0,1)), контакт формируется нормально с lambda=0.
-    interactions::FiberSolidContactPrimitive seg12 = make_segment(1, 2, 0, /*a_is_first=*/false, /*b_is_last=*/false);
+    interactions::FiberSolidContactPrimitive seg01 = make_segment(0, 1, 0, /*a_prev=*/-1, /*b_is_last=*/false);
+    // Сегмент (1,2): a=1 -- узел, prev(1)=0 -> a_prev=0. Solid у x=l0=x[a]
+    // даёт t=0 РОВНО -- правило владения пересчитывает t_prev для (0,1) той
+    // же функцией: там та же Solid-частица у x=l0 даёт t_prev=1 РОВНО
+    // (симметрично seg01), т.е. t_prev>=1 -- сегмент (1,2) подтверждён
+    // владельцем узла и принимает контакт с lambda=0.
+    interactions::FiberSolidContactPrimitive seg12 = make_segment(1, 2, 0, /*a_prev=*/0, /*b_is_last=*/false);
 
     interactions::FiberSolidContactGeometry g01 =
         interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, seg01);
@@ -332,7 +334,7 @@ void test_momentum_conservation()
     sys.resize(1);
     add_solid_particle(sys, 0, 1.35 * l0, 0.2 * l0, h, 1.7e-7, 2700.0, 4); // lambda не 0/1, не по оси x
 
-    interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 0, false, false);
+    interactions::FiberSolidContactPrimitive prim = make_segment(1, 2, 0, /*a_prev=*/0, false);
     interactions::FiberSolidContactGeometry geom =
         interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, prim);
     check(geom.contact, "самопроверка: контакт есть");

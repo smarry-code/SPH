@@ -136,6 +136,7 @@
 #include <vector>
 
 #include "fiber/fiber_system.hpp"
+#include "interactions/fiber_contact_common.hpp" // kFiberContactSnapEta, fiber_max_current_bond_length
 #include "param.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
@@ -183,8 +184,9 @@ constexpr double kFiberContactFrictionMinVt = 1e-8;
 // попадают в общую ветку "обе стороны -- точки", деления на 0 не возникает).
 constexpr double kFiberSegmentDegenerateEpsRel = 1e-12;
 
-// Snapping параметров ближайших точек s,t к 0/1 (§2 спецификации, η).
-constexpr double kFiberContactSnapEta = 1e-9;
+// Snapping параметров ближайших точек s,t к 0/1 (§2 спецификации, η) --
+// kFiberContactSnapEta теперь в interactions/fiber_contact_common.hpp (общая
+// с Fiber-Solid-Contact, fiber/fiber_solid_contact_fix.md, §1 п.2).
 
 // ----------------------------------------------------------------------
 // FiberContactPrimitive -- пара сегментов осей нитей A,B (fiber/
@@ -193,7 +195,7 @@ constexpr double kFiberContactSnapEta = 1e-9;
 // a_has_next_segment -- нужны правилу владения (см. шапку файла, пункт 1) и
 // сохранены при построении primitive, чтобы kernel/геометрия не перечитывали
 // topology повторно (тот же приём, что FiberSolidContactPrimitive::
-// a_is_first/b_is_last в fiber_solid_contact.hpp). Симметрично для B.
+// a_prev/b_is_last в fiber_solid_contact.hpp). Симметрично для B.
 // ----------------------------------------------------------------------
 struct FiberContactPrimitive
 {
@@ -211,10 +213,11 @@ struct FiberContactPrimitive
 
 // ----------------------------------------------------------------------
 // fiber_contact_search_radius -- d_max + 2*L_max (см. пункт 3 в шапке
-// файла: вывод неравенства треугольника там же). L_max считается по
-// ТЕКУЩИМ (не номинальным l0!) длинам всех связей topology.bonds --
-// exec.parallel_reduce, тот же паттерн, что остальной CPU backend
-// (rhs/cpu_executor.hpp).
+// файла: вывод неравенства треугольника там же). L_max -- ТЕКУЩАЯ (не
+// номинальная l0!) максимальная длина связи, interactions/
+// fiber_contact_common.hpp::fiber_max_current_bond_length (общая с Fiber-
+// Solid-Contact, fiber/fiber_solid_contact_fix.md, §2 -- вычисление ровно
+// одно, побитово то же, что было здесь до выноса).
 // ----------------------------------------------------------------------
 inline double fiber_contact_search_radius(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                            const fiber::FiberTopology& topology,
@@ -223,20 +226,7 @@ inline double fiber_contact_search_radius(const rhs::CpuExecutor& exec, const fi
     double d_max = 0.0;
     for (const auto& m : materials) d_max = std::max(d_max, m.d);
 
-    const std::size_t nb = topology.bonds.size();
-    const double L_max = exec.parallel_reduce(
-        nb, 0.0,
-        [&](std::size_t k) -> double {
-            const fiber::FiberBond& b = topology.bonds[k];
-            double d2 = 0.0;
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const double dx = state.x[d][b.i] - state.x[d][b.j];
-                d2 += dx * dx;
-            }
-            return std::sqrt(d2);
-        },
-        [](double a, double b) { return std::max(a, b); });
+    const double L_max = fiber_max_current_bond_length(exec, state, topology);
 
     return d_max + 2.0 * L_max;
 }
