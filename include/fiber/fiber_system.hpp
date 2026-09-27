@@ -136,7 +136,12 @@ struct FiberDelta
 // --- FiberMaterial -----------------------------------------------------------
 // Свойства материала нити (fiber/PLAN.md §3.1; fiber/SPH.md, Fiber-Bond и
 // Fiber-Solid-Contact): модуль Юнга, коэффициент Пуассона, диаметр,
-// плотность, критическое удлинение разрыва.
+// плотность, критическое удлинение разрыва, коэффициент динамического
+// трения нить-нить mu_ff (fiber/fiber_friction_implementation.md, §8).
+// mu_ff = 0 по умолчанию — поведение без трения между нитями, как раньше.
+// Поле mu_ff — ПОСЛЕДНЕЕ в структуре: агрегатная инициализация вида
+// FiberMaterial{E, nu, d, rho, eps_break} (используется в тестах) должна
+// продолжать компилироваться и после добавления этого поля.
 struct FiberMaterial
 {
     double E = 0.0;
@@ -144,6 +149,7 @@ struct FiberMaterial
     double d = 0.0;
     double rho = 0.0;
     double eps_break = 0.0;
+    double mu_ff = 0.0;
 };
 
 } // namespace fiber

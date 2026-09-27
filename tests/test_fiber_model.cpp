@@ -252,6 +252,65 @@ void test_malformed_files_throw()
     }
 }
 
+// --- MATERIAL: необязательное седьмое поле mu_ff --------------------------
+// fiber/fiber_friction_implementation.md, §8: коэффициент динамического
+// трения нить-нить. Проверяем чтение формата "6 полей" (обратная
+// совместимость, mu_ff = 0 по умолчанию), формата "7 полей" (mu_ff
+// прочитан точно), и ошибки формата (отрицательный / нечисловой mu_ff).
+void test_material_mu_ff()
+{
+    std::printf("test_material_mu_ff:\n");
+
+    // Существующий формат из 6 полей (kFixturePath из test_topology_and_counts)
+    // — mu_ff должен остаться 0.0 для обоих материалов, старое поведение без
+    // трения не должно измениться.
+    {
+        fiber::Model model;
+        fiber::load_fiber_file(kFixturePath, model);
+        check(model.materials.size() == 2, "6-полевая MATERIAL: 2 материала в таблице");
+        if (model.materials.size() == 2)
+        {
+            check(model.materials[0].mu_ff == 0.0, "6-полевая MATERIAL 0: mu_ff по умолчанию == 0");
+            check(model.materials[1].mu_ff == 0.0, "6-полевая MATERIAL 1: mu_ff по умолчанию == 0");
+        }
+    }
+
+    // MATERIAL с 7 полями: mu_ff = 0.3 читается точно.
+    {
+        const char* path = "__fiber_material_mu_ff_ok.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        fiber::load_fiber_file(path, model);
+        check(model.materials.size() == 1, "7-полевая MATERIAL: 1 материал в таблице");
+        if (model.materials.size() == 1)
+        {
+            check(model.materials[0].mu_ff == 0.3, "7-полевая MATERIAL: mu_ff == 0.3 прочитан точно");
+        }
+    }
+
+    // Отрицательный mu_ff — ошибка формата (исключение).
+    {
+        const char* path = "__fiber_material_mu_ff_negative.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 -0.1\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        bool threw = false;
+        try { fiber::load_fiber_file(path, model); }
+        catch (const std::runtime_error&) { threw = true; }
+        check(threw, "отрицательный mu_ff в MATERIAL бросает исключение");
+    }
+
+    // Нечисловой 7-й токен — ошибка формата (исключение).
+    {
+        const char* path = "__fiber_material_mu_ff_not_number.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 abc\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        bool threw = false;
+        try { fiber::load_fiber_file(path, model); }
+        catch (const std::runtime_error&) { threw = true; }
+        check(threw, "нечисловой mu_ff в MATERIAL бросает исключение");
+    }
+}
+
 // --- body[] --------------------------------------------------------------
 void test_body_from_k_file()
 {
@@ -309,6 +368,7 @@ int main()
     test_fiber_output_writes_expected_values();
     test_dim3_guard_does_not_throw();
     test_malformed_files_throw();
+    test_material_mu_ff();
     test_body_from_k_file();
     test_body_from_shock_tube();
 

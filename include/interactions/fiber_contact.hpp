@@ -69,6 +69,42 @@
 //    (D_ij<d_eff) всё равно проверяется в kernel. l_max — максимум l0 по
 //    topology.bonds (номинальная, недеформированная длина связи; PLAN.md Ф5
 //    явно допускает этот вариант).
+//
+// 4. Трение. Модель — динамическое сухое трение Кулона БЕЗ памяти контакта
+//    (fiber/fiber_friction_implementation.md, целиком). Скорость точки
+//    контакта на каждой стороне строится ИЗ ТЕХ ЖЕ весов/соседей, что уже
+//    использует распределение нормальной силы (w_i/i_has_neighbor/
+//    i_neighbor и симметрично для j, см. FiberContactGeometry и
+//    fiber_contact_point_velocity ниже): v_c = w*v_bead + (1-w)*v_neighbor;
+//    для End-стороны (has_neighbor=false, w=1) это вырождается в v_end —
+//    отдельной формулы не вводится. В вырожденной почти-параллельной ветке
+//    Surface-Surface (см. пункт 1) j трактуется как точка (w_j=1, соседа
+//    нет) — та же формула fiber_contact_point_velocity даёт v_c=v_j без
+//    дополнительного разбора случаев. Итоговая сила F = N*n + F_t
+//    распределяется по бусинам ОДНИМИ И ТЕМИ ЖЕ весами, что и N*n (§5-6
+//    спецификации) — никакого отдельного распределения для трения.
+//    Правило смешения mu для разных материалов вынесено в отдельную функцию
+//    fiber_friction_coefficient (§4/§8 спецификации) — менять только её.
+//    dt_limit (compute_fiber_contact_dt_limit) трением не затрагивается: у
+//    закона Кулона нет собственной жёсткости (в отличие от нормального
+//    закона Герца), характерное время трения не вводит более жёсткого
+//    ограничения, чем уже посчитанное по нормальному контакту.
+//    Одно геометрическое пересечение нитей обычно даёт НЕСКОЛЬКО contact
+//    primitives (см. диагностику ниже) — суммарная сила трения по всем
+//    primitives одного пересечения равна mu*(сумма их N), что согласовано с
+//    суммарной нормальной силой тем же способом (никакой отдельной
+//    нормировки трения на число primitives не вводится).
+//    Известный риск явной схемы интегрирования: при v_t, близкой к нулю,
+//    сила трения на каждом шаге пересчитывается заново по текущему знаку
+//    v_t (модель без памяти, без stick/slip) — это может давать дребезг
+//    (осцилляцию) v_t около нуля с амплитудой порядка mu*N*dt/m за шаг. В
+//    этой итерации это НЕ регуляризуется (нет сглаживания или регуляризации
+//    около v_t=0 сверх порога eps_v, нет тангенциальной пружины) —
+//    статическое трение и stick/slip state machine — отдельная задача
+//    (см. §13 спецификации). mu_ff=0 (значение по умолчанию в
+//    FiberMaterial) обязан давать ПОБИТОВО прежнее поведение — это
+//    единственный жёсткий инвариант регрессии, проверяемый
+//    test_friction_zero_mu_regression.
 // ============================================================================
 #include <algorithm>
 #include <array>
@@ -107,6 +143,13 @@ constexpr double kFiberContactParallelEps = 1e-3;
 
 // Защита от деления на ~0 при нормировке n (совпадающие точки/оси).
 constexpr double kFiberContactMinD = 1e-12;
+
+// Порог |v_t| в м/с для закона трения Кулона (fiber/fiber_friction_implementation.md,
+// §4/§10): нужен ТОЛЬКО как защита от деления на ноль при нормировке v_t и
+// от численного шума около v_t=0 -- не физический параметр модели. Выбран
+// малым по сравнению с характерными скоростями задач проекта (десятые доли
+// -- сотни м/с).
+constexpr double kFiberContactFrictionMinVt = 1e-8;
 
 // ----------------------------------------------------------------------
 // FiberContactCase, FiberContactPrimitive -- primitive Fiber-Fiber-Contact
@@ -439,12 +482,94 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
 }
 
 // ----------------------------------------------------------------------
+// fiber_friction_coefficient -- правило смешения mu_ff двух (возможно
+// разных) материалов нитей (fiber/fiber_friction_implementation.md, §4/§8).
+// Вынесено в ОТДЕЛЬНУЮ функцию сознательно -- если проект примет другое
+// правило смешения, менять нужно ТОЛЬКО её, а не compute_fiber_contact_
+// contributions. Для одинаковых mu_ff возвращается точное (без std::sqrt)
+// значение -- избегаем лишней ошибки округления в самом частом случае (обе
+// нити одного материала).
+// ----------------------------------------------------------------------
+inline double fiber_friction_coefficient(const fiber::FiberMaterial& a, const fiber::FiberMaterial& b)
+{
+    if (a.mu_ff == b.mu_ff) return a.mu_ff;
+    return std::sqrt(a.mu_ff * b.mu_ff);
+}
+
+// ----------------------------------------------------------------------
+// coulomb_friction_force -- чистый (без обращения к FiberState/geometry)
+// закон динамического трения Кулона без памяти контакта
+// (fiber/fiber_friction_implementation.md, §4): v_t -- тангенциальная
+// (перпендикулярная n) составляющая относительной скорости точек контакта;
+// при mu*N>0 и |v_t|>eps_v сила Ft = -mu*N*v_t/|v_t| (направлена против
+// скольжения, |Ft|=mu*N, Ft.n=0 по построению -- v_t уже ортогональна n);
+// иначе Ft=0 (нет скольжения либо нет нормальной силы/трения). dim --
+// compile-time константа проекта (param.hpp); функция компилируется при
+// любом SPH_DIM -- циклы по d<dim корректны для любого dim (тот же паттерн,
+// что и в остальном файле).
+// ----------------------------------------------------------------------
+inline void coulomb_friction_force(const double n[dim], double N, double mu, const double v_rel[dim], double eps_v,
+                                    double Ft[dim])
+{
+    double vn = 0.0;
+    for (std::size_t d = 0; d < dim; ++d) vn += v_rel[d] * n[d];
+
+    double vt[dim];
+    double vt_norm2 = 0.0;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        vt[d] = v_rel[d] - vn * n[d];
+        vt_norm2 += vt[d] * vt[d];
+    }
+    const double vt_norm = std::sqrt(vt_norm2);
+
+    if (mu * N > 0.0 && vt_norm > eps_v)
+    {
+        const double scale = -mu * N / vt_norm;
+        for (std::size_t d = 0; d < dim; ++d) Ft[d] = scale * vt[d];
+    }
+    else
+    {
+        for (std::size_t d = 0; d < dim; ++d) Ft[d] = 0.0;
+    }
+}
+
+// ----------------------------------------------------------------------
+// fiber_contact_point_velocity -- скорость точки контакта на ОДНОЙ стороне
+// (fiber/fiber_friction_implementation.md, §2): v = w*v_bead + (1-w)*v_nb
+// при has_nb, иначе v = v_bead (End-случай -- вся скорость приходится на
+// концевую бусину, w=1 там уже гарантирован compute_fiber_contact_geometry,
+// но эта функция не полагается на конкретное значение w при has_nb=false --
+// читает только v_bead). Использует ТЕ ЖЕ w/сосед, что FiberContactGeometry
+// -- никакой независимой геометрии для трения не вводится (§2 спецификации,
+// шапка файла, пункт 4).
+// ----------------------------------------------------------------------
+inline void fiber_contact_point_velocity(const fiber::FiberState& state, rhs::index_t bead, double w, bool has_nb,
+                                          rhs::index_t nb, double v[dim])
+{
+    if (has_nb)
+    {
+        for (std::size_t d = 0; d < dim; ++d) v[d] = w * state.vx[d][bead] + (1.0 - w) * state.vx[d][nb];
+    }
+    else
+    {
+        for (std::size_t d = 0; d < dim; ++d) v[d] = state.vx[d][bead];
+    }
+}
+
+// ----------------------------------------------------------------------
 // compute_fiber_contact_contributions -- kernel: для каждого primitive с
 // контактом (geom.contact) эмитирует вклады FiberDelta на i, j и (если есть)
 // их соседей i_prev/i_next, j_prev/j_next (до 4 частиц на primitive, SPH.md
 // §3.2). Момент сохраняется точно: сумма вкладов*mass по всем ДО ЧЕТЫРЁХ
-// частиц одного primitive равна нулю (F*n на стороне i, -F*n на стороне j,
-// см. test_fiber_contact.cpp, "сумма импульсов").
+// частиц одного primitive равна нулю -- итоговая сила F = F_n + F_t
+// (F_n = geom.F*n -- нормальный закон Герца, не изменён; F_t -- тангенциальное
+// трение Кулона, fiber/fiber_friction_implementation.md) на стороне i,
+// -F на стороне j, распределены ОДНИМИ И ТЕМИ ЖЕ весами w_i/w_j (см.
+// test_fiber_contact.cpp, "сумма импульсов"). При mu_ff=0 (или mu=0 после
+// смешения) блок трения не выполняется вообще -- выражения для нормальной
+// части остаются буквально теми же, что до внедрения трения (побитовая
+// регрессия, test_friction_zero_mu_regression).
 // ----------------------------------------------------------------------
 inline void compute_fiber_contact_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
@@ -471,11 +596,44 @@ inline void compute_fiber_contact_contributions(
         const double mi = state.mass[prim.i];
         const double mj = state.mass[prim.j];
 
+        // --- Трение (fiber/fiber_friction_implementation.md, §2-§5) ---------
+        // Вычисляется ПОСЛЕ геометрии/нормальной силы Герца (geom.F, geom.n),
+        // но ДО распределения итоговой силы по бусинам -- как требует §9
+        // спецификации. При mu==0 (mu_ff=0 у обеих нитей -- значение по
+        // умолчанию FiberMaterial) has_ft остаётся false и блок ниже не
+        // добавляет НИЧЕГО к di/dj/dnb -- нормальная часть остаётся
+        // побитово такой же, как до внедрения трения.
+        const double mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.i])],
+                                                       materials[static_cast<std::size_t>(state.material_id[prim.j])]);
+        double Ft[dim] = {};
+        bool has_ft = false;
+        if (mu > 0.0)
+        {
+            double v_ci[dim], v_cj[dim];
+            fiber_contact_point_velocity(state, prim.i, geom.w_i, geom.i_has_neighbor, geom.i_neighbor, v_ci);
+            fiber_contact_point_velocity(state, prim.j, geom.w_j, geom.j_has_neighbor, geom.j_neighbor, v_cj);
+            double v_rel[dim];
+            for (std::size_t d = 0; d < dim; ++d) v_rel[d] = v_ci[d] - v_cj[d];
+            coulomb_friction_force(geom.n, geom.F, mu, v_rel, kFiberContactFrictionMinVt, Ft);
+            has_ft = true;
+        }
+
         fiber::FiberDelta di{}, dj{};
         for (std::size_t d = 0; d < dim; ++d)
         {
             di.dv[d] = geom.w_i * geom.F * geom.n[d] / mi;
             dj.dv[d] = -geom.w_j * geom.F * geom.n[d] / mj;
+        }
+        // Ft -- сила на стороне i (n направлена "от j к i", v_rel=v_ci-v_cj,
+        // §5 спецификации: F=F_n+F_t на i, -F на j), поэтому на j действует
+        // -Ft -- тот же знак, что уже применён выше к нормальной части.
+        if (has_ft)
+        {
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                di.dv[d] += geom.w_i * Ft[d] / mi;
+                dj.dv[d] -= geom.w_j * Ft[d] / mj;
+            }
         }
         writer.emit(prim.i, di, static_cast<std::uint64_t>(k), 0);
         writer.emit(prim.j, dj, static_cast<std::uint64_t>(k), 2);
@@ -486,6 +644,8 @@ inline void compute_fiber_contact_contributions(
             const double rem = 1.0 - geom.w_i;
             fiber::FiberDelta dnb{};
             for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] = rem * geom.F * geom.n[d] / m_nb;
+            if (has_ft)
+                for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] += rem * Ft[d] / m_nb;
             writer.emit(geom.i_neighbor, dnb, static_cast<std::uint64_t>(k), 1);
         }
         if (geom.j_has_neighbor)
@@ -494,6 +654,8 @@ inline void compute_fiber_contact_contributions(
             const double rem = 1.0 - geom.w_j;
             fiber::FiberDelta dnb{};
             for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] = -rem * geom.F * geom.n[d] / m_nb;
+            if (has_ft)
+                for (std::size_t d = 0; d < dim; ++d) dnb.dv[d] -= rem * Ft[d] / m_nb;
             writer.emit(geom.j_neighbor, dnb, static_cast<std::uint64_t>(k), 3);
         }
     });
