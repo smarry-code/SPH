@@ -47,6 +47,7 @@
 #include "materials.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "physics/solid_sph_pair.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include "rhs/spatial_index.hpp"
@@ -469,267 +470,50 @@ inline void compute_solid_sph_contributions(
 
         SolidDelta di{}, dj{};
 
-        // --- неразрывность (density.cpp::con_density, тело body) -----------
+        // Математика пары (неразрывность, скорости деформаций/поворота,
+        // импульс+энергия, искусственная вязкость, XSPH) вынесена в
+        // physics::compute_solid_sph_pair (fiber/CUDA_PLAN.md §3.2, этап
+        // Г2) -- построчная копия прежнего тела этого лямбда-кернела,
+        // порядок операций не изменён (побитная регрессия). Здесь -- только
+        // сборка входа из SolidExtended/primitive и раскладка выхода в di/dj.
+        physics::SolidSphPairInput pair_in{};
+        for (std::size_t d = 0; d < dim; ++d)
         {
-            real_t dvx_ij[dim]; // v_i - v_j, как в density.cpp
-            for (std::size_t d = 0; d < dim; ++d) dvx_ij[d] = ext.vx[d][i] - ext.vx[d][j];
-            real_t vcc = 0;
-            for (std::size_t d = 0; d < dim; ++d) vcc += dvx_ij[d] * dwdx[d];
-
-            if (density_method == 1)
-            {
-                di.drho = ext.mass[j] * vcc;
-                dj.drho = ext.mass[i] * vcc;
-            }
-            else if (density_method == 2)
-            {
-                di.drho = (ext.rho[i] / ext.rho[j]) * ext.mass[j] * vcc;
-                dj.drho = (ext.rho[j] / ext.rho[i]) * ext.mass[i] * vcc;
-            }
-            else // density_method == 3 (искусственная диффузия, Bonet-Lok/Molteni-Colagrossi)
-            {
-                const real_t q_i = ext.mass[j] * vcc;
-                const real_t q_j = ext.mass[i] * vcc;
-                const real_t h_ij = real_t(0.5) * (ext.hsml[i] + ext.hsml[j]);
-                real_t rr = 0;
-                real_t dx[dim];
-                for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; rr += dx[d] * dx[d]; }
-                const real_t vi = real_t(1.0) / ext.rho[i], vj = real_t(1.0) / ext.rho[j];
-                const real_t denom = rr + epsilon_h * h_ij * h_ij;
-                const real_t coef_i = real_t(2.0) * (vi / vj - real_t(1.0)) / denom;
-                const real_t coef_j = real_t(2.0) * (vj / vi - real_t(1.0)) / denom;
-                real_t psi_i = 0, psi_j = 0;
-                for (std::size_t d = 0; d < dim; ++d)
-                {
-                    psi_i += (coef_i * dx[d]) * dwdx[d];
-                    psi_j += (coef_j * (-dx[d])) * dwdx[d];
-                }
-                const real_t dVi = ext.mass[i] * vi, dVj = ext.mass[j] * vj;
-                const real_t c0 = real_t(0.5) * (ext.c[i] + ext.c[j]);
-                const real_t D_i = xi * h_ij * c0 * psi_i * dVj;
-                const real_t D_j = xi * h_ij * c0 * psi_j * dVi;
-                di.drho = q_i - ext.rho[i] * D_i;
-                dj.drho = q_j - ext.rho[j] * D_j;
-            }
+            pair_in.x_i[d] = ext.x[d][i];   pair_in.x_j[d] = ext.x[d][j];
+            pair_in.vx_i[d] = ext.vx[d][i]; pair_in.vx_j[d] = ext.vx[d][j];
+            pair_in.dwdx[d] = dwdx[d];
         }
+        pair_in.mass_i = ext.mass[i]; pair_in.mass_j = ext.mass[j];
+        pair_in.rho_i = ext.rho[i];   pair_in.rho_j = ext.rho[j];
+        pair_in.p_i = ext.p[i];       pair_in.p_j = ext.p[j];
+        pair_in.c_i = ext.c[i];       pair_in.c_j = ext.c[j];
+        pair_in.hsml_i = ext.hsml[i]; pair_in.hsml_j = ext.hsml[j];
+        pair_in.sxx_i = ext.sxx[i]; pair_in.syy_i = ext.syy[i]; pair_in.szz_i = ext.szz[i];
+        pair_in.sxy_i = ext.sxy[i]; pair_in.syz_i = ext.syz[i]; pair_in.sxz_i = ext.sxz[i];
+        pair_in.sxx_j = ext.sxx[j]; pair_in.syy_j = ext.syy[j]; pair_in.szz_j = ext.szz[j];
+        pair_in.sxy_j = ext.sxy[j]; pair_in.syz_j = ext.syz[j]; pair_in.sxz_j = ext.sxz[j];
+        pair_in.w = w;
+        pair_in.density_method = density_method;
+        pair_in.pa_sph = pa_sph;
+        pair_in.xi = xi; pair_in.epsilon_h = epsilon_h;
+        pair_in.alpha = alpha; pair_in.beta = beta; pair_in.etq = etq;
 
-        // --- скорости деформаций/поворота (int_force.cpp body1) ------------
+        physics::SolidSphPairOutput pair_out;
+        physics::compute_solid_sph_pair(pair_in, pair_out);
+
+        for (std::size_t d = 0; d < dim; ++d)
         {
-            real_t dvx_ji[dim]; // v_j - v_i, как в int_force.cpp body1
-            for (std::size_t d = 0; d < dim; ++d) dvx_ji[d] = ext.vx[d][j] - ext.vx[d][i];
-
-            if constexpr (dim == 1)
-            {
-                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
-            }
-            else if constexpr (dim == 2)
-            {
-                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
-                di.dexy = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
-                                + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
-                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
-                dj.dexy = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
-                                + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                di.drxy = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
-                                - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                dj.drxy = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
-                                - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-            }
-            else if constexpr (dim == 3)
-            {
-                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
-                di.dezz = (ext.mass[j] * dvx_ji[2] * dwdx[2]) / ext.rho[j];
-                di.dexy = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                di.deyz = real_t(0.5) * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
-                di.dexz = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
-                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
-                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
-                dj.dezz = (ext.mass[i] * dvx_ji[2] * dwdx[2]) / ext.rho[i];
-                dj.dexy = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                dj.deyz = real_t(0.5) * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
-                dj.dexz = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
-                di.drxy = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                di.dryz = real_t(0.5) * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
-                di.drxz = real_t(0.5) * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
-                dj.drxy = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                dj.dryz = real_t(0.5) * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
-                dj.drxz = real_t(0.5) * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
-            }
+            di.dv[d] = pair_out.dv_i[d];       dj.dv[d] = pair_out.dv_j[d];
+            di.xsph[d] = pair_out.xsph_i[d];   dj.xsph[d] = pair_out.xsph_j[d];
         }
-
-        // --- импульс + энергия (int_force.cpp body2, pa_sph 1/2) -----------
-        {
-            real_t dvx_ji[dim];
-            for (std::size_t d = 0; d < dim; ++d) dvx_ji[d] = ext.vx[d][j] - ext.vx[d][i];
-            const real_t rhoij = real_t(1.0) / (ext.rho[i] * ext.rho[j]);
-            real_t he = 0;
-
-            if (pa_sph == 1)
-            {
-                for (std::size_t d = 0; d < dim; ++d)
-                {
-                    real_t h = -(ext.p[i] + ext.p[j]) * dwdx[d];
-                    he += dvx_ji[d] * h; // he использует h ДО добавления члена напряжений (int_force.cpp)
-
-                    if (d == 0)
-                    {
-                        h += (ext.sxx[i] + ext.sxx[j]) * dwdx[0];
-                        if constexpr (dim >= 2) h += (ext.sxy[i] + ext.sxy[j]) * dwdx[1];
-                        if constexpr (dim == 3) h += (ext.sxz[i] + ext.sxz[j]) * dwdx[2];
-                    }
-                    if constexpr (dim >= 2)
-                    {
-                        if (d == 1)
-                        {
-                            h += (ext.sxy[i] + ext.sxy[j]) * dwdx[0] + (ext.syy[i] + ext.syy[j]) * dwdx[1];
-                            if constexpr (dim == 3) h += (ext.syz[i] + ext.syz[j]) * dwdx[2];
-                        }
-                    }
-                    if constexpr (dim == 3)
-                    {
-                        if (d == 2)
-                        {
-                            h += (ext.sxz[i] + ext.sxz[j]) * dwdx[0] + (ext.syz[i] + ext.syz[j]) * dwdx[1]
-                               + (ext.szz[i] + ext.szz[j]) * dwdx[2];
-                        }
-                    }
-
-                    // int_force.cpp (pa_sph==1): "h *= rhoij;" применяется к
-                    // ПОЛНОМУ h (давление+напряжения) ПЕРЕД domножением на
-                    // массу -- в отличие от he, который использует h ДО этого
-                    // домножения (см. "he += ... * h;" выше, до if(d==0)/...).
-                    h *= rhoij;
-                    const real_t dvxdt_i = ext.mass[j] * h;
-                    const real_t dvxdt_j = ext.mass[i] * h;
-                    di.dv[d] += dvxdt_i;
-                    dj.dv[d] += -dvxdt_j;
-
-                    if constexpr (axis_sim && dim == 2)
-                    {
-                        if (d == 0)
-                        {
-                            di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
-                            dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
-                        }
-                        else if (d == 1)
-                        {
-                            di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
-                            dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
-                        }
-                    }
-                }
-                he *= rhoij;
-                di.du += ext.mass[j] * he;
-                dj.du += ext.mass[i] * he;
-            }
-            else // pa_sph == 2
-            {
-                for (std::size_t d = 0; d < dim; ++d)
-                {
-                    real_t h = -(ext.p[i] / (ext.rho[i] * ext.rho[i]) + ext.p[j] / (ext.rho[j] * ext.rho[j])) * dwdx[d];
-                    he += dvx_ji[d] * h;
-
-                    if (d == 0)
-                    {
-                        h += (ext.sxx[i] / (ext.rho[i] * ext.rho[i]) + ext.sxx[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0];
-                        if constexpr (dim >= 2)
-                            h += (ext.sxy[i] / (ext.rho[i] * ext.rho[i]) + ext.sxy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1];
-                        if constexpr (dim == 3)
-                            h += (ext.sxz[i] / (ext.rho[i] * ext.rho[i]) + ext.sxz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
-                    }
-                    if constexpr (dim >= 2)
-                    {
-                        if (d == 1)
-                        {
-                            h += (ext.sxy[i] / (ext.rho[i] * ext.rho[i]) + ext.sxy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0]
-                               + (ext.syy[i] / (ext.rho[i] * ext.rho[i]) + ext.syy[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1];
-                            if constexpr (dim == 3)
-                                h += (ext.syz[i] / (ext.rho[i] * ext.rho[i]) + ext.syz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
-                        }
-                    }
-                    if constexpr (dim == 3)
-                    {
-                        if (d == 2)
-                        {
-                            h += (ext.sxz[i] / (ext.rho[i] * ext.rho[i]) + ext.sxz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[0]
-                               + (ext.syz[i] / (ext.rho[i] * ext.rho[i]) + ext.syz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[1]
-                               + (ext.szz[i] / (ext.rho[i] * ext.rho[i]) + ext.szz[j] / (ext.rho[j] * ext.rho[j])) * dwdx[2];
-                        }
-                    }
-
-                    const real_t dvxdt_i = ext.mass[j] * h;
-                    const real_t dvxdt_j = ext.mass[i] * h;
-                    di.dv[d] += dvxdt_i;
-                    dj.dv[d] += -dvxdt_j;
-
-                    if constexpr (axis_sim && dim == 2)
-                    {
-                        if (d == 0)
-                        {
-                            di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
-                            dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
-                        }
-                        else if (d == 1)
-                        {
-                            di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
-                            dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
-                        }
-                    }
-                }
-                di.du += ext.mass[j] * he;
-                dj.du += ext.mass[i] * he;
-            }
-        }
-
-        // --- искусственная вязкость (art_visc.cpp) --------------------------
-        {
-            const real_t mhsml = real_t(0.5) * (ext.hsml[i] + ext.hsml[j]);
-            real_t dvx_iminusj[dim], dx[dim];
-            real_t vr = 0, rr = 0;
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                dvx_iminusj[d] = ext.vx[d][i] - ext.vx[d][j];
-                dx[d] = ext.x[d][i] - ext.x[d][j];
-                vr += dvx_iminusj[d] * dx[d];
-                rr += dx[d] * dx[d];
-            }
-            if (vr < 0)
-            {
-                const real_t muv = mhsml * vr / (rr + mhsml * mhsml * etq * etq);
-                const real_t mc = real_t(0.5) * (ext.c[i] + ext.c[j]);
-                const real_t mrho = real_t(0.5) * (ext.rho[i] + ext.rho[j]);
-                const real_t piv = (beta * muv - alpha * mc) * muv / mrho;
-                for (std::size_t d = 0; d < dim; ++d)
-                {
-                    const real_t h = -piv * dwdx[d];
-                    const real_t dvxdt_i = ext.mass[j] * h;
-                    const real_t dvxdt_j = ext.mass[i] * h;
-                    di.dv[d] += dvxdt_i;
-                    dj.dv[d] += -dvxdt_j;
-                    const real_t dedt_i = ext.mass[j] * dvx_iminusj[d] * h;
-                    const real_t dedt_j = ext.mass[i] * dvx_iminusj[d] * h;
-                    di.du += -dedt_i; // Acc::add(dedt[i], -(dedt_i)) в art_visc.cpp
-                    dj.du += -dedt_j;
-                }
-            }
-        }
-
-        // --- XSPH (av_vel.cpp) ----------------------------------------------
-        {
-            const real_t rho_sum = ext.rho[i] + ext.rho[j];
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const real_t dvx_ij = ext.vx[d][i] - ext.vx[d][j];
-                const real_t av_i = real_t(2.0) * ext.mass[j] * dvx_ij / rho_sum * w;
-                const real_t av_j = real_t(2.0) * ext.mass[i] * dvx_ij / rho_sum * w;
-                di.xsph[d] += -av_i;
-                dj.xsph[d] += av_j;
-            }
-        }
+        di.drho = pair_out.drho_i; dj.drho = pair_out.drho_j;
+        di.du = pair_out.du_i;     dj.du = pair_out.du_j;
+        di.dexx = pair_out.dexx_i; di.deyy = pair_out.deyy_i; di.dezz = pair_out.dezz_i;
+        di.dexy = pair_out.dexy_i; di.dexz = pair_out.dexz_i; di.deyz = pair_out.deyz_i;
+        dj.dexx = pair_out.dexx_j; dj.deyy = pair_out.deyy_j; dj.dezz = pair_out.dezz_j;
+        dj.dexy = pair_out.dexy_j; dj.dexz = pair_out.dexz_j; dj.deyz = pair_out.deyz_j;
+        di.drxy = pair_out.drxy_i; di.drxz = pair_out.drxz_i; di.dryz = pair_out.dryz_i;
+        dj.drxy = pair_out.drxy_j; dj.drxz = pair_out.drxz_j; dj.dryz = pair_out.dryz_j;
 
         int w_id = rhs::CpuExecutor::worker_id();
         if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;

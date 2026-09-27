@@ -1078,6 +1078,36 @@ if(SPH_ENABLE_CUDA)
     unset(_sph_cuda_t)
     unset(_sph_cuda_labels)
 
+    # Пробная цель этапа Г2 (fiber/CUDA_PLAN.md §3.2/§4): include/physics/*
+    # компилируются и вызываются из __global__-функции в fp64 и fp32 — сам
+    # факт сборки .cu ловит несовместимость этих заголовков с device-кодом
+    # nvcc, которая не видна в обычной CPU-сборке (Clang). SPH_DIM=3 —
+    # первый целевой путь Solid на GPU (Р-Г7), собственные объектники не
+    # нужны: physics/* не используют ParticleSystem/SimulationConfig, только
+    # param.hpp/precision.hpp. По образцу test_cuda_toolchain — пара целей
+    # (SPH_PRECISION 64/32), метка cuda(;fp32), SKIP_RETURN_CODE 77.
+    foreach(_sph_cuda_prec 64 32)
+        if(_sph_cuda_prec EQUAL 64)
+            set(_sph_cuda_t physics_compile_probe)
+            set(_sph_cuda_labels "cuda")
+        else()
+            set(_sph_cuda_t physics_compile_probe_fp32)
+            set(_sph_cuda_labels "cuda;fp32")
+        endif()
+        add_executable(${_sph_cuda_t} tests/cuda/physics_compile_probe.cu)
+        target_include_directories(${_sph_cuda_t} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_definitions(${_sph_cuda_t} PRIVATE SPH_PRECISION=${_sph_cuda_prec} SPH_DIM=3)
+        sph_cuda_configure_target(${_sph_cuda_t})
+        add_test(NAME ${_sph_cuda_t} COMMAND ${_sph_cuda_t})
+        set_tests_properties(${_sph_cuda_t} PROPERTIES
+            LABELS "${_sph_cuda_labels}"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 120)
+    endforeach()
+    unset(_sph_cuda_prec)
+    unset(_sph_cuda_t)
+    unset(_sph_cuda_labels)
+
     # Микробенчмарк тулчейна (bench/cuda_microbench.cu) — НЕ тест ctest,
     # отдельная цель: пропускная способность памяти и пиковая арифметика
     # FP32/FP64 на этой карте, чтобы заранее знать потолок ускорения
