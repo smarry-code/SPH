@@ -1,0 +1,9 @@
+data/pierce/sph_output_*.txt
+data/pierce/fiber_output_*.txt
+data/pierce/sph_gp.csv
+data/pierce/log.txt
+data/stop/sph_output_*.txt
+data/stop/fiber_output_*.txt
+data/stop/sph_gp.csv
+data/stop/log.txt
+data/calib*/
