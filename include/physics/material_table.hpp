@@ -1,28 +1,41 @@
 #pragma once
 // physics/material_table.hpp
-// POD-таблица материалов для Solid-Contact -- fiber/CUDA_PLAN.md §3.2, этап
-// Г2 (часть "Solid-Contact"): materials.hpp::Materials хранит константы в
-// std::vector/std::vector<std::vector<...>>, что запрещено в SPH_HD-коде
-// (план §3.2, "Правила кода"). MaterialTable -- фиксированного размера копия
-// РОВНО того, что нужно compute_solid_contact_pair (physics/
-// solid_contact_pair.hpp): модуль сдвига G по itype (используется в pr.g_eff
-// -- ветка Герца типа 1). Упругие константы (E, nu; materials.hpp::
-// elastic_by_itype) сюда не входят -- они нужны Fiber-Solid-Contact, который
-// в объём этой части Г2 не входит (fiber/CUDA_PLAN.md, задание координатора:
-// "Не трогай Fiber-Fiber, Fiber-Solid").
+// POD-таблицы материалов -- fiber/CUDA_PLAN.md §3.2, этап Г2:
+// materials.hpp::Materials хранит константы в std::vector/
+// std::vector<std::vector<...>>, что запрещено в SPH_HD-коде (план §3.2,
+// "Правила кода"). MaterialTable -- фиксированного размера копия РОВНО
+// того, что нужно compute_solid_contact_pair (physics/solid_contact_pair.hpp,
+// часть "Solid-Contact"): модуль сдвига G по itype (используется в
+// pr.g_eff -- ветка Герца типа 1).
 //
-// build_material_table() -- НЕ SPH_HD: собирает таблицу из Materials
-// (std::vector) один раз при подготовке параметров RHS (как MaterialTable в
-// целом по плану §3.1: "передаётся в ядра по значению или через
-// __constant__"), не вызывается из device-кода.
+// ElasticTable (часть "Fiber-Solid-Contact", этот же файл по списку §3.2:
+// "MaterialTable, ElasticTable, FiberMaterialTable") -- фиксированного
+// размера копия того, что нужно compute_fiber_solid_contact_geometry
+// (physics/fiber_solid_geom.hpp): упругие константы (E, nu) Solid-частицы.
+// materials.hpp::elastic_by_itype возвращает std::optional<ElasticProps> и
+// принимает Materials -- недопустимо в SPH_HD-коде так же, как и
+// shear_modulus_by_itype. FiberMaterialTable (таблица по НЕСКОЛЬКИМ
+// материалам НИТЕЙ) в объём этой части Г2 не входит -- fiber::FiberMaterial
+// (fiber/fiber_system.hpp) уже POD (E, nu, d, rho, eps_break), вызывающая
+// сторона (interactions/fiber_bond.hpp, interactions/fiber_contact.hpp,
+// interactions/fiber_solid_contact.hpp) читает нужные поля КОНКРЕТНОГО
+// материала пары/primitive и передаёт их как скаляры (см. обоснование в
+// physics/fiber_bond_pair.hpp) -- таблица-реестр по material_id понадобится,
+// когда этот выбор перейдёт на GPU (части Г6-Г8).
 //
-// material_shear_modulus() -- построчная копия диспетчера
-// materials.hpp::shear_modulus_by_itype над этой POD-таблицей вместо
-// Materials; та же логика (int_force.cpp:636-652), тот же результат бит в
-// бит для тех же itype.
+// build_material_table()/build_elastic_table() -- НЕ SPH_HD: собирают
+// таблицу из Materials (std::vector/std::optional) один раз при подготовке
+// параметров RHS (как MaterialTable в целом по плану §3.1: "передаётся в
+// ядра по значению или через __constant__"), не вызываются из device-кода.
+//
+// material_shear_modulus()/elastic_table_lookup() -- построчная копия
+// диспетчеров materials.hpp::shear_modulus_by_itype/elastic_by_itype (только
+// индексация/диапазон -- сама формула E,nu уже посчитана в
+// build_elastic_table) над POD-таблицей вместо Materials; тот же результат
+// бит в бит для тех же itype.
 #include <cstddef>
 
-#include "materials.hpp"  // Materials (сборка таблицы, не SPH_HD)
+#include "materials.hpp"  // Materials, ElasticProps, elastic_by_itype (сборка таблиц, не SPH_HD)
 #include "physics/hd.hpp" // SPH_HD
 
 namespace physics
@@ -65,6 +78,90 @@ SPH_HD inline real_t material_shear_modulus(const MaterialTable& t, int itype)
                                                                                     : real_t(0.0);
     }
     return real_t(0.0);
+}
+
+// ----------------------------------------------------------------------
+// ElasticTable -- POD-аналог MaterialTable для (E, nu) Solid-частиц, нужных
+// Fiber-Solid-Contact (см. шапку файла). Та же индексация itype, что у
+// MaterialTable; "не определено" (materials.hpp::elastic_by_itype вернул
+// std::nullopt -- K<=0 или G<=0, напр. газ/вода itype 1-2) кодируется
+// отдельным bool-флагом has[k]/jh2_has[k], т.к. std::optional запрещён в
+// SPH_HD-коде.
+// ----------------------------------------------------------------------
+struct ElasticTable
+{
+    static constexpr std::size_t kMetalCount = MaterialTable::kMetalCount;
+    static constexpr std::size_t kJh2Count = MaterialTable::kJh2Count;
+
+    real_t E[kMetalCount] = {};
+    real_t nu[kMetalCount] = {};
+    bool has[kMetalCount] = {};
+
+    real_t jh2_E[kJh2Count] = {};
+    real_t jh2_nu[kJh2Count] = {};
+    bool jh2_has[kJh2Count] = {};
+};
+
+inline ElasticTable build_elastic_table(const Materials& m)
+{
+    ElasticTable t;
+    for (std::size_t k = 0; k < ElasticTable::kMetalCount; ++k)
+    {
+        const int itype = static_cast<int>(k + Materials::n_Me);
+        const auto es = elastic_by_itype(m, itype);
+        t.has[k] = es.has_value();
+        if (es)
+        {
+            t.E[k] = es->E;
+            t.nu[k] = es->nu;
+        }
+    }
+    for (std::size_t k = 0; k < ElasticTable::kJh2Count; ++k)
+    {
+        const int itype = static_cast<int>(k + 10);
+        const auto es = elastic_by_itype(m, itype);
+        t.jh2_has[k] = es.has_value();
+        if (es)
+        {
+            t.jh2_E[k] = es->E;
+            t.jh2_nu[k] = es->nu;
+        }
+    }
+    return t;
+}
+
+// Побитная копия диспетчера materials.hpp::elastic_by_itype (только
+// индексация/диапазон -- сама формула E,nu уже посчитана в
+// build_elastic_table) над ElasticTable вместо Materials. Возвращает false,
+// если для itype нет упругих констант (itype вне диапазона ЛИБО
+// elastic_by_itype вернул nullopt для него) -- E/nu не трогает (вызывающая
+// сторона обязана трактовать false как "не определено", как и std::nullopt
+// исходной функции).
+SPH_HD inline bool elastic_table_lookup(const ElasticTable& t, int itype, real_t& E, real_t& nu)
+{
+    if (itype >= 3 && itype <= 9)
+    {
+        const int k = itype - static_cast<int>(Materials::n_Me);
+        if (k >= 0 && static_cast<std::size_t>(k) < ElasticTable::kMetalCount && t.has[static_cast<std::size_t>(k)])
+        {
+            E = t.E[static_cast<std::size_t>(k)];
+            nu = t.nu[static_cast<std::size_t>(k)];
+            return true;
+        }
+        return false;
+    }
+    if (itype == 10 || itype == 11)
+    {
+        const int k = itype - 10;
+        if (k >= 0 && static_cast<std::size_t>(k) < ElasticTable::kJh2Count && t.jh2_has[static_cast<std::size_t>(k)])
+        {
+            E = t.jh2_E[static_cast<std::size_t>(k)];
+            nu = t.jh2_nu[static_cast<std::size_t>(k)];
+            return true;
+        }
+        return false;
+    }
+    return false;
 }
 
 } // namespace physics

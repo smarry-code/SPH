@@ -80,6 +80,7 @@
 
 #include "fiber/fiber_system.hpp"
 #include "param.hpp"
+#include "physics/fiber_contact_geom.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include "rhs/spatial_index.hpp"
@@ -92,21 +93,14 @@ namespace interactions
 // (rhs/contributions.hpp, «Детерминизм»); отличается от kFiberBondInteractionType.
 constexpr std::uint32_t kFiberFiberContactInteractionType = 2;
 
-// Порог |p_i x p_j| < eps -- нити считаются "почти параллельными" (Surface-
-// Surface система [p_i n -p_j] вырождена, знаменатель 2x2-решения ~ eps^2).
-// eps -- безразмерный (|p_i x p_j| = sin(угол между p_i,p_j) для единичных
-// векторов). Выбрано ближе к консервативному концу диапазона, предложенного
-// PLAN.md (1e-6..1e-3): при eps=1e-3 знаменатель решения >= 1e-6, что на
-// много порядков выше плавающего эпсилон (~1e-16) -- решение остаётся
-// численно устойчивым (см. разбор в верхнем комментарии файла, пункт 1),
-// P_ij/P_ji при cr_norm вблизи eps могут получаться большими, но это не
-// приводит к NaN/Inf: итоговая проверка D_ij>=d_eff (нет контакта) либо
-// weight-формула (branch "иначе -> 0") гасят большие |P| корректно
-// (test_fiber_contact.cpp, "почти параллельные нити").
-constexpr real_t kFiberContactParallelEps = real_t(1e-3);
-
-// Защита от деления на ~0 при нормировке n (совпадающие точки/оси).
-constexpr real_t kFiberContactMinD = real_t(1e-12);
+// Порог |p_i x p_j| < eps ("почти параллельные нити") и защита от деления на
+// ~0 при нормировке n -- fiber/CUDA_PLAN.md §3.2, этап Г2 (часть "Fiber-
+// Fiber-Contact"): значения и обоснование (диапазон PLAN.md 1e-6..1e-3,
+// устойчивость решения, test_fiber_contact.cpp "почти параллельные нити")
+// перенесены БЕЗ ИЗМЕНЕНИЙ в physics::kFiberContactParallelEps/
+// kFiberContactMinD (physics/fiber_contact_geom.hpp) вместе с самой
+// геометрией (compute_fiber_contact_geometry ниже) -- используются только
+// там, здесь оставлен только комментарий-указатель.
 
 // ----------------------------------------------------------------------
 // FiberContactCase, FiberContactPrimitive -- primitive Fiber-Fiber-Contact
@@ -248,6 +242,15 @@ struct FiberContactGeometry
     rhs::index_t j_neighbor = 0;
 };
 
+// fiber/CUDA_PLAN.md §3.2, этап Г2 (часть "Fiber-Fiber-Contact"): вся
+// геометрия (4 случая, вырожденная ветка, сила Герца, веса "w_ij") вынесена
+// в physics::compute_fiber_contact_geometry (physics/fiber_contact_geom.hpp)
+// -- SPH_HD-функция, общая для CPU и (в будущей части Г7) GPU. Здесь --
+// только сборка входа из FiberState/FiberTopology/FiberMaterial (points,
+// материалы) и раскладка выхода в FiberContactGeometry (в т.ч. перевод
+// i_neighbor_is_prev/j_neighbor_is_prev в rhs::index_t по prim.i_prev/
+// i_next/j_prev/j_next -- индексы знает только эта, topology-осведомлённая,
+// сторона).
 inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberState& state,
                                                              const std::vector<fiber::FiberMaterial>& materials,
                                                              const FiberContactPrimitive& prim)
@@ -259,180 +262,55 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
     }
     else
     {
-        using Vec3 = std::array<real_t, 3>;
-        auto sub = [](const Vec3& a, const Vec3& b) -> Vec3 { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };
-        auto dot = [](const Vec3& a, const Vec3& b) -> real_t { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
-        auto norm = [&](const Vec3& a) -> real_t { return std::sqrt(dot(a, a)); };
-        auto cross = [](const Vec3& a, const Vec3& b) -> Vec3 {
-            return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
-        };
-        auto point = [&](rhs::index_t k) -> Vec3 { return {state.x[0][k], state.x[1][k], state.x[2][k]}; };
-        // "Назад" по нити -- normalize(x[prev]-x[next]); знак/ориентация
-        // выведены и задокументированы в шапке файла, пункт 1.
-        auto direction_backward = [&](long long prev, long long next) -> Vec3 {
-            const Vec3 xp = point(static_cast<rhs::index_t>(prev));
-            const Vec3 xn = point(static_cast<rhs::index_t>(next));
-            Vec3 v = sub(xp, xn);
-            const real_t len = norm(v);
-            if (len > 0) { v[0] /= len; v[1] /= len; v[2] /= len; }
-            return v;
-        };
-
         const rhs::index_t i = prim.i, j = prim.j;
-        const Vec3 xi = point(i);
-        const Vec3 xj = point(j);
-        const Vec3 r = sub(xi, xj); // x_ij := x_i - x_j (см. шапку файла)
-
-        real_t P_ij = 0, P_ji = 0;
-        bool i_surface = false; // используется ли Surface-формула (P_ij) для i
-        bool j_surface = false;
-        Vec3 n{};
-        real_t D = 0;
-
-        if (prim.case_ == FiberContactCase::EndEnd)
-        {
-            const Vec3 diff = r;
-            D = norm(diff);
-            if (D < kFiberContactMinD) return geom; // совпадающие бусины -- пропуск, защита от NaN
-            n = {diff[0] / D, diff[1] / D, diff[2] / D};
-        }
-        else if (prim.case_ == FiberContactCase::SurfaceEnd)
-        {
-            const Vec3 p_i = direction_backward(prim.i_prev, prim.i_next);
-            P_ij = dot(p_i, sub(xj, xi));
-            const Vec3 Q_i = {xi[0] + P_ij * p_i[0], xi[1] + P_ij * p_i[1], xi[2] + P_ij * p_i[2]};
-            const Vec3 diff = sub(Q_i, xj);
-            D = norm(diff);
-            if (D < kFiberContactMinD) return geom;
-            n = {diff[0] / D, diff[1] / D, diff[2] / D};
-            i_surface = true;
-        }
-        else if (prim.case_ == FiberContactCase::EndSurface)
-        {
-            const Vec3 p_j = direction_backward(prim.j_prev, prim.j_next);
-            P_ji = dot(p_j, sub(xi, xj));
-            const Vec3 Q_j = {xj[0] + P_ji * p_j[0], xj[1] + P_ji * p_j[1], xj[2] + P_ji * p_j[2]};
-            const Vec3 diff = sub(xi, Q_j);
-            D = norm(diff);
-            if (D < kFiberContactMinD) return geom;
-            n = {diff[0] / D, diff[1] / D, diff[2] / D};
-            j_surface = true;
-        }
-        else // SurfaceSurface
-        {
-            const Vec3 p_i = direction_backward(prim.i_prev, prim.i_next);
-            const Vec3 p_j = direction_backward(prim.j_prev, prim.j_next);
-            const Vec3 cr = cross(p_i, p_j);
-            const real_t cr_norm = norm(cr);
-
-            if (cr_norm < kFiberContactParallelEps)
-            {
-                // Нити почти параллельны -- система [p_i n -p_j] вырождена
-                // (fiber/PLAN.md Ф5, fiber/SPH.md «Fiber-Fiber-Contact»):
-                // переход на формулу Surface-End. Детерминированный выбор --
-                // i остаётся "поверхностной" стороной (i<j по построению
-                // поиска), j трактуется как точка: w_j=1, вклад j НЕ
-                // распределяется на его соседей в этой редкой вырожденной
-                // ветке (сознательное упрощение, см. шапку файла).
-                P_ij = dot(p_i, sub(xj, xi));
-                const Vec3 Q_i = {xi[0] + P_ij * p_i[0], xi[1] + P_ij * p_i[1], xi[2] + P_ij * p_i[2]};
-                const Vec3 diff = sub(Q_i, xj);
-                D = norm(diff);
-                if (D < kFiberContactMinD) return geom;
-                n = {diff[0] / D, diff[1] / D, diff[2] / D};
-                i_surface = true;
-            }
-            else
-            {
-                // Ближайшие точки двух прямых (2x2 система из условия
-                // перпендикулярности Q_i-Q_j обеим p_i,p_j -- эквивалентна
-                // решению [p_i n -p_j]*[P_ij,D_ij,P_ji]^T=x_ij относительно
-                // P_ij,P_ji при уже известной n=+-(p_i x p_j)/|..|):
-                const real_t c = dot(p_i, p_j);
-                const real_t denom = real_t(1.0) - c * c; // == cr_norm^2 (>= eps^2 здесь)
-                const real_t rpi = dot(r, p_i);
-                const real_t rpj = dot(r, p_j);
-                P_ji = (rpj - c * rpi) / denom;
-                P_ij = c * P_ji - rpi;
-                const Vec3 Q_i = {xi[0] + P_ij * p_i[0], xi[1] + P_ij * p_i[1], xi[2] + P_ij * p_i[2]};
-                const Vec3 Q_j = {xj[0] + P_ji * p_j[0], xj[1] + P_ji * p_j[1], xj[2] + P_ji * p_j[2]};
-                const Vec3 diff = sub(Q_i, Q_j);
-                D = norm(diff);
-                if (D < kFiberContactMinD)
-                {
-                    // Оси фактически пересекаются (D==0) -- нормаль берём из
-                    // p_i x p_j, ориентированную "от j к i" (dot(n,r)>=0).
-                    n = {cr[0] / cr_norm, cr[1] / cr_norm, cr[2] / cr_norm};
-                    if (dot(n, r) < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; }
-                    D = 0;
-                }
-                else
-                {
-                    n = {diff[0] / D, diff[1] / D, diff[2] / D};
-                }
-                i_surface = true;
-                j_surface = true;
-            }
-        }
-
-        // P_ij/P_ji заполняются ВСЕГДА, когда геометрия дошла до этой точки
-        // (даже если ниже окажется, что контакта нет, D>=d_eff) -- см.
-        // комментарий у полей FiberContactGeometry.
-        geom.P_ij = P_ij;
-        geom.P_ji = P_ji;
-
-        // --- Hertz-сила (см. пункт 2 в шапке файла) -------------------------
         const fiber::FiberMaterial& mat_i = materials[static_cast<std::size_t>(state.material_id[i])];
         const fiber::FiberMaterial& mat_j = materials[static_cast<std::size_t>(state.material_id[j])];
-        const real_t ri = real_t(0.5) * mat_i.d;
-        const real_t rj = real_t(0.5) * mat_j.d;
-        const real_t d_eff = ri + rj;
-        if (!(D < d_eff)) return geom; // нет проникновения
 
-        const real_t delta = d_eff - D;
-        const real_t inv_Estar = (mat_i.E > 0 ? (real_t(1.0) - mat_i.nu * mat_i.nu) / mat_i.E : real_t(0.0)) +
-                                  (mat_j.E > 0 ? (real_t(1.0) - mat_j.nu * mat_j.nu) / mat_j.E : real_t(0.0));
-        if (!(inv_Estar > 0)) return geom; // некорректный материал (E<=0 с обеих сторон) -- защита
-        const real_t E_star = real_t(1.0) / inv_Estar;
-        const real_t R_star = (ri > 0 && rj > 0) ? (ri * rj) / (ri + rj) : real_t(0.0);
-        const real_t F = (real_t(4.0) / real_t(3.0)) * E_star * std::sqrt(R_star) * std::pow(delta, real_t(1.5));
+        physics::FiberContactGeomInput in{};
+        in.case_ = static_cast<int>(prim.case_); // та же нумерация 0..3, см. physics::FiberContactCase
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            in.x_i[d] = state.x[d][i];
+            in.x_j[d] = state.x[d][j];
+        }
+        // x_*_prev/x_*_next читаются physics-функцией ТОЛЬКО когда case_
+        // отводит этой стороне Surface-роль (prev!=-1 && next!=-1
+        // гарантировано классификацией case_, см. build_fiber_contact_search) --
+        // заполняем безусловно там, где индекс валиден.
+        if (prim.i_prev != -1)
+            for (std::size_t d = 0; d < dim; ++d) in.x_i_prev[d] = state.x[d][static_cast<rhs::index_t>(prim.i_prev)];
+        if (prim.i_next != -1)
+            for (std::size_t d = 0; d < dim; ++d) in.x_i_next[d] = state.x[d][static_cast<rhs::index_t>(prim.i_next)];
+        if (prim.j_prev != -1)
+            for (std::size_t d = 0; d < dim; ++d) in.x_j_prev[d] = state.x[d][static_cast<rhs::index_t>(prim.j_prev)];
+        if (prim.j_next != -1)
+            for (std::size_t d = 0; d < dim; ++d) in.x_j_next[d] = state.x[d][static_cast<rhs::index_t>(prim.j_next)];
 
-        geom.contact = true;
-        geom.D = D;
-        geom.delta = delta;
-        geom.F = F;
-        geom.n[0] = n[0];
-        geom.n[1] = n[1];
-        geom.n[2] = n[2];
+        in.r_i = real_t(0.5) * mat_i.d;
+        in.r_j = real_t(0.5) * mat_j.d;
+        in.E_i = mat_i.E; in.nu_i = mat_i.nu;
+        in.E_j = mat_j.E; in.nu_j = mat_j.nu;
 
-        // --- Веса и соседи (SPH.md, "w_ij") ----------------------------------
-        // surface_role==false (End) -> w=1, соседа нет (SPH.md: контакт с
-        // концом нити прикладывается целиком к концевой бусине).
-        auto side_weight = [&](bool surface_role, real_t P, long long prev, long long next, const Vec3& xs,
-                                real_t& w_out, bool& has_nb, rhs::index_t& nb_out) {
-            if (!surface_role)
-            {
-                w_out = real_t(1.0);
-                has_nb = false;
-                return;
-            }
-            // surface_role==true подразумевает Surface-роль по классификации
-            // primitive (Р8) => частица внутренняя => prev!=-1 && next!=-1
-            // ГАРАНТИРОВАННО (build_fiber_contact_search формирует case
-            // именно из этого условия) -- static_cast ниже безопасен.
-            const real_t d_p = norm(sub(xs, point(static_cast<rhs::index_t>(prev))));
-            const real_t d_n = norm(sub(xs, point(static_cast<rhs::index_t>(next))));
-            real_t w;
-            if (P > 0 && P < d_p) w = (d_p - P) / d_p;
-            else if (P <= 0 && P > -d_n) w = (d_n + P) / d_n;
-            else w = 0; // контакт проецируется дальше ближайшего соседа -- см. шапку файла, диагностика "пар на пересечение"
-            w_out = w;
-            has_nb = true;
-            nb_out = static_cast<rhs::index_t>(P > 0 ? prev : next);
-        };
+        physics::FiberContactGeomOutput out{};
+        physics::compute_fiber_contact_geometry(in, out);
 
-        side_weight(i_surface, P_ij, prim.i_prev, prim.i_next, xi, geom.w_i, geom.i_has_neighbor, geom.i_neighbor);
-        side_weight(j_surface, P_ji, prim.j_prev, prim.j_next, xj, geom.w_j, geom.j_has_neighbor, geom.j_neighbor);
+        geom.contact = out.contact;
+        for (std::size_t d = 0; d < dim; ++d) geom.n[d] = out.n[d];
+        geom.D = out.D;
+        geom.F = out.F;
+        geom.delta = out.delta;
+        geom.P_ij = out.P_ij;
+        geom.P_ji = out.P_ji;
+
+        geom.w_i = out.w_i;
+        geom.i_has_neighbor = out.i_has_neighbor;
+        if (out.i_has_neighbor)
+            geom.i_neighbor = static_cast<rhs::index_t>(out.i_neighbor_is_prev ? prim.i_prev : prim.i_next);
+
+        geom.w_j = out.w_j;
+        geom.j_has_neighbor = out.j_has_neighbor;
+        if (out.j_has_neighbor)
+            geom.j_neighbor = static_cast<rhs::index_t>(out.j_neighbor_is_prev ? prim.j_prev : prim.j_next);
 
         return geom;
     }

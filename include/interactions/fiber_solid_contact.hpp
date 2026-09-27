@@ -94,6 +94,8 @@
 #include "materials.hpp"                  // elastic_by_itype
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "physics/fiber_solid_geom.hpp"
+#include "physics/material_table.hpp" // ElasticTable, build_elastic_table, elastic_table_lookup
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include "rhs/spatial_index.hpp"
@@ -111,7 +113,10 @@ namespace interactions
 constexpr std::uint32_t kFiberSolidContactFiberType = 3;
 constexpr std::uint32_t kFiberSolidContactSolidType = 12;
 
-constexpr real_t kFiberSolidContactMinD = real_t(1e-12);
+// Защита от деления на ~0 при нормировке n -- fiber/CUDA_PLAN.md §3.2, этап
+// Г2 (часть "Fiber-Solid-Contact"): значение перенесено БЕЗ ИЗМЕНЕНИЙ в
+// physics::kFiberSolidContactMinD (physics/fiber_solid_geom.hpp) вместе с
+// самой геометрией (compute_fiber_solid_contact_geometry ниже).
 
 // ----------------------------------------------------------------------
 // FiberSolidContactPrimitive = (a, b, s) -- fiber/SPH.md, «Fiber-Solid-
@@ -290,8 +295,22 @@ struct FiberSolidContactGeometry
     real_t lambda = 0; // значим только при has_b
 };
 
-inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
-    const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
+namespace detail
+{
+
+// fiber/CUDA_PLAN.md §3.2, этап Г2 (часть "Fiber-Solid-Contact"): вся
+// геометрия (λ на сегменте/точечный контакт, D_fs, n_fs, δ_fs, сила Герца
+// K_fs*delta^1.5) вынесена в physics::compute_fiber_solid_contact_geometry
+// (physics/fiber_solid_geom.hpp) -- SPH_HD-функция, общая для CPU и (в
+// будущей части Г8) GPU. Здесь -- сборка входа из ParticleSystem/FiberState/
+// FiberMaterial (points, материалы, physics::elastic_table_lookup вместо
+// elastic_by_itype -- ElasticTable СОБИРАЕТСЯ ОДИН РАЗ вызывающей стороной,
+// не на каждый primitive, см. compute_fiber_solid_contact_contributions/
+// compute_fiber_solid_contact_dt_limit ниже -- тот же приём, что
+// physics::MaterialTable в interactions/solid_contact.hpp) и раскладка
+// выхода в FiberSolidContactGeometry.
+inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry_with_table(
+    const physics::ElasticTable& elastic_table, const ParticleSystem& sys, const fiber::FiberState& state,
     const std::vector<fiber::FiberMaterial>& materials, const FiberSolidContactPrimitive& prim)
 {
     FiberSolidContactGeometry geom{};
@@ -301,81 +320,51 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
     }
     else
     {
-        using Vec3 = std::array<real_t, 3>;
-        auto sub = [](const Vec3& x, const Vec3& y) -> Vec3 { return {x[0] - y[0], x[1] - y[1], x[2] - y[2]}; };
-        auto dot = [](const Vec3& x, const Vec3& y) -> real_t { return x[0] * y[0] + x[1] * y[1] + x[2] * y[2]; };
-        auto norm = [&](const Vec3& x) -> real_t { return std::sqrt(dot(x, x)); };
-        auto point_f = [&](rhs::index_t k) -> Vec3 { return {state.x[0][k], state.x[1][k], state.x[2][k]}; };
-        auto point_s = [&](rhs::index_t k) -> Vec3 { return {sys.x[0][k], sys.x[1][k], sys.x[2][k]}; };
-
-        const Vec3 xs = point_s(prim.s);
         const fiber::FiberMaterial& mat_a = materials[static_cast<std::size_t>(state.material_id[prim.a])];
-        const real_t r_f = real_t(0.5) * mat_a.d;
 
-        Vec3 q{};
-        real_t lambda = 0;
-        if (!prim.has_b)
-        {
-            q = point_f(prim.a);
-        }
-        else
-        {
-            const Vec3 xa = point_f(prim.a);
-            const Vec3 xb = point_f(prim.b);
-            const Vec3 e = sub(xb, xa);
-            const real_t e2 = dot(e, e);
-            if (!(e2 > 0)) return geom; // вырожденный сегмент (совпадающие бусины) -- защита от деления на 0
+        physics::FiberSolidContactGeomInput in{};
+        in.has_b = prim.has_b;
+        for (std::size_t d = 0; d < dim; ++d) in.x_a[d] = state.x[d][prim.a];
+        if (prim.has_b)
+            for (std::size_t d = 0; d < dim; ++d) in.x_b[d] = state.x[d][prim.b];
+        for (std::size_t d = 0; d < dim; ++d) in.x_s[d] = sys.x[d][prim.s];
+        in.a_is_first = prim.a_is_first;
+        in.b_is_last = prim.b_is_last;
 
-            // Сырой (до clamp) параметр t -- решение 3 в шапке файла:
-            // клэмп в границу разрешён ТОЛЬКО когда дальше по нити клэмпить
-            // некому (конец/начало нити), иначе примитив пропускается --
-            // ответственность за эту зону несёт соседний сегмент.
-            const real_t t = dot(sub(xs, xa), e) / e2;
-            if (t >= real_t(1.0))
-            {
-                if (!prim.b_is_last) return geom;
-                lambda = real_t(1.0);
-            }
-            else if (t < 0)
-            {
-                if (!prim.a_is_first) return geom;
-                lambda = 0;
-            }
-            else
-            {
-                lambda = t;
-            }
-            q = {xa[0] + lambda * e[0], xa[1] + lambda * e[1], xa[2] + lambda * e[2]};
-        }
+        in.r_f = real_t(0.5) * mat_a.d;
+        in.r_s = solid_contact_radius(sys, prim.s);
+        in.E_a = mat_a.E;
+        in.nu_a = mat_a.nu;
+        in.elastic_s_known = physics::elastic_table_lookup(elastic_table, sys.itype[prim.s], in.E_s, in.nu_s);
 
-        const Vec3 diff = sub(xs, q);
-        const real_t D = norm(diff);
-        if (D < kFiberSolidContactMinD) return geom; // совпадающие точки -- пропуск, защита от NaN
-        const Vec3 n = {diff[0] / D, diff[1] / D, diff[2] / D};
+        physics::FiberSolidContactGeomOutput out{};
+        physics::compute_fiber_solid_contact_geometry(in, out);
 
-        const real_t r_s = solid_contact_radius(sys, prim.s);
-        const real_t delta = r_f + r_s - D;
-        if (!(delta > 0)) return geom; // нет проникновения
-
-        const auto es = elastic_by_itype(mats, sys.itype[prim.s]);
-        if (!es.has_value()) return geom; // защита (search уже отфильтровал такие s)
-
-        const real_t inv_Estar = (mat_a.E > 0 ? (real_t(1.0) - mat_a.nu * mat_a.nu) / mat_a.E : real_t(0.0)) +
-                                  (es->E > 0 ? (real_t(1.0) - es->nu * es->nu) / es->E : real_t(0.0));
-        if (!(inv_Estar > 0)) return geom;
-        const real_t E_star = real_t(1.0) / inv_Estar;
-        const real_t R_star = (r_f > 0 && r_s > 0) ? (r_f * r_s) / (r_f + r_s) : real_t(0.0);
-        const real_t K_fs = (real_t(4.0) / real_t(3.0)) * E_star * std::sqrt(R_star);
-        const real_t F = K_fs * std::pow(delta, real_t(1.5));
-
-        geom.contact = true;
-        geom.n[0] = n[0]; geom.n[1] = n[1]; geom.n[2] = n[2];
-        geom.D = D;
-        geom.delta = delta;
-        geom.F = F;
-        geom.lambda = lambda;
+        geom.contact = out.contact;
+        for (std::size_t d = 0; d < dim; ++d) geom.n[d] = out.n[d];
+        geom.D = out.D;
+        geom.delta = out.delta;
+        geom.F = out.F;
+        geom.lambda = out.lambda;
         return geom;
     }
+}
+
+} // namespace detail
+
+// Тонкая обёртка над detail::compute_fiber_solid_contact_geometry_with_table
+// -- ПРЕЖНИЕ имя и сигнатура (принимает Materials целиком, как раньше): нужна
+// tests/test_fiber_solid.cpp, которые вызывают эту функцию напрямую по одному
+// primitive за раз. ElasticTable собирается internally НА КАЖДЫЙ ВЫЗОВ (не
+// кэшируется между вызовами) -- приемлемо для тестов; горячий путь
+// (compute_fiber_solid_contact_contributions/_dt_limit ниже) собирает
+// ElasticTable ОДИН РАЗ на весь проход и вызывает detail-версию напрямую.
+inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
+    const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
+    const std::vector<fiber::FiberMaterial>& materials, const FiberSolidContactPrimitive& prim)
+{
+    const physics::ElasticTable elastic_table = physics::build_elastic_table(mats);
+    return detail::compute_fiber_solid_contact_geometry_with_table(elastic_table, sys, state, materials, prim);
 }
 
 // ----------------------------------------------------------------------
@@ -401,9 +390,15 @@ inline void compute_fiber_solid_contact_contributions(
     const std::size_t n = primitives.size();
     if (n == 0) return;
 
+    // ElasticTable -- один раз на вызов (Materials за время RHS не
+    // меняется), а не на primitive: physics::compute_fiber_solid_contact_geometry
+    // сама Materials/std::optional не видит (правила SPH_HD-кода, план §3.2).
+    const physics::ElasticTable elastic_table = physics::build_elastic_table(mats);
+
     exec.parallel_for(n, [&](std::size_t k) {
         const FiberSolidContactPrimitive& prim = primitives[k];
-        const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
+        const FiberSolidContactGeometry geom =
+            detail::compute_fiber_solid_contact_geometry_with_table(elastic_table, sys, state, materials, prim);
         if (!geom.contact) return;
 
         int w = rhs::CpuExecutor::worker_id();
@@ -484,11 +479,16 @@ inline real_t compute_fiber_solid_contact_dt_limit(const rhs::CpuExecutor& exec,
     const std::size_t n = primitives.size();
     if (n == 0) return kInf;
 
+    // ElasticTable -- один раз на вызов, как в
+    // compute_fiber_solid_contact_contributions (см. комментарий там).
+    const physics::ElasticTable elastic_table = physics::build_elastic_table(mats);
+
     return exec.parallel_reduce(
         n, kInf,
         [&](std::size_t k) -> real_t {
             const FiberSolidContactPrimitive& prim = primitives[k];
-            const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
+            const FiberSolidContactGeometry geom =
+                detail::compute_fiber_solid_contact_geometry_with_table(elastic_table, sys, state, materials, prim);
             if (!geom.contact || !(geom.delta > 0)) return kInf;
 
             const real_t ma = state.mass[prim.a];
