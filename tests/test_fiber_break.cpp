@@ -253,18 +253,26 @@ void test_break_new_object_id_and_contact()
     check(fx.state.object_id[0] != fx.state.object_id[2], "object_id двух половин РАЗНЫЕ после разрыва");
     check(fx.state.object_id[0] == 0, "i-сторона сохранила исходный object_id (0)");
 
-    // --- ПОСЛЕ разрыва: Fiber-Fiber-Contact находит пару (0,3) -- разные
-    //     object_id и в пределах радиуса поиска.
+    // --- ПОСЛЕ разрыва: Fiber-Fiber-Contact находит пару сегментов (0,1)-(2,3)
+    //     (разные object_id, физически близко). В новой схеме «пара
+    //     сегментов — одна сила» (fiber/fiber_contact_segment_pairs.md)
+    //     primitive хранит сегменты, а не отдельные бусины: бусина 3 --
+    //     последняя в своей половине (prev[3]==2 != -1), поэтому spatial-пара
+    //     (0,3) отбрасывается целиком правилом «сегмент принадлежит первой
+    //     бусине» -- эту зону покрывает primitive, построенный из пары (0,2),
+    //     где a0=0 -- первая бусина сегмента (0,1), b0=2 -- первая бусина
+    //     сегмента (2,3).
     {
         interactions::FiberContactSearchResult search;
         interactions::build_fiber_contact_search(exec, fx.state, fx.topology, fx.materials, search);
-        bool found_0_3 = false;
+        bool found_segment_pair = false;
         for (const auto& p : search.primitives)
         {
-            if ((p.i == 0 && p.j == 3) || (p.i == 3 && p.j == 0)) found_0_3 = true;
+            if ((p.a0 == 0 && p.b0 == 2) || (p.a0 == 2 && p.b0 == 0)) found_segment_pair = true;
         }
         check(!search.primitives.empty(), "после разрыва: Fiber-Fiber-Contact находит хотя бы одну пару");
-        check(found_0_3, "после разрыва: пара (0,3) (разные object_id, физически близко) найдена");
+        check(found_segment_pair,
+              "после разрыва: пара сегментов (0,1)-(2,3) ({a0,b0}={0,2}) найдена");
     }
 }
 

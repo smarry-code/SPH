@@ -61,10 +61,13 @@
 //    материала, как во всех текущих сценариях) выбор a/b не имеет значения.
 //
 // 5. dt_limit: m_red = m_a*m_s/(m_a+m_s) -- по аналогии с Fiber-Fiber-Contact
-//    (m_red там строится по "якорным" частицам primitive i,j, не по их
-//    соседям, получающим часть силы через вес) и с Solid-Solid-Contact.
-//    Бусина b в m_red не участвует (получает лишь долю λ силы, как i_prev/
-//    i_next в Fiber-Fiber-Contact).
+//    (interactions/fiber_contact.hpp: там, после перехода на схему «пара
+//    сегментов -- одна сила» (fiber/fiber_contact_segment_pairs.md), m_red
+//    строится по ЭФФЕКТИВНЫМ массам точек контакта на каждой стороне пары
+//    сегментов, а не по одной "якорной" бусине) и с Solid-Solid-Contact.
+//    Здесь, в Fiber-Solid, схема проще: бусина b в m_red не участвует
+//    (получает лишь долю λ силы, ровно как соседняя бусина сегмента в
+//    Fiber-Fiber-Contact).
 //
 // 6. Предупреждение "Fiber-Solid-Contact не формируется для itype=..(газ/
 //    вода)" -- напечатано ОДИН РАЗ ЗА ПРОЦЕСС ВЫПОЛНЕНИЯ на itype (static
@@ -120,8 +123,9 @@ constexpr double kFiberSolidContactMinD = 1e-12;
 // a_is_first/b_is_last -- топологические флаги, нужные kernel'у для решения
 // "клэмпить t в границу или передать ответственность соседнему сегменту"
 // (см. пункт 3 в шапке файла); сохранены в primitive при построении (тот же
-// приём, что FiberContactPrimitive::i_prev/i_next в interactions/
-// fiber_contact.hpp — kernel не перечитывает topology).
+// приём, что FiberContactPrimitive::a_prev/a_has_next_segment (и
+// симметрично для стороны B) в interactions/fiber_contact.hpp — kernel не
+// перечитывает topology).
 // ----------------------------------------------------------------------
 struct FiberSolidContactPrimitive
 {
