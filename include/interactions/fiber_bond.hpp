@@ -14,8 +14,14 @@
 // суммирование происходит отдельно, в rhs::reduce_contributions. Никаких
 // atomics/mutex здесь нет (fiber/SPH.md, «Основные требования к interaction
 // kernel», пп. 1-5).
+//
+// fiber/CUDA_PLAN.md §3.2, этап Г2 (часть "Fiber-Bond"): сама сила связи и
+// dt_limit связи вынесены в physics::compute_fiber_bond_pair /
+// physics::fiber_bond_pair_dt_limit (physics/fiber_bond_pair.hpp) —
+// SPH_HD-функции, общие для CPU и (в будущих частях Г2/Г6) GPU. Здесь —
+// только чтение FiberState/FiberTopology/FiberMaterial и раскладка
+// contributions.
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -23,6 +29,7 @@
 
 #include "fiber/fiber_system.hpp"
 #include "param.hpp"
+#include "physics/fiber_bond_pair.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include "rhs/types.hpp"
@@ -39,9 +46,12 @@ constexpr std::uint32_t kFiberBondInteractionType = 1;
 // ВНИМАНИЕ: модуль Юнга нити — FiberMaterial.E, не FiberMaterial.nu
 // (коэффициент Пуассона, в Fiber-Bond не используется — постановка проекта
 // работает только с осевой жёсткостью EA, изгиб не моделируется).
+// Тонкая обёртка над physics::fiber_cross_section_area (прежние имя и
+// сигнатура, принимающая FiberMaterial целиком, -- используется только в
+// этом файле, менять сигнатуру незачем).
 inline real_t fiber_cross_section_area(const fiber::FiberMaterial& mat)
 {
-    return pi * mat.d * mat.d / real_t(4.0);
+    return physics::fiber_cross_section_area(mat.d);
 }
 
 // ----------------------------------------------------------------------
@@ -78,30 +88,30 @@ inline void compute_fiber_bond_contributions(
         const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[i])];
         const real_t A = fiber_cross_section_area(mat);
 
-        real_t xij[dim];
-        real_t l2 = 0;
+        // Сама сила связи (геометрия + только-растяжение) --
+        // physics::compute_fiber_bond_pair (physics/fiber_bond_pair.hpp),
+        // построчная копия прежнего тела этого лямбда-кернела.
+        physics::FiberBondPairInput pair_in{};
         for (std::size_t d = 0; d < dim; ++d)
         {
-            xij[d] = state.x[d][j] - state.x[d][i];
-            l2 += xij[d] * xij[d];
+            pair_in.x_i[d] = state.x[d][i];
+            pair_in.x_j[d] = state.x[d][j];
         }
-        const real_t l = std::sqrt(l2);
+        pair_in.mass_i = state.mass[i];
+        pair_in.mass_j = state.mass[j];
+        pair_in.l0 = b.l0;
+        pair_in.E = mat.E;
+        pair_in.A = A;
+
+        physics::FiberBondPairOutput pair_out;
+        physics::compute_fiber_bond_pair(pair_in, pair_out);
 
         fiber::FiberDelta delta_i{};
         fiber::FiberDelta delta_j{};
-
-        if (l > b.l0 && l > 0) // только растяжение (fiber/SPH.md, "Постановка проекта")
+        for (std::size_t d = 0; d < dim; ++d)
         {
-            const real_t strain = l / b.l0 - real_t(1.0);
-            const real_t coeff = mat.E * A * strain / l; // F_i<-j = coeff * xij
-            const real_t mi = state.mass[i];
-            const real_t mj = state.mass[j];
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const real_t f = coeff * xij[d];
-                delta_i.dv[d] = f / mi;  // +F_i<-j / m_i
-                delta_j.dv[d] = -f / mj; // -F_i<-j / m_j == F_j<-i / m_j
-            }
+            delta_i.dv[d] = pair_out.dv_i[d];
+            delta_j.dv[d] = pair_out.dv_j[d];
         }
 
         int w = rhs::CpuExecutor::worker_id();
@@ -152,11 +162,7 @@ inline real_t compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fi
             const fiber::FiberBond& b = topology.bonds[k];
             const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
             const real_t A = fiber_cross_section_area(mat);
-            const real_t k_eff = mat.E * A / b.l0;
-            const real_t mi = state.mass[b.i];
-            const real_t mj = state.mass[b.j];
-            const real_t m_red = (mi * mj) / (mi + mj);
-            return real_t(0.8) / std::sqrt(k_eff / m_red);
+            return physics::fiber_bond_pair_dt_limit(mat.E, A, b.l0, state.mass[b.i], state.mass[b.j]);
         },
         [](real_t a, real_t b2) { return std::min(a, b2); });
 }

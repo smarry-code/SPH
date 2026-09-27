@@ -25,8 +25,21 @@
 // (particle_system.hpp), поэтому на BC2/BC6 критерии дают одинаковый набор
 // пар; расхождение возможно только для нескольких тел одного материала,
 // которых текущие тесты не строят.
+//
+// fiber/CUDA_PLAN.md §3.2, этап Г2 (часть "Solid-Contact"): геометрия пары,
+// PairGeom/PairProps и раскладка penalty_force по осям вынесены в
+// physics::compute_solid_contact_pair (physics/solid_contact_pair.hpp) --
+// SPH_HD-функция, общая для CPU и (в будущих частях Г2/Г4) GPU. Здесь --
+// только сборка входа (в т.ч. модуль сдвига G из POD physics::MaterialTable,
+// physics/material_table.hpp, вместо Materials/std::vector) и раскладка
+// выхода в SolidDelta/SolidContactDiagnostics.
+//
+// solid_contact_radius/solid_contact_pair_dt_ref СОХРАНЕНЫ как тонкие
+// обёртки над physics::solid_contact_particle_radius/
+// solid_contact_particle_dt_ref -- под ПРЕЖНИМИ именем и сигнатурой: их
+// напрямую вызывает include/interactions/fiber_solid_contact.hpp (Fiber-
+// Solid-Contact), которого эта часть Г2 не касается.
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -35,6 +48,8 @@
 #include "interactions/solid_sph.hpp" // SolidDelta
 #include "materials.hpp"
 #include "particle_system.hpp"
+#include "physics/material_table.hpp"
+#include "physics/solid_contact_pair.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include "rhs/types.hpp"
@@ -45,27 +60,22 @@ namespace interactions
 
 constexpr std::uint32_t kSolidContactInteractionType = 11;
 
-// Копия particle_radius (src/ext_force.cpp, анонимный namespace) -- дословно
-// та же формула: R = 0.5*(m/max(rho,rho_0))^(1/dim).
+// Тонкая обёртка над physics::solid_contact_particle_radius -- прежние имя и
+// сигнатура (см. комментарий вверху файла: используется fiber_solid_contact.hpp).
 inline real_t solid_contact_radius(const ParticleSystem& sys, std::size_t k)
 {
-    const real_t rho = sys.rho[k];
-    if (!(rho > 0)) return real_t(0.0);
-    const real_t rho_eff = std::max(rho, sys.rho_0[k]);
-    const real_t volume = sys.mass[k] / rho_eff;
-    return real_t(0.5) * std::pow(volume, real_t(1.0) / static_cast<real_t>(dim));
+    return physics::solid_contact_particle_radius(sys.mass[k], sys.rho[k], sys.rho_0[k]);
 }
 
-// Копия pair_dt_ref (src/ext_force.cpp, анонимный namespace). c -- значения
-// скорости звука из SolidDerived (EOS этого RHS), а не sys.c (которое в новом
-// пути не пишется).
+// Тонкая обёртка над physics::solid_contact_particle_dt_ref -- прежние имя и
+// сигнатура. c -- значения скорости звука из SolidDerived (EOS этого RHS),
+// а не sys.c (которое в новом пути не пишется).
 inline real_t solid_contact_pair_dt_ref(const SimulationConfig& cfg, const ParticleSystem& sys,
                                          const std::vector<real_t>& c, std::size_t k)
 {
-    real_t v2 = 0;
-    for (std::size_t d = 0; d < dim; ++d) v2 += sys.vx[d][k] * sys.vx[d][k];
-    const real_t denom = c[k] + std::sqrt(v2);
-    return denom > 0 ? static_cast<real_t>(cfg.CFL) * sys.hsml[k] / denom : real_t(1e30);
+    real_t vx[dim];
+    for (std::size_t d = 0; d < dim; ++d) vx[d] = sys.vx[d][k];
+    return physics::solid_contact_particle_dt_ref(static_cast<real_t>(cfg.CFL), sys.hsml[k], vx, c[k]);
 }
 
 // ----------------------------------------------------------------------
@@ -99,51 +109,50 @@ inline void compute_solid_contact_contributions(
     const int contact_type = cfg.contact_force_type;
     if (contact_type == contact::Off || real_pairs.empty()) return;
 
+    // Таблица модулей сдвига -- один раз на вызов (Materials за время RHS не
+    // меняется), а не на пару: physics::compute_solid_contact_pair сама
+    // Materials/std::vector не видит (правила SPH_HD-кода, план §3.2).
+    const physics::MaterialTable mat_table = physics::build_material_table(mats);
+    const real_t penalty_scale = static_cast<real_t>(cfg.contact_penalty_scale);
+    const real_t impulse_gamma = static_cast<real_t>(cfg.contact_impulse_gamma);
+
     exec.parallel_for(real_pairs.size(), [&](std::size_t k) {
         const rhs::index_t i = real_pairs[k].first;
         const rhs::index_t j = real_pairs[k].second;
         if (sys.body[i] == sys.body[j]) return; // fiber/PLAN.md §3.1: критерий body[]
 
-        real_t dx[dim];
-        real_t r2 = 0;
-        for (std::size_t d = 0; d < dim; ++d) { dx[d] = sys.x[d][i] - sys.x[d][j]; r2 += dx[d] * dx[d]; }
-        const real_t r = std::sqrt(r2);
-        const real_t Ri = solid_contact_radius(sys, i);
-        const real_t Rj = solid_contact_radius(sys, j);
-        const real_t p = (Ri + Rj) - r;
-        if (!(r > 0) || !(p > 0)) return;
-
-        real_t dot = 0, v2 = 0;
+        // Сборка входа -- геометрия и материалы пары; сама математика (r, p,
+        // PairGeom/PairProps, penalty_force, разложение силы по осям) --
+        // physics::compute_solid_contact_pair (physics/solid_contact_pair.hpp).
+        physics::SolidContactPairInput pair_in{};
         for (std::size_t d = 0; d < dim; ++d)
         {
-            const real_t dv = sys.vx[d][i] - sys.vx[d][j];
-            dot += dx[d] * dv;
-            v2 += dv * dv;
+            pair_in.x_i[d] = sys.x[d][i];   pair_in.x_j[d] = sys.x[d][j];
+            pair_in.vx_i[d] = sys.vx[d][i]; pair_in.vx_j[d] = sys.vx[d][j];
         }
-        contact::PairGeom g;
-        g.r = r; g.p = p; g.pdot = -dot / r; g.v_rel = std::sqrt(v2);
+        pair_in.mass_i = sys.mass[i]; pair_in.mass_j = sys.mass[j];
+        pair_in.Ri = solid_contact_radius(sys, i);
+        pair_in.Rj = solid_contact_radius(sys, j);
+        pair_in.c_i = c[i]; pair_in.c_j = c[j];
+        pair_in.G_i = physics::material_shear_modulus(mat_table, sys.itype[i]);
+        pair_in.G_j = physics::material_shear_modulus(mat_table, sys.itype[j]);
+        pair_in.dt_ref_i = solid_contact_pair_dt_ref(cfg, sys, c, i);
+        pair_in.dt_ref_j = solid_contact_pair_dt_ref(cfg, sys, c, j);
+        pair_in.contact_type = contact_type;
+        pair_in.penalty_scale = penalty_scale;
+        pair_in.dt_applied = dt_applied;
+        pair_in.impulse_gamma = impulse_gamma;
 
-        const real_t Gi = shear_modulus_by_itype(mats, sys.itype[i]);
-        const real_t Gj = shear_modulus_by_itype(mats, sys.itype[j]);
+        physics::SolidContactPairOutput pair_out;
+        physics::compute_solid_contact_pair(pair_in, pair_out);
+        if (!pair_out.contact) return;   // r<=0 || p<=0 -- как в исходнике
+        if (pair_out.fn <= 0) return;    // res.fn<=0 -- как в исходнике
 
-        contact::PairProps pr;
-        pr.m_red = sys.mass[i] * sys.mass[j] / (sys.mass[i] + sys.mass[j]);
-        pr.c_pair = std::min(c[i], c[j]);
-        pr.g_eff = (Gi > 0 && Gj > 0) ? Gi * Gj / (Gi + Gj) : real_t(0.0);
-        pr.r_eff = Ri * Rj / (Ri + Rj);
-        pr.dt_ref = std::min(solid_contact_pair_dt_ref(cfg, sys, c, i), solid_contact_pair_dt_ref(cfg, sys, c, j));
-
-        const contact::Result res = contact::penalty_force(contact_type, g, pr, static_cast<real_t>(cfg.contact_penalty_scale),
-                                                             dt_applied, static_cast<real_t>(cfg.contact_impulse_gamma));
-        if (res.fn <= 0) return;
-
-        const real_t inv_r = real_t(1.0) / r;
         SolidDelta di{}, dj{};
         for (std::size_t d = 0; d < dim; ++d)
         {
-            const real_t f = res.fn * dx[d] * inv_r;
-            di.dv[d] = f / sys.mass[i];
-            dj.dv[d] = -f / sys.mass[j];
+            di.dv[d] = pair_out.dv_i[d];
+            dj.dv[d] = pair_out.dv_j[d];
         }
         int w_id = rhs::CpuExecutor::worker_id();
         if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
@@ -180,6 +189,10 @@ inline SolidContactDiagnostics compute_solid_contact_diagnostics(
     const int contact_type = cfg.contact_force_type;
     if (contact_type == contact::Off || real_pairs.empty()) return zero;
 
+    const physics::MaterialTable mat_table = physics::build_material_table(mats);
+    const real_t penalty_scale = static_cast<real_t>(cfg.contact_penalty_scale);
+    const real_t impulse_gamma = static_cast<real_t>(cfg.contact_impulse_gamma);
+
     auto combine = [](SolidContactDiagnostics a, SolidContactDiagnostics b) {
         SolidContactDiagnostics r;
         r.pair_count = a.pair_count + b.pair_count;
@@ -195,35 +208,40 @@ inline SolidContactDiagnostics compute_solid_contact_diagnostics(
             const rhs::index_t j = real_pairs[k].second;
             if (sys.body[i] == sys.body[j]) return zero;
 
-            real_t dx[dim];
-            real_t r2 = 0;
-            for (std::size_t d = 0; d < dim; ++d) { dx[d] = sys.x[d][i] - sys.x[d][j]; r2 += dx[d] * dx[d]; }
-            const real_t r = std::sqrt(r2);
-            const real_t Ri = solid_contact_radius(sys, i);
-            const real_t Rj = solid_contact_radius(sys, j);
-            const real_t p = (Ri + Rj) - r;
-            if (!(r > 0) || !(p > 0)) return zero;
+            // ТА ЖЕ physics::compute_solid_contact_pair, что и в
+            // compute_solid_contact_contributions -- геометрия пары считается
+            // заново (как и в исходнике: "та же геометрия пересчитывается",
+            // см. комментарий выше), поле out.contact/out.p/out.dt_limit
+            // заполняются ДО проверки "fn<=0" внутри самой функции, поэтому
+            // диагностика (в отличие от contributions) НЕ фильтрует по fn --
+            // ровно как исходный код, который не проверял res.fn здесь.
+            physics::SolidContactPairInput pair_in{};
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                pair_in.x_i[d] = sys.x[d][i];   pair_in.x_j[d] = sys.x[d][j];
+                pair_in.vx_i[d] = sys.vx[d][i]; pair_in.vx_j[d] = sys.vx[d][j];
+            }
+            pair_in.mass_i = sys.mass[i]; pair_in.mass_j = sys.mass[j];
+            pair_in.Ri = solid_contact_radius(sys, i);
+            pair_in.Rj = solid_contact_radius(sys, j);
+            pair_in.c_i = c[i]; pair_in.c_j = c[j];
+            pair_in.G_i = physics::material_shear_modulus(mat_table, sys.itype[i]);
+            pair_in.G_j = physics::material_shear_modulus(mat_table, sys.itype[j]);
+            pair_in.dt_ref_i = solid_contact_pair_dt_ref(cfg, sys, c, i);
+            pair_in.dt_ref_j = solid_contact_pair_dt_ref(cfg, sys, c, j);
+            pair_in.contact_type = contact_type;
+            pair_in.penalty_scale = penalty_scale;
+            pair_in.dt_applied = dt_applied;
+            pair_in.impulse_gamma = impulse_gamma;
 
-            real_t dot = 0;
-            for (std::size_t d = 0; d < dim; ++d) dot += dx[d] * (sys.vx[d][i] - sys.vx[d][j]);
-            contact::PairGeom g;
-            g.r = r; g.p = p; g.pdot = -dot / r;
+            physics::SolidContactPairOutput pair_out;
+            physics::compute_solid_contact_pair(pair_in, pair_out);
+            if (!pair_out.contact) return zero; // r<=0 || p<=0 -- как в исходнике
 
-            const real_t Gi = shear_modulus_by_itype(mats, sys.itype[i]);
-            const real_t Gj = shear_modulus_by_itype(mats, sys.itype[j]);
-            contact::PairProps pr;
-            pr.m_red = sys.mass[i] * sys.mass[j] / (sys.mass[i] + sys.mass[j]);
-            pr.c_pair = std::min(c[i], c[j]);
-            pr.g_eff = (Gi > 0 && Gj > 0) ? Gi * Gj / (Gi + Gj) : real_t(0.0);
-            pr.r_eff = Ri * Rj / (Ri + Rj);
-            pr.dt_ref = std::min(solid_contact_pair_dt_ref(cfg, sys, c, i), solid_contact_pair_dt_ref(cfg, sys, c, j));
-
-            const contact::Result res = contact::penalty_force(contact_type, g, pr, static_cast<real_t>(cfg.contact_penalty_scale),
-                                                                 dt_applied, static_cast<real_t>(cfg.contact_impulse_gamma));
             SolidContactDiagnostics d1;
             d1.pair_count = 1;
-            d1.max_delta = p;
-            d1.min_dt = res.dt_limit;
+            d1.max_delta = pair_out.p;
+            d1.min_dt = pair_out.dt_limit;
             return d1;
         },
         combine);

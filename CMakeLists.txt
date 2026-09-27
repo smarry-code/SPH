@@ -1084,7 +1084,10 @@ if(SPH_ENABLE_CUDA)
     # nvcc, которая не видна в обычной CPU-сборке (Clang). SPH_DIM=3 —
     # первый целевой путь Solid на GPU (Р-Г7), собственные объектники не
     # нужны: physics/* не используют ParticleSystem/SimulationConfig, только
-    # param.hpp/precision.hpp. По образцу test_cuda_toolchain — пара целей
+    # param.hpp/precision.hpp (плюс materials.hpp этапа Г2b, часть "Solid-
+    # Contact" -- host-only Materials/build_material_table, не device-код;
+    # header-only, лежит в том же include/, отдельных include dirs не
+    # добавляет). По образцу test_cuda_toolchain — пара целей
     # (SPH_PRECISION 64/32), метка cuda(;fp32), SKIP_RETURN_CODE 77.
     foreach(_sph_cuda_prec 64 32)
         if(_sph_cuda_prec EQUAL 64)

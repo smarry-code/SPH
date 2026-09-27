@@ -4,9 +4,16 @@
 // Чистые функции: вход — скалярные характеристики пары, выход — модуль
 // нормальной силы и ограничитель шага. Направление и раскладка по осям —
 // в оркестраторе (ext_force.cpp), поэтому файл не зависит от dim.
-#include <algorithm>
+//
+// SPH_HD (fiber/CUDA_PLAN.md §3.2, этап Г2, часть Solid-Contact): эти
+// функции вызываются из physics/solid_contact_pair.hpp::
+// compute_solid_contact_pair, поэтому обязаны собираться и для host, и для
+// device (иначе __host__ __device__ функция не может вызвать чисто хостовую).
+// std::min/std::max заменены на sph_min/sph_max (правило SPH_HD-кода, план
+// §3.2) — та же операция сравнения, тот же результат.
 #include <cmath>
 
+#include "physics/hd.hpp" // SPH_HD, sph_min/sph_max
 #include "precision.hpp"
 
 namespace contact
@@ -50,7 +57,7 @@ struct Result
 
 // Тип 1, (2.3)-(2.5). Множитель p из буквальной (2.3) опущен: F1 и F2 —
 // силы, и p делал бы размерность Н*м (решение D1 в contact/02-decisions.md).
-inline Result pinball_force(const PairGeom& g, const PairProps& pr, real_t kp)
+SPH_HD inline Result pinball_force(const PairGeom& g, const PairProps& pr, real_t kp)
 {
     Result out;
     if (g.p <= 0 || pr.m_red <= 0 || pr.dt_ref <= 0 || kp <= 0) return out;
@@ -63,7 +70,7 @@ inline Result pinball_force(const PairGeom& g, const PairProps& pr, real_t kp)
 
     // Откат при неизвестном G: F2 исключается из min, а не обнуляет силу.
     const bool hertz_active = hertz_known && (f2 < f1);
-    const real_t f = hertz_known ? std::min(f1, f2) : f1;
+    const real_t f = hertz_known ? sph_min(f1, f2) : f1;
     out.fn = kp * f;
     if (out.fn <= 0) return out;
 
@@ -84,7 +91,7 @@ inline Result pinball_force(const PairGeom& g, const PairProps& pr, real_t kp)
 
 // Тип 2, (2.6)-(2.8). Во второй формуле первоисточника опечатка: она помечена
 // F1, но по (2.6) это F2.
-inline Result swegle_force(const PairGeom& g, const PairProps& pr, real_t kp)
+SPH_HD inline Result swegle_force(const PairGeom& g, const PairProps& pr, real_t kp)
 {
     Result out;
     if (g.p <= 0 || g.pdot <= 0 || pr.m_red <= 0 ||
@@ -106,7 +113,7 @@ inline Result swegle_force(const PairGeom& g, const PairProps& pr, real_t kp)
     // при pdot*dt_ref ~ 2.7e-8, то есть сила была завышена в ~6e3 раз: 4.5e8 Н
     // и 3.5e4 м/с приращения за шаг, плотность уходила в минус.
     const real_t f_cap  = pr.m_red * g.pdot / pr.dt_ref;
-    const real_t f_raw  = std::max(f1, f2);
+    const real_t f_raw  = sph_max(f1, f2);
     const bool   capped = (f_raw > f_cap);
 
     out.fn = kp * (capped ? f_cap : f_raw);
@@ -160,7 +167,7 @@ inline Result swegle_force(const PairGeom& g, const PairProps& pr, real_t kp)
 // амплитуду контактного воздействия не уменьшает, и по шагу тип 3 не сходится.
 // У типа 1 на герцевской ветви fn от dt не зависит и dv ~ dt — поэтому он
 // гладкий. Считать тип 3 сеточно-сходящимся нельзя ни при каком gamma.
-inline Result impulse_force(const PairGeom& g, const PairProps& pr, real_t dt_applied,
+SPH_HD inline Result impulse_force(const PairGeom& g, const PairProps& pr, real_t dt_applied,
                             real_t gamma = real_t(1.0))
 {
     Result out;
@@ -180,7 +187,7 @@ inline Result impulse_force(const PairGeom& g, const PairProps& pr, real_t dt_ap
     return out;
 }
 
-inline Result penalty_force(int type, const PairGeom& g, const PairProps& pr,
+SPH_HD inline Result penalty_force(int type, const PairGeom& g, const PairProps& pr,
                             real_t kp, real_t dt_applied, real_t gamma = real_t(1.0))
 {
     switch (type)
