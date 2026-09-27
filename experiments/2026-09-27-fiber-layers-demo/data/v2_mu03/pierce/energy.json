@@ -1,0 +1,51 @@
+{
+  "run_dir": "2026-09-27-fiber-layers-demo/data/v2_mu03/pierce",
+  "n_frames": 75,
+  "E_tot0": 0.7847903699999996,
+  "max_E_tot_ratio": 1.0,
+  "max_E_tot_ratio_frame": 0,
+  "max_E_tot_ratio_time": 0.0,
+  "final_E_tot_ratio": 0.8917408653160321,
+  "final_KE_total_ratio": 0.8678469212676941,
+  "max_bead_speed": 81.9271001812609,
+  "final_bead_speed": 80.56162286380716,
+  "max_solid_speed": 35.0,
+  "final_solid_speed": 18.8757000002615,
+  "max_momentum_drift_rel": 5.37497869660909e-07,
+  "tol": 0.02,
+  "passed": true,
+  "n_bonds_initial": 320,
+  "n_bonds_final": 292,
+  "n_fiber_beads": 340,
+  "n_anchors": 40,
+  "layers": [
+    {
+      "layer": 0,
+      "KE_fiber_final": 0.05916642342636923,
+      "KE_fiber_max": 0.08957086402754576,
+      "bonds_initial": 80,
+      "bonds_final": 72
+    },
+    {
+      "layer": 1,
+      "KE_fiber_final": 0.09220121333903161,
+      "KE_fiber_max": 0.11686812344102293,
+      "bonds_initial": 80,
+      "bonds_final": 70
+    },
+    {
+      "layer": 2,
+      "KE_fiber_final": 0.11245968626755899,
+      "KE_fiber_max": 0.11465955399922345,
+      "bonds_initial": 80,
+      "bonds_final": 78
+    },
+    {
+      "layer": 3,
+      "KE_fiber_final": 0.1889961651976567,
+      "KE_fiber_max": 0.18921763946202869,
+      "bonds_initial": 80,
+      "bonds_final": 72
+    }
+  ]
+}

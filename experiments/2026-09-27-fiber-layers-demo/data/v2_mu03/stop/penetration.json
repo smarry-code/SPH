@@ -1,0 +1,57 @@
+{
+  "run_dir": "data/v2_mu03/stop",
+  "n_frames": 82,
+  "fiber_d": 0.0015,
+  "solid_rho0": 2700.0,
+  "near_mult": 2.0,
+  "max_ff_delta_ratio": 0.2282675234016451,
+  "max_ff_delta_ratio_frame": 20,
+  "max_ff_delta_ratio_time": 0.00044003,
+  "max_fs_delta_ratio": 0.11433263517020026,
+  "max_fs_delta_ratio_frame": 19,
+  "max_fs_delta_ratio_time": 0.000418021,
+  "n_passthrough_events": 0,
+  "passthrough_events": [],
+  "layer_pairs": {
+    "L0-L0": {
+      "max_delta_ratio": -0.01509828330239658,
+      "max_n_contact_single_frame": 0
+    },
+    "L0-L1": {
+      "max_delta_ratio": 0.22271995121326163,
+      "max_n_contact_single_frame": 64
+    },
+    "L0-L2": {
+      "max_delta_ratio": 0.1064898799272939,
+      "max_n_contact_single_frame": 10
+    },
+    "L0-L3": {
+      "max_delta_ratio": -1.5250870669757597,
+      "max_n_contact_single_frame": 0
+    },
+    "L1-L1": {
+      "max_delta_ratio": -0.4976625735546531,
+      "max_n_contact_single_frame": 0
+    },
+    "L1-L2": {
+      "max_delta_ratio": 0.22070491228974687,
+      "max_n_contact_single_frame": 60
+    },
+    "L1-L3": {
+      "max_delta_ratio": 0.09861962138465007,
+      "max_n_contact_single_frame": 12
+    },
+    "L2-L2": {
+      "max_delta_ratio": -0.9397006917928882,
+      "max_n_contact_single_frame": 0
+    },
+    "L2-L3": {
+      "max_delta_ratio": 0.2282675234016451,
+      "max_n_contact_single_frame": 64
+    },
+    "L3-L3": {
+      "max_delta_ratio": -0.9959800820824735,
+      "max_n_contact_single_frame": 0
+    }
+  }
+}

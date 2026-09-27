@@ -1,0 +1,57 @@
+{
+  "run_dir": "data/v2_mu0/pierce",
+  "n_frames": 75,
+  "fiber_d": 0.0015,
+  "solid_rho0": 2700.0,
+  "near_mult": 2.0,
+  "max_ff_delta_ratio": 0.6639608448957874,
+  "max_ff_delta_ratio_frame": 18,
+  "max_ff_delta_ratio_time": 0.000144027,
+  "max_fs_delta_ratio": 0.3959738289699683,
+  "max_fs_delta_ratio_frame": 59,
+  "max_fs_delta_ratio_time": 0.00047202,
+  "n_passthrough_events": 0,
+  "passthrough_events": [],
+  "layer_pairs": {
+    "L0-L0": {
+      "max_delta_ratio": 0.41971600000000003,
+      "max_n_contact_single_frame": 24
+    },
+    "L0-L1": {
+      "max_delta_ratio": 0.598356186599909,
+      "max_n_contact_single_frame": 76
+    },
+    "L0-L2": {
+      "max_delta_ratio": 0.07592860660107983,
+      "max_n_contact_single_frame": 24
+    },
+    "L0-L3": {
+      "max_delta_ratio": -0.11587318883265392,
+      "max_n_contact_single_frame": 0
+    },
+    "L1-L1": {
+      "max_delta_ratio": 0.17918341840377908,
+      "max_n_contact_single_frame": 20
+    },
+    "L1-L2": {
+      "max_delta_ratio": 0.6639608448957874,
+      "max_n_contact_single_frame": 76
+    },
+    "L1-L3": {
+      "max_delta_ratio": 0.0399101220477315,
+      "max_n_contact_single_frame": 16
+    },
+    "L2-L2": {
+      "max_delta_ratio": 0.1878619268081354,
+      "max_n_contact_single_frame": 16
+    },
+    "L2-L3": {
+      "max_delta_ratio": 0.5158622466319474,
+      "max_n_contact_single_frame": 92
+    },
+    "L3-L3": {
+      "max_delta_ratio": 0.1835133333333333,
+      "max_n_contact_single_frame": 16
+    }
+  }
+}
