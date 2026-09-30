@@ -62,7 +62,10 @@ inline constexpr std::uint8_t kClampAll = static_cast<std::uint8_t>((1u << dim) 
 // Размер блока детерминированной суммы (не зависит от числа потоков).
 inline constexpr std::size_t kClampReduceBlock = 256;
 // Списки короче этого порога обходятся последовательно на главном потоке.
-inline constexpr std::size_t kClampSerialThreshold = 4096;
+// Замер (8 потоков, g++ -O3): открытие OpenMP-региона ~30 мкс, проекция
+// последовательно ~4.7 нс/частицу; последовательный путь быстрее до ~6-7 тыс.
+// частиц (4096: 19 против 33 мкс; 8192: 43 против 33 мкс).
+inline constexpr std::size_t kClampSerialThreshold = 8192;
 
 // Входные маски (плотные). Пустой вектор == зажимов этого типа нет.
 struct ClampSet
