@@ -1,6 +1,6 @@
 // tests/test_clamp.cpp
 // Unit-тесты кинематического закрепления (interactions/clamp.hpp;
-// fiber/TZ_CLAMP_SOLID_FIBER.md, §10): U1 список, U2 проекция и детерминизм
+// fiber/SPH.md, «Clamp (кинематическое закрепление)»): U1 список, U2 проекция и детерминизм
 // реакции, U3 блочная сумма, U4 счётчики трения, U5 mark_clamp_box,
 // U6 директива CLAMP_BOX в файле нитей, плюс validate_clamps. Параллельные
 // варианты -- явные rhs::CpuExecutor(1), (2), (7). Double сравниваются
@@ -211,6 +211,14 @@ void test_u2_size(std::size_t n, std::size_t nclamped)
     }
     double ref_force[dim];
     for (std::size_t d = 0; d < dim; ++d) ref_force[d] = reference_block_sum(ref_items[d], list.size());
+    // эталон реакции Fiber: те же маски, свои массы и dv
+    std::vector<double> ref_items_f[dim];
+    for (std::size_t d = 0; d < dim; ++d) ref_items_f[d].assign(list.size(), 0.0);
+    for (std::size_t k = 0; k < list.size(); ++k)
+        for (std::size_t d = 0; d < dim; ++d)
+            if ((list.mask[k] >> d) & 1u) ref_items_f[d][k] = -f0.mass[list.index[k]] * f0.dv[d][list.index[k]];
+    double ref_force_f[dim];
+    for (std::size_t d = 0; d < dim; ++d) ref_force_f[d] = reference_block_sum(ref_items_f[d], list.size());
 
     const int threads[] = {1, 2, 7};
     double first_force_s[dim] = {}, first_force_f[dim] = {};
@@ -266,7 +274,9 @@ void test_u2_size(std::size_t n, std::size_t nclamped)
         }
         check(fdv_ok, "Fiber: закреплённые компоненты == 0" + tag);
         check(free_ok, "Fiber: свободные компоненты побитово прежние" + tag);
-        // Fiber с теми же массами/dv, что у Solid? данные разные; сравнение между потоками
+        bool fforce_ref = true;
+        for (std::size_t d = 0; d < dim; ++d) fforce_ref = fforce_ref && same_bits(ff[d], ref_force_f[d]);
+        check(fforce_ref, "Fiber: реакция == последовательной блочной сумме" + tag);
         if (!have_first)
         {
             for (std::size_t d = 0; d < dim; ++d) { first_force_s[d] = fs[d]; first_force_f[d] = ff[d]; }
@@ -365,6 +375,37 @@ void test_u4()
                 ok = ok && same_bits(c_f[k], cs.fiber_mask[k] == kClampAll ? 0.0 : cf0[k]);
             check(ok, "n=" + std::to_string(n) + ", потоков " + std::to_string(nt) +
                           ": обнулены ровно полностью закреплённые");
+        }
+    }
+    // Параллельный путь: списки full длиннее kClampSerialThreshold.
+    {
+        const std::size_t n = 3 * kClampSerialThreshold;
+        std::mt19937_64 rng(404);
+        ClampSet cs;
+        cs.solid_mask.assign(n, 0);
+        cs.fiber_mask.assign(n, 0);
+        for (std::size_t i = 0; i < n; i += 2) cs.solid_mask[i] = kClampAll;
+        for (std::size_t i = 1; i < n; i += 2) cs.fiber_mask[i] = kClampAll;
+        const auto cs0 = random_vec(rng, n, 1.0, 5.0);
+        const auto cf0 = random_vec(rng, n, 1.0, 5.0);
+        const int threads[] = {1, 2, 7};
+        for (int nt : threads)
+        {
+            rhs::CpuExecutor exec(nt);
+            ClampWorkspace ws;
+            interactions::prepare_clamp_workspace(cs, n, n, ws);
+            check(ws.solid.full.size() >= kClampSerialThreshold && ws.fiber.full.size() >= kClampSerialThreshold,
+                  "списки full выше порога последовательного пути");
+            auto c_s = cs0;
+            auto c_f = cf0;
+            interactions::apply_clamp_friction_counts(exec, ws, c_f, c_s);
+            bool ok = true;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                ok = ok && same_bits(c_s[i], cs.solid_mask[i] == kClampAll ? 0.0 : cs0[i]);
+                ok = ok && same_bits(c_f[i], cs.fiber_mask[i] == kClampAll ? 0.0 : cf0[i]);
+            }
+            check(ok, "параллельный путь, потоков " + std::to_string(nt) + ": обнулены ровно полностью закреплённые");
         }
     }
     // пустой набор: ничего не меняется
@@ -681,6 +722,9 @@ void test_u6_clamp_box()
 
 } // namespace
 
+#include "clamp_integration_solid.hpp" // S1-S4 (используют check/failures выше)
+#include "clamp_integration_fiber.hpp" // F1-F5 (используют check/failures выше)
+
 int main()
 {
     test_u1();
@@ -691,6 +735,8 @@ int main()
     test_validate();
     test_u6_clamp_box();
     // F1-F5, S1-S4: интеграционные тесты через time_integration -- добавляются отдельно.
+    run_clamp_fiber_integration_tests(); // F1-F5
+    run_clamp_solid_integration_tests(); // S1-S4
 
     std::printf("\n%s (failures = %d)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
