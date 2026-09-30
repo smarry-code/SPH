@@ -6,6 +6,7 @@
 #include "fiber/fiber_output.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
+#include "interactions/fiber_friction.hpp"
 #include "interactions/fiber_solid_contact.hpp"
 #include "interactions/postprocessing.hpp"
 #include "ode/ode_solver.hpp"
@@ -61,7 +62,9 @@ namespace detail
 // Порядок одного шага (fiber/SPH.md, «Описание алгоритмов и структур
 // данных» / PLAN.md §3.9): solver.predict() -> RHS (single_step + Fiber-Bond/
 // Fiber-Fiber-Contact/Fiber-Solid-Contact, ОДНО вычисление на шаг) -> новый
-// dt -> solver.advance() -> Postprocessing (apply_material_strength, разрыв
+// dt -> единая стадия трения нить-нить и Fiber-Solid (fiber/fiber_friction_projection.md,
+// fiber/fiber_solid_friction_implementation.md) ->
+// solver.advance() -> Postprocessing (apply_material_strength, разрыв
 // связей Fiber-Bond) -> вывод. update_smoothing_length -- ИСКЛЮЧЕНИЕ, см.
 // большой комментарий в include/interactions/postprocessing.hpp (шапка
 // файла) -- почему он остаётся МЕЖДУ RHS и вычислением нового dt, а не после
@@ -104,6 +107,22 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     rhs::CpuExecutor fiber_exec;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_thread_buffers;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_contact_thread_buffers;
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_friction_thread_buffers;
+    // Mass splitting стадии трения: c_k (число активных слотов на бусину) и
+    // буферы подсчёта -- переиспользуются между шагами (память только растёт).
+    std::vector<rhs::ContributionBuffer<interactions::FiberCountDelta>> fiber_friction_count_buffers;
+    std::vector<rhs::ContributionBuffer<interactions::SolidCountDelta>> solid_friction_count_buffers;
+    std::vector<double> fiber_friction_bead_count; // c_k (оба вида контактов)
+    std::vector<double> solid_friction_count;      // c_s
+    // Вклады стадии трения в Solid (interaction_type 13) и слоты Fiber-Solid.
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> solid_friction_thread_buffers;
+    std::vector<interactions::FiberSolidFrictionContact> friction_solid_contacts;
+    // Контакты нить-нить текущего шага и слоты стадии трения (fiber/
+    // fiber_friction_projection.md, §3, §5): живут на уровне функции, потому
+    // что стадия трения выполняется ПОСЛЕ вычисления dt, вне блока RHS.
+    // Переиспользуются между шагами (память только растёт).
+    interactions::FiberContactSearchResult fiber_contact_search;
+    std::vector<interactions::FiberFrictionContact> friction_contacts;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
     std::vector<std::vector<interactions::FiberBreakEvent>> fiber_break_thread_buffers;
@@ -160,15 +179,18 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // физики независимо производят ускорение бусин — fiber/PLAN.md §3.3:
         // «FiberDelta: dv[dim]», сумма нескольких interaction types в общий dv).
         double fiber_dt_limit = std::numeric_limits<double>::max();
+        bool has_active_friction_contacts = false;      // нить-нить
+        bool has_active_solid_friction_contacts = false; // Fiber-Solid
         if (nfiber > 0)
         {
             std::vector<fiber::FiberDelta> fiber_bond_delta =
                 interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers);
 
-            interactions::FiberContactSearchResult fiber_contact_search;
             interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search);
-            interactions::compute_fiber_contact_contributions(fiber_exec, fb, materials,
-                                                               fiber_contact_search.primitives, fiber_contact_thread_buffers);
+            // Только нормальная сила; заполняет слоты трения friction_contacts.
+            has_active_friction_contacts = interactions::compute_fiber_contact_contributions(
+                fiber_exec, fb, materials, fiber_contact_search.primitives, fiber_contact_thread_buffers,
+                friction_contacts);
             std::vector<fiber::FiberDelta> fiber_contact_delta =
                 rhs::reduce_contributions(fiber_exec, fiber_contact_thread_buffers, fb.size());
 
@@ -191,7 +213,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             // же dv, как и они между собой.
             const interactions::FiberSolidContactResult fiber_solid_result = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
-                fiber_solid_solid_buffers);
+                fiber_solid_solid_buffers, &friction_solid_contacts);
+            has_active_solid_friction_contacts = fiber_solid_result.has_active_friction;
 
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < nfiber; ++i)
@@ -209,6 +232,42 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;
         if (fiber_dt_limit < dt) dt = fiber_dt_limit;
+
+        // Единая стадия трения (fiber/fiber_friction_projection.md, §5;
+        // fiber/fiber_solid_friction_implementation.md, §5): проекция на
+        // уровне скоростей по формуле обновления скорости решателя для ОБОИХ
+        // видов контактов (нить-нить и Fiber-Solid) ОДНИМ проходом Якоби, с
+        // mass splitting (c_k по обоим видам, c_s для частиц Solid).
+        // Добавляет ускорение трения в solver.fiber_rhs.dv и solver.solid_rhs.dvx
+        // (после этого там ПОЛНОЕ ускорение шага -- оно же станет f^{n-1} для
+        // предиктора PC). При mu_ff=mu_fs=0 у всех материалов активных слотов
+        // нет -- стадия не выполняется вообще (побитово прежний результат).
+        if (nfiber > 0 && (has_active_friction_contacts || has_active_solid_friction_contacts))
+        {
+            const auto fupd = solver.fiber_velocity_update(fb, dt);
+            const auto supd = solver.solid_velocity_update(sys, dt);
+            interactions::compute_friction_counts(fiber_exec, nfiber, ntotal, friction_contacts,
+                                                   friction_solid_contacts, fiber_friction_count_buffers,
+                                                   solid_friction_count_buffers, fiber_friction_bead_count,
+                                                   solid_friction_count);
+            interactions::compute_friction_contributions(
+                fiber_exec, fb, fupd, solver.fiber_rhs.dv, friction_contacts, sys, supd, solver.solid_rhs.dvx,
+                friction_solid_contacts, fiber_friction_bead_count, solid_friction_count, /*solid_kinematic=*/false,
+                fiber_friction_thread_buffers, solid_friction_thread_buffers);
+            const std::vector<fiber::FiberDelta> friction_delta =
+                rhs::reduce_contributions(fiber_exec, fiber_friction_thread_buffers, nfiber);
+            for (size_t d = 0; d < dim; ++d)
+                for (size_t i = 0; i < nfiber; ++i)
+                    solver.fiber_rhs.dv[d][i] += friction_delta[i].dv[d];
+            if (has_active_solid_friction_contacts)
+            {
+                const std::vector<interactions::SolidDelta> friction_solid_delta =
+                    rhs::reduce_contributions(fiber_exec, solid_friction_thread_buffers, ntotal);
+                for (size_t d = 0; d < dim; ++d)
+                    for (size_t i = 0; i < ntotal; ++i)
+                        solver.solid_rhs.dvx[d][i] += friction_solid_delta[i].dv[d];
+            }
+        }
 
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/
         // v/x с правилами, специфичными для Solid (u>=0, XSPH), — внутри

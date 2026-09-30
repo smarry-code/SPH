@@ -1,0 +1,51 @@
+{
+  "run_dir": "2026-09-27-fiber-layers-demo/data/v2_mu0/stop",
+  "n_frames": 82,
+  "E_tot0": 0.06406452000000001,
+  "max_E_tot_ratio": 1.2309202825258563,
+  "max_E_tot_ratio_frame": 71,
+  "max_E_tot_ratio_time": 0.00156201,
+  "final_E_tot_ratio": 1.2264760427207066,
+  "final_KE_total_ratio": 1.2185704550683927,
+  "max_bead_speed": 49.72587812960571,
+  "final_bead_speed": 17.26517179444213,
+  "max_solid_speed": 10.0,
+  "final_solid_speed": 4.415320011066834,
+  "max_momentum_drift_rel": 3.0996798211031974e-07,
+  "tol": 0.02,
+  "passed": false,
+  "n_bonds_initial": 320,
+  "n_bonds_final": 320,
+  "n_fiber_beads": 340,
+  "n_anchors": 40,
+  "layers": [
+    {
+      "layer": 0,
+      "KE_fiber_final": 0.016044470317746928,
+      "KE_fiber_max": 0.019625940168827353,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 1,
+      "KE_fiber_final": 0.011974491305276244,
+      "KE_fiber_max": 0.016828156499549843,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 2,
+      "KE_fiber_final": 0.016252226835371742,
+      "KE_fiber_max": 0.017701429529268984,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 3,
+      "KE_fiber_final": 0.021309154130017594,
+      "KE_fiber_max": 0.021440405480898136,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    }
+  ]
+}

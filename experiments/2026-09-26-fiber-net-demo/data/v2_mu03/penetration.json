@@ -1,0 +1,15 @@
+{
+  "run_dir": "../2026-09-26-fiber-net-demo/data/v2_mu03",
+  "n_frames": 63,
+  "fiber_d": 0.001,
+  "solid_rho0": 2700.0,
+  "near_mult": 2.0,
+  "max_ff_delta_ratio": 0.3456214204400859,
+  "max_ff_delta_ratio_frame": 19,
+  "max_ff_delta_ratio_time": 0.000152027,
+  "max_fs_delta_ratio": 0.31522477804051646,
+  "max_fs_delta_ratio_frame": 18,
+  "max_fs_delta_ratio_time": 0.000144011,
+  "n_passthrough_events": 0,
+  "passthrough_events": []
+}

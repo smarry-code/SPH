@@ -20,6 +20,7 @@
 //   experiments/2026-09-27-fiber-layers-demo/data, сценарий -- pierce.
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -68,7 +69,7 @@ namespace
 // ---------------------------------------------------------------------
 void write_net_file(const std::string& fib_path, const std::string& layout_path, double E, double nu, double d,
                      double rho, double eps_break, double l0, int n_beads, int fibers_per_layer,
-                     double fiber_spacing, double layer_gap, int n_layers)
+                     double fiber_spacing, double layer_gap, int n_layers, double mu_ff, double mu_fs)
 {
     std::ofstream f(fib_path);
     if (!f.is_open())
@@ -83,7 +84,16 @@ void write_net_file(const std::string& fib_path, const std::string& layout_path,
 
     f << "# Демо-сеть: 4 слоя нитей x,y,x,y (experiments/2026-09-27-fiber-layers-demo)\n";
     f << "# Сгенерировано demo_fiber_layers.cpp -- см. README.md рядом за обоснованием параметров.\n";
-    f << "MATERIAL 0 " << E << " " << nu << " " << d << " " << rho << " " << eps_break << "\n";
+    f << "MATERIAL 0 " << E << " " << nu << " " << d << " " << rho << " " << eps_break;
+    if (mu_ff > 0.0 || mu_fs > 0.0)
+    {
+        f << " " << mu_ff;
+        if (mu_fs > 0.0)
+        {
+            f << " " << mu_fs;
+        }
+    }
+    f << "\n";
 
     lay << "# layer_index direction fiber_index_in_layer object_id_t0 offset z_layer\n";
 
@@ -179,6 +189,70 @@ int main(int argc, char** argv)
     const fs::path net_path = out_dir / "net.fib";
     const fs::path layout_path = out_dir / "net_layout.txt";
 
+    // Переменные окружения:
+    // - SPH_DEMO_MU_FF: коэффициент трения нить-нить (если не задана, 0)
+    // - SPH_DEMO_MU_FS: коэффициент трения нить-Solid (если не задана, 0)
+    // - SPH_DEMO_BUDGET_S: временной бюджет в секундах для RunGuard (если не задана, 900)
+    double mu_ff = 0.0;
+    const char* mu_ff_env = std::getenv("SPH_DEMO_MU_FF");
+    if (mu_ff_env != nullptr)
+    {
+        try
+        {
+            mu_ff = std::stod(mu_ff_env);
+        }
+        catch (const std::exception&)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: ошибка разбора SPH_DEMO_MU_FF='%s'\n", mu_ff_env);
+            return 1;
+        }
+        if (mu_ff < 0.0)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: SPH_DEMO_MU_FF должен быть >= 0, получено %.6e\n", mu_ff);
+            return 1;
+        }
+    }
+
+    double mu_fs = 0.0;
+    const char* mu_fs_env = std::getenv("SPH_DEMO_MU_FS");
+    if (mu_fs_env != nullptr)
+    {
+        try
+        {
+            mu_fs = std::stod(mu_fs_env);
+        }
+        catch (const std::exception&)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: ошибка разбора SPH_DEMO_MU_FS='%s'\n", mu_fs_env);
+            return 1;
+        }
+        if (mu_fs < 0.0)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: SPH_DEMO_MU_FS должен быть >= 0, получено %.6e\n", mu_fs);
+            return 1;
+        }
+    }
+
+    double budget_s = 900.0;
+    const char* budget_env = std::getenv("SPH_DEMO_BUDGET_S");
+    if (budget_env != nullptr)
+    {
+        try
+        {
+            budget_s = std::stod(budget_env);
+        }
+        catch (const std::exception&)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: ошибка разбора SPH_DEMO_BUDGET_S='%s'\n", budget_env);
+            return 1;
+        }
+        if (budget_s <= 0.0)
+        {
+            std::fprintf(stderr, "demo_fiber_layers: SPH_DEMO_BUDGET_S должен быть > 0, получено %.6e\n", budget_s);
+            return 1;
+        }
+    }
+
     // =====================================================================
     // Параметры сети -- ОДИНАКОВЫЕ для обоих сценариев (README.md -- откуда
     // взялись числа: оценка энергоёмкости сети против кинетической энергии
@@ -197,7 +271,7 @@ int main(int argc, char** argv)
     const double anchor_mass_factor = 50.0; // псевдо-анкеры -- как в demo_fiber_net
 
     write_net_file(net_path.string(), layout_path.string(), E_f, nu_f, d_f, rho_f, eps_break, l0, n_beads,
-                   fibers_per_layer, fiber_spacing, layer_gap, n_layers);
+                   fibers_per_layer, fiber_spacing, layer_gap, n_layers, mu_ff, mu_fs);
 
     // --- Снаряд: алюминий, itype=body=4, МЕНЕЕ МАССИВНЫЙ, чем в
     // demo_fiber_net (куб 8^3, dx=1.2мм, ~2.4 г): куб 6^3=216 частиц (>=100),
@@ -289,6 +363,7 @@ int main(int argc, char** argv)
         "sv'azey=%zu, sloev=%d x %d niti\n",
         ntotal, n_side, dx_p, mass_total, model.fiber.size(), n_anchors, model.topology.bonds.size(), n_layers,
         fibers_per_layer);
+    std::printf("demo_fiber_layers: mu_ff=%.6e, mu_fs=%.6e, budget=%.3f s\n", mu_ff, mu_fs, budget_s);
     std::printf("demo_fiber_layers: output_dir=%s\n", out_dir.string().c_str());
 
     // Смена рабочего каталога -- output()/fiber_output()/log.txt/sph_gp.csv
@@ -297,7 +372,7 @@ int main(int argc, char** argv)
 
     double dt = compute_cfl_timestep(cfg, model.solid, ntotal);
     double time = 0.0;
-    RunGuard guard(900.0, 0.0, 1); // бюджет 15 минут на прогон
+    RunGuard guard(budget_s, 0.0, 1);
 
     const std::size_t bonds_before = model.topology.bonds.size();
     time_integration(cfg, model, ntotal, dt, time, dx_p, &guard);

@@ -7,3 +7,8 @@ data/stop/fiber_output_*.txt
 data/stop/sph_gp.csv
 data/stop/log.txt
 data/calib*/
+data/v2_*/*/sph_output_*.txt
+data/v2_*/*/fiber_output_*.txt
+data/v2_*/*/sph_gp.csv
+data/v2_*/*/log.txt
+data/v2_*/*/*.csv

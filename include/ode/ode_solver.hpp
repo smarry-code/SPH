@@ -109,13 +109,22 @@ void pc_finalize_velocity_position(N n, double dt, double coeff, XArr& x, VxArr&
 // упоминает XSPH в формуле Эйлера -- она не добавляется). Поэтому x
 // обновляется ДО перезаписи vx.
 // ============================================================================
+// dv_coeff -- коэффициент при dv в обновлении скорости (у Эйлера равен dt; для
+// нити берётся из fiber_coeff, чтобы step_fiber и fiber_velocity_update
+// использовали одно значение, fiber/fiber_friction_projection.md §4).
 template <class N, class XArr, class VxArr, class DvArr>
-void euler_step_position_velocity(N n, double dt, XArr& x, VxArr& vx, const DvArr& dv)
+void euler_step_position_velocity(N n, double dt, double dv_coeff, XArr& x, VxArr& vx, const DvArr& dv)
 {
     for (std::size_t d = 0; d < dim; ++d)
         for (N i = 0; i < n; ++i) x[d][i] += dt * vx[d][i]; // x^{n+1} = x^n + dt*v^n (старая скорость)
     for (std::size_t d = 0; d < dim; ++d)
-        for (N i = 0; i < n; ++i) vx[d][i] += dt * dv[d][i];
+        for (N i = 0; i < n; ++i) vx[d][i] += dv_coeff * dv[d][i];
+}
+
+template <class N, class XArr, class VxArr, class DvArr>
+void euler_step_position_velocity(N n, double dt, XArr& x, VxArr& vx, const DvArr& dv)
+{
+    euler_step_position_velocity(n, dt, dt, x, vx, dv);
 }
 
 // Скалярная величина (Solid: u, rho, s-компоненты): y^{n+1} = y^n + dt*dy.
@@ -124,6 +133,37 @@ void euler_step_scalar(N n, double dt, Arr& y, const DArr& dy)
 {
     for (N i = 0; i < n; ++i) y[i] += dt * dy[i];
 }
+
+// ============================================================================
+// FiberVelocityUpdate -- формула обновления скорости нити на текущем шаге:
+//   v^{n+1} = (*base)[d][i] + h * dv[d][i]
+// (fiber/fiber_friction_projection.md §4). Значения берутся из ТОГО ЖЕ места,
+// что использует advance() (приватный fiber_coeff/fiber_use_base решателя), и
+// нужны стадии трения между вычислением dt и advance().
+// base указывает на массивы решателя или FiberState (валидны до advance()).
+// ============================================================================
+struct FiberVelocityUpdate
+{
+    const std::vector<double>* base[dim]; // база v^base
+    double h;                             // коэффициент при dv
+};
+
+// ============================================================================
+// SolidVelocityUpdate -- формула обновления скорости частицы Solid на текущем
+// шаге (fiber/fiber_solid_friction_implementation.md §4):
+//   v^{n+1} = ((*base)[d][i] + h * dvx[d][i]) + (*av)[d][i]     (av != nullptr)
+//   v^{n+1} =  (*base)[d][i] + h * dvx[d][i]                    (av == nullptr)
+// -- ровно арифметика correct_solid / step_solid (PC: pc_finalize_velocity_
+// position_with_av; Эйлер: euler_step_position_velocity, без XSPH). Нужна
+// стадии трения между вычислением dt и advance(). Указатели валидны до
+// advance().
+// ============================================================================
+struct SolidVelocityUpdate
+{
+    const std::vector<double>* base[dim];       // база v^base
+    double h;                                    // коэффициент при dvx
+    const std::vector<std::vector<double>>* av;  // поправка XSPH; nullptr -- нет
+};
 
 // ============================================================================
 // Буферы производных RHS одного шага (fiber/PLAN.md §3.9: «решатель хранит
@@ -298,15 +338,40 @@ public:
         // безопасно заменено на безусловный цикл ещё в перегрузке
         // time_integration(fiber::Model&, ...), этап Ф3; здесь -- то же
         // самое, проверено tests/test_fiber_time_integration_equivalence.cpp).
-        pc_finalize_velocity_position_with_av(ntotal, dt, fs ? dt / 2.0 : dt, sys.x, sys.vx, solid_rhs.dvx, v_min_,
-                                               /*use_base=*/!fs, solid_rhs.av);
+        pc_finalize_velocity_position_with_av(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx, v_min_,
+                                               /*use_base=*/solid_use_base(), solid_rhs.av);
     }
 
     void correct_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        const bool fs = first_step_;
-        pc_finalize_velocity_position(nfiber, dt, fs ? dt / 2.0 : dt, fb.x, fb.vx, fiber_rhs.dv, v_min_fiber_,
-                                       /*use_base=*/!fs);
+        pc_finalize_velocity_position(nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv, v_min_fiber_,
+                                       /*use_base=*/fiber_use_base());
+    }
+
+    // База и коэффициент обновления скорости нити ровно как в correct_fiber
+    // (fiber/fiber_friction_projection.md §4). Вызывать после predict() и до
+    // advance() того же шага. Первый шаг: base = fb.vx, h = dt/2; шаг n>=2:
+    // base = v_min_fiber_ (v^n), h = dt.
+    FiberVelocityUpdate fiber_velocity_update(const fiber::FiberState& fb, double dt) const
+    {
+        FiberVelocityUpdate upd{};
+        for (std::size_t d = 0; d < dim; ++d) upd.base[d] = fiber_use_base() ? &v_min_fiber_[d] : &fb.vx[d];
+        upd.h = fiber_coeff(dt);
+        return upd;
+    }
+
+    // База, коэффициент и XSPH-поправка обновления скорости частицы Solid ровно
+    // как в correct_solid (fiber/fiber_solid_friction_implementation.md §4).
+    // Вызывать после predict() и до advance() того же шага. Первый шаг:
+    // base = sys.vx, h = dt/2; шаг n>=2: base = v_min_ (v^n), h = dt; av --
+    // solid_rhs.av (XSPH).
+    SolidVelocityUpdate solid_velocity_update(const ParticleSystem& sys, double dt) const
+    {
+        SolidVelocityUpdate upd{};
+        for (std::size_t d = 0; d < dim; ++d) upd.base[d] = solid_use_base() ? &v_min_[d] : &sys.vx[d];
+        upd.h = solid_coeff(dt);
+        upd.av = &solid_rhs.av;
+        return upd;
     }
 
     // Вызывается РОВНО один раз в конце шага (после correct_solid/correct_fiber).
@@ -333,6 +398,14 @@ public:
     }
 
 private:
+    // Единственное место, где задаются коэффициент и признак базы обновления
+    // скорости нити (используются correct_fiber и fiber_velocity_update).
+    double fiber_coeff(double dt) const { return first_step_ ? dt / 2.0 : dt; }
+    bool fiber_use_base() const { return !first_step_; }
+    // То же для Solid (correct_solid и solid_velocity_update).
+    double solid_coeff(double dt) const { return first_step_ ? dt / 2.0 : dt; }
+    bool solid_use_base() const { return !first_step_; }
+
     bool first_step_ = true;
     std::vector<double> u_min_, rho_min_;
     std::vector<double> sxx_min_, syy_min_, szz_min_, sxy_min_, syz_min_, sxz_min_;
@@ -390,12 +463,33 @@ public:
             sys.syz[i] += dt * solid_rhs.dsyz[i];
             sys.sxz[i] += dt * solid_rhs.dsxz[i];
         }
-        euler_step_position_velocity(ntotal, dt, sys.x, sys.vx, solid_rhs.dvx);
+        euler_step_position_velocity(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx);
     }
 
     void step_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        euler_step_position_velocity(nfiber, dt, fb.x, fb.vx, fiber_rhs.dv);
+        euler_step_position_velocity(nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv);
+    }
+
+    // Эйлер: base = fb.vx (v^n), h = fiber_coeff(dt) = dt -- ровно то, что
+    // делает euler_step_position_velocity (vx += dt*dv).
+    FiberVelocityUpdate fiber_velocity_update(const fiber::FiberState& fb, double dt) const
+    {
+        FiberVelocityUpdate upd{};
+        for (std::size_t d = 0; d < dim; ++d) upd.base[d] = &fb.vx[d];
+        upd.h = fiber_coeff(dt);
+        return upd;
+    }
+
+    // Эйлер: base = sys.vx (v^n), h = solid_coeff(dt) = dt, XSPH нет
+    // (av == nullptr) -- ровно euler_step_position_velocity в step_solid.
+    SolidVelocityUpdate solid_velocity_update(const ParticleSystem& sys, double dt) const
+    {
+        SolidVelocityUpdate upd{};
+        for (std::size_t d = 0; d < dim; ++d) upd.base[d] = &sys.vx[d];
+        upd.h = solid_coeff(dt);
+        upd.av = nullptr;
+        return upd;
     }
 
     // ------------------------------------------------------------------
@@ -415,6 +509,10 @@ public:
         step_solid(sys, ntotal, dt);
         step_fiber(fb, nfiber, dt);
     }
+
+private:
+    double fiber_coeff(double dt) const { return dt; }
+    double solid_coeff(double dt) const { return dt; }
 };
 
 } // namespace ode

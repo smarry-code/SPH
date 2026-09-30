@@ -12,6 +12,14 @@
 // временным прибавлением к ускорению внутри single_step (развилка
 // PLAN.md была на случай Ф6-раньше-Ф4, здесь не актуальна).
 //
+// ТРЕНИЕ (fiber/fiber_solid_friction_implementation.md, задача 4 из 4): kernel
+// compute_fiber_solid_contact_contributions считает ТОЛЬКО нормальную силу
+// Герца и дополнительно заполняет по одному слоту FiberSolidFrictionContact на
+// primitive (запись по индексу k); само трение (проекция на уровне скоростей,
+// единый проход Якоби с трением нить-нить, mass splitting) -- в
+// interactions/fiber_friction.hpp. Коэффициент -- mu_fs материала бусины a
+// (fiber_solid_friction_coefficient). При mu_fs = 0 активных слотов нет.
+//
 // ============================================================================
 // РЕШЕНИЯ (задокументированы явно, т.к. постановка оставляла их на усмотрение
 // реализации — fiber/PLAN.md, этап Ф6, последний абзац):
@@ -27,16 +35,29 @@
 //    Fiber. Результат — пары (индекс бусины Fiber, локальный индекс в
 //    подмножестве Solid), однократно, без дублей и без сортировки.
 //
-// 2. Правило «сегмент принадлежит первой бусине» (PLAN.md §3.2) реализовано
-//    на этапе ПОСТРОЕНИЯ primitive, а не в kernel:
+// 2. Радиус поиска -- r_f_max + r_s_max^contact + L_max, где L_max -- ТЕКУЩАЯ
+//    (не номинальная l0!) максимальная длина связи topology.bonds
+//    (interactions/fiber_contact_common.hpp::fiber_max_current_bond_length,
+//    общая с Fiber-Fiber-Contact, fiber/fiber_solid_contact_fix.md, §2).
+//    Связи Fiber-Bond работают только на растяжение и рвутся лишь в
+//    Postprocessing ПОСЛЕ шага (fiber/SPH.md), поэтому внутри шага сегмент
+//    может быть длиннее l0 -- номинальное l0 как оценка не годится (иначе
+//    контакт у дальнего конца растянутого сегмента может выпасть из поиска,
+//    fiber_solid_contact_fix.md, §2). "Правило «сегмент принадлежит первой
+//    бусине»" (PLAN.md §3.2) по-прежнему реализовано на этапе ПОСТРОЕНИЯ
+//    primitive, а не в kernel:
 //      - next(f) существует  -> primitive-сегмент (f, next(f), s);
 //      - next(f) НЕ существует (f -- последняя бусина нити):
 //          - prev(f) существует  -> primitive НЕ строится вовсе: сегмент
 //            (prev(f), f) уже покрывает эту зону контакта, ОН СТРОИТСЯ, когда
 //            поиск встречает пару (prev(f), s), — при радиусе поиска
-//            r_f_max + r_s_max^contact + l_max это ГАРАНТИРОВАНО происходит
-//            всегда, когда контакт вообще возможен рядом с f (см. вывод
-//            неравенства треугольника ниже, у fiber_solid_contact_search_radius);
+//            r_f_max + r_s_max^contact + L_max это ГАРАНТИРОВАНО происходит
+//            всегда, когда контакт вообще возможен рядом с f (неравенство
+//            треугольника: |x_s-x_{prev(f)}| <= |x_s-x_f| + |x_f-x_{prev(f)}|
+//            <= (r_f+r_s) + |x_f-x_{prev(f)}| <= r_f_max+r_s_max^contact+L_max,
+//            т.к. |x_f-x_{prev(f)}| -- ТЕКУЩАЯ длина связи (prev(f),f) и,
+//            значит, <= L_max = максимуму по ВСЕМ связям расчёта -- см. вывод
+//            ниже, у fiber_solid_contact_search_radius);
 //          - prev(f) тоже НЕ существует (f -- изолированная бусина без
 //            соседей, PLAN.md: "одиночная бусина без соседей даёт точечный
 //            контакт") -> primitive-точка (f, s), сила целиком на f.
@@ -45,15 +66,52 @@
 //    И отдельного точечного контакта в f): точечный примитив в f строится
 //    ТОЛЬКО когда сегмент (prev(f),f) в принципе не существует.
 //
-// 3. Полуинтервал λ∈[0,1) против [0,1] на последнем/первом сегменте
-//    реализован в compute_fiber_solid_contact_geometry ПО СЫРОМУ (до clamp)
-//    параметру t: t>=1 у НЕ последнего сегмента (next(b)!=-1) -> primitive
-//    пропускается целиком (ответственность передана следующему сегменту);
-//    t>=1 у последнего сегмента (next(b)==-1) -> clamp в 1 (законная точка --
-//    дальше клэмпить некому). Симметрично для t<0 и prev(a)==-1/!=-1.
-//    Тест test_fiber_solid.cpp, "узел не получает двойную силу" проверяет это
-//    численно: Solid-частица в узле между двумя сегментами, сумма вкладов от
-//    ОБОИХ primitives равна вкладу ОДНОГО контакта.
+// 3. Правило владения узлом (fiber/fiber_solid_contact_fix.md, §1) --
+//    заменяет старое "полуинтервал λ∈[0,1) против [0,1] по СЫРОМУ параметру
+//    t", которое теряло контакт целиком, если нить изломана в бусине a, а
+//    Solid-частица лежит во ВНЕШНЕМ секторе излома (оба соседних сегмента
+//    отбрасывали контакт, т.к. |t|>=1 и |t|<0 одновременно у "своего" конца).
+//    Параметр t вычисляется ЕДИНОЙ функцией fiber_solid_segment_param(xa,xb,xs)
+//    -- используется и для "своего" сегмента (a,b), и для соседнего
+//    (prev(a),a) -- с прижатием к границе (η=kFiberContactSnapEta,
+//    interactions/fiber_contact_common.hpp, общая с Fiber-Fiber-Contact):
+//      if (t > 1.0 - eta) t = std::max(t, 1.0);
+//      if (t < eta)        t = std::min(t, 0.0);
+//    Значения СТРОГО за пределами [0,1] сохраняются -- прижимаются только
+//    значения у самих границ (защита от рассогласованного округления у двух
+//    соседних сегментов, которые иначе оба могли бы принять один и тот же
+//    узел; для прямой нити это на практике не воспроизводится, но прижатие
+//    делает правило независимым от округления). После прижатия -- правило по
+//    таблице (primitive (a,b,s), b=next(a)):
+//      0 < t < 1                                 -> контакт, λ=t;
+//      t >= 1, b_is_last (next(b)==-1)            -> контакт, λ=1;
+//      t >= 1, !b_is_last                         -> пропуск (узел b -- у
+//                                                     следующего сегмента);
+//      t <= 0, первый сегмент (a_prev==-1)        -> контакт, λ=0;
+//      t <= 0, НЕ первый (a_prev!=-1)              -> вычислить t_prev той же
+//                                                     функцией для сегмента
+//                                                     (a_prev,a) с тем же
+//                                                     прижатием; t_prev>=1 ->
+//                                                     контакт, λ=0; иначе ->
+//                                                     пропуск.
+//    Почему это даёт ровно один контакт: прямая нить, частица над узлом --
+//    сегмент (prev(a),a) получает t>=1 и отказывается (не последний), а
+//    сегмент (a,b) получает t<=0, проверяет соседа, видит t_prev>=1 и
+//    принимает; ВНЕШНИЙ сектор излома -- то же самое (оба соседних сегмента
+//    участвуют в том же t<=0/t>=1 разборе, контакт с λ=0 у вершины вместо
+//    потери); частица проецируется внутрь ПРЕДЫДУЩЕГО сегмента (0<t_prev<1)
+//    -- его принимает предыдущий сегмент, текущий отказывается по проверке
+//    t_prev; вогнутый излом, частица проецируется внутрь ОБОИХ сегментов --
+//    два контакта в разных точках (это физически две точки касания, так и
+//    должно быть). Тест test_fiber_solid.cpp, "узел не получает двойную
+//    силу" проверяет частный случай (прямая нить) численно: Solid-частица в
+//    узле между двумя сегментами, сумма вкладов от ОБОИХ primitives равна
+//    вкладу ОДНОГО контакта.
+//    FiberSolidContactPrimitive хранит a_prev=prev(a) (long long, -1 если нет)
+//    вместо старого bool a_is_first -- нужен САМ индекс бусины prev(a) для
+//    вызова fiber_solid_segment_param на соседнем сегменте. b_is_last не
+//    изменился. Точечный primitive (изолированная бусина) не меняется по
+//    смыслу.
 //
 // 4. K_fs берёт FiberMaterial ИМЕННО бусины a (PLAN.md, этап Ф6, пункт 4,
 //    дословно: "использует elastic_by_itype(itype_s) и FiberMaterial
@@ -61,10 +119,13 @@
 //    материала, как во всех текущих сценариях) выбор a/b не имеет значения.
 //
 // 5. dt_limit: m_red = m_a*m_s/(m_a+m_s) -- по аналогии с Fiber-Fiber-Contact
-//    (m_red там строится по "якорным" частицам primitive i,j, не по их
-//    соседям, получающим часть силы через вес) и с Solid-Solid-Contact.
-//    Бусина b в m_red не участвует (получает лишь долю λ силы, как i_prev/
-//    i_next в Fiber-Fiber-Contact).
+//    (interactions/fiber_contact.hpp: там, после перехода на схему «пара
+//    сегментов -- одна сила» (fiber/fiber_contact_segment_pairs.md), m_red
+//    строится по ЭФФЕКТИВНЫМ массам точек контакта на каждой стороне пары
+//    сегментов, а не по одной "якорной" бусине) и с Solid-Solid-Contact.
+//    Здесь, в Fiber-Solid, схема проще: бусина b в m_red не участвует
+//    (получает лишь долю λ силы, ровно как соседняя бусина сегмента в
+//    Fiber-Fiber-Contact).
 //
 // 6. Предупреждение "Fiber-Solid-Contact не формируется для itype=..(газ/
 //    вода)" -- напечатано ОДИН РАЗ ЗА ПРОЦЕСС ВЫПОЛНЕНИЯ на itype (static
@@ -89,9 +150,10 @@
 #include <iostream>
 
 #include "fiber/fiber_system.hpp"
-#include "interactions/solid_contact.hpp" // solid_contact_radius
-#include "interactions/solid_sph.hpp"     // SolidDelta
-#include "materials.hpp"                  // elastic_by_itype
+#include "interactions/fiber_contact_common.hpp" // kFiberContactSnapEta, fiber_max_current_bond_length
+#include "interactions/solid_contact.hpp"        // solid_contact_radius
+#include "interactions/solid_sph.hpp"            // SolidDelta
+#include "materials.hpp"                         // elastic_by_itype
 #include "param.hpp"
 #include "particle_system.hpp"
 #include "rhs/contributions.hpp"
@@ -106,22 +168,61 @@ namespace interactions
 // SolidDelta) суммируются в НЕЗАВИСИМЫХ reduce_contributions, поэтому
 // коллизия численного значения между "доменами" разных Delta не критична, но
 // внутри своего домена значение обязано быть уникальным:
-//   FiberDelta:  1 = Fiber-Bond, 2 = Fiber-Fiber-Contact, 3 = ЗДЕСЬ (сторона Fiber);
-//   SolidDelta: 10 = Solid-SPH, 11 = Solid-Solid-Contact, 12 = ЗДЕСЬ (сторона Solid).
+//   FiberDelta:  1 = Fiber-Bond, 2 = Fiber-Fiber-Contact, 3 = ЗДЕСЬ (сторона Fiber),
+//                4 = трение нить-нить, 5 = трение Fiber-Solid, сторона нити
+//                (interactions/fiber_friction.hpp);
+//   SolidDelta: 10 = Solid-SPH, 11 = Solid-Solid-Contact, 12 = ЗДЕСЬ (сторона Solid),
+//               13 = трение Fiber-Solid, сторона Solid (fiber_friction.hpp).
 constexpr std::uint32_t kFiberSolidContactFiberType = 3;
 constexpr std::uint32_t kFiberSolidContactSolidType = 12;
 
 constexpr double kFiberSolidContactMinD = 1e-12;
 
 // ----------------------------------------------------------------------
+// fiber_solid_friction_coefficient -- правило выбора коэффициента трения
+// нить-Solid (fiber/fiber_solid_friction_implementation.md, §2): сейчас mu_fs
+// материала нити (бусины a сегмента, как K_fs, решение 4 в шапке). У материалов
+// Solid параметра трения нет; если он появится, менять только эту функцию.
+// ----------------------------------------------------------------------
+inline double fiber_solid_friction_coefficient(const fiber::FiberMaterial& fiber_mat, int /*solid_itype*/)
+{
+    return fiber_mat.mu_fs;
+}
+
+// ----------------------------------------------------------------------
+// FiberSolidFrictionContact -- слот принятого контакта Fiber-Solid для стадии
+// трения (fiber/fiber_solid_friction_implementation.md, §5.1). ПО ОДНОМУ слоту
+// на primitive, запись по индексу k -- без гонок и аллокаций внутри kernel; POD
+// (переносится в device-память как есть). active = контакт принят && mu>0;
+// неактивный слот -- value-initialized.
+// ----------------------------------------------------------------------
+struct FiberSolidFrictionContact
+{
+    bool active = false; // contact && mu > 0
+    rhs::index_t a = 0;
+    long long b = -1; // -1 -- точечный контакт
+    rhs::index_t s = 0;
+    double lambda = 0.0; // доля нити на b (для точечного 0)
+    double n[dim] = {};  // от нити к Solid, как в геометрии
+    double N = 0.0;      // нормальная сила Герца (geom.F), >= 0
+    double mu = 0.0;
+};
+
+// ----------------------------------------------------------------------
 // FiberSolidContactPrimitive = (a, b, s) -- fiber/SPH.md, «Fiber-Solid-
 // Contact»: a, b -- соседние бусины сегмента нити (b может отсутствовать --
 // вырожденный точечный контакт, has_b==false), s -- РЕАЛЬНАЯ Solid-частица.
-// a_is_first/b_is_last -- топологические флаги, нужные kernel'у для решения
-// "клэмпить t в границу или передать ответственность соседнему сегменту"
-// (см. пункт 3 в шапке файла); сохранены в primitive при построении (тот же
-// приём, что FiberContactPrimitive::i_prev/i_next в interactions/
-// fiber_contact.hpp — kernel не перечитывает topology).
+// a_prev/b_is_last -- топологические данные, нужные kernel'у для правила
+// владения узлом (см. пункт 3 в шапке файла): b_is_last решает "клэмпить t в
+// 1 или передать ответственность следующему сегменту"; a_prev=prev(a) (не
+// просто флаг "первый ли сегмент", как раньше a_is_first) -- нужен САМ
+// индекс бусины prev(a), т.к. при t<=0 у не первого сегмента правило
+// пересчитывает параметр для соседнего сегмента (prev(a),a) функцией
+// fiber_solid_segment_param (fiber/fiber_solid_contact_fix.md, §1 п.3-4).
+// Сохранены в primitive при построении (тот же приём, что
+// FiberContactPrimitive::a_prev/a_has_next_segment (и симметрично для
+// стороны B) в interactions/fiber_contact.hpp — kernel не перечитывает
+// topology).
 // ----------------------------------------------------------------------
 struct FiberSolidContactPrimitive
 {
@@ -129,33 +230,41 @@ struct FiberSolidContactPrimitive
     rhs::index_t s = 0;
     bool has_b = false;
     rhs::index_t b = 0;
-    bool a_is_first = false; // prev[a] == -1 (значимо всегда, даже при !has_b)
-    bool b_is_last = false;  // has_b && next[b] == -1
+    long long a_prev = -1;  // prev[a]; -1, если нет (значимо всегда, даже при !has_b)
+    bool b_is_last = false; // has_b && next[b] == -1
 };
 
 // ----------------------------------------------------------------------
-// fiber_solid_contact_search_radius -- r_f_max + r_s_max^contact + l_max
-// (fiber/PLAN.md §3.2, таблица "Радиусы поиска").
+// fiber_solid_contact_search_radius -- r_f_max + r_s_max^contact + L_max
+// (fiber/PLAN.md §3.2, таблица "Радиусы поиска"; fiber/
+// fiber_solid_contact_fix.md, §2).
 //
-// Эта же оценка обосновывает решение 2 в шапке файла (primitive НЕ строится
-// для пары (f,s), если next(f)==-1 и prev(f)!=-1): если контакт существует
-// у Solid-частицы s рядом с концом f сегмента (prev(f),f), т.е.
-// |x_s - x_f| <= r_f+r_s, то по неравенству треугольника
+// L_max -- ТЕКУЩАЯ (не номинальная l0!) максимальная длина связи
+// (interactions/fiber_contact_common.hpp::fiber_max_current_bond_length,
+// общая с Fiber-Fiber-Contact): связи Fiber-Bond работают только на
+// растяжение и рвутся лишь в Postprocessing ПОСЛЕ шага (fiber/SPH.md),
+// поэтому внутри шага сегмент может быть длиннее номинального l0, и l0 как
+// оценка не годится.
+//
+// Эта же оценка обосновывает решение (в шапке файла, пункт 2) о том, что
+// primitive НЕ строится для пары (f,s), если next(f)==-1 и prev(f)!=-1: если
+// контакт существует у Solid-частицы s рядом с концом f сегмента (prev(f),f),
+// т.е. |x_s - x_f| <= r_f+r_s, то по неравенству треугольника
 //   |x_s - x_{prev(f)}| <= |x_s-x_f| + |x_f-x_{prev(f)}|
-//                        <= (r_f+r_s) + l0(prev(f),f)
-//                        <= r_f_max + r_s_max^contact + l_max = radius,
+//                        <= (r_f+r_s) + |x_f-x_{prev(f)}|
+//                        <= r_f_max + r_s_max^contact + L_max = radius,
 // то есть пара (prev(f), s) гарантированно попадает в результат поиска
-// (l_max -- максимум l0 ПО ВСЕМ связям расчёта, значит l0(prev(f),f) <= l_max
-// для любой конкретной связи).
+// (|x_f-x_{prev(f)}| -- ТЕКУЩАЯ длина связи (prev(f),f), значит она <= L_max
+// = максимуму ТЕКУЩЕЙ длины ПО ВСЕМ связям расчёта).
 // ----------------------------------------------------------------------
-inline double fiber_solid_contact_search_radius(const fiber::FiberTopology& topology,
+inline double fiber_solid_contact_search_radius(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                                                  const fiber::FiberTopology& topology,
                                                   const std::vector<fiber::FiberMaterial>& materials,
                                                   double r_s_max_contact)
 {
     double r_f_max = 0.0;
     for (const auto& m : materials) r_f_max = std::max(r_f_max, 0.5 * m.d);
-    double l_max = 0.0;
-    for (const auto& b : topology.bonds) l_max = std::max(l_max, b.l0);
+    const double l_max = fiber_max_current_bond_length(exec, state, topology);
     return r_f_max + r_s_max_contact + l_max;
 }
 
@@ -221,7 +330,7 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
         }
         if (eligible.empty()) return;
 
-        const double radius = fiber_solid_contact_search_radius(topology, materials, r_s_max);
+        const double radius = fiber_solid_contact_search_radius(exec, state, topology, materials, r_s_max);
 
         std::vector<double> sx[dim];
         for (std::size_t d = 0; d < dim; ++d) sx[d].resize(eligible.size());
@@ -248,16 +357,16 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
             FiberSolidContactPrimitive prim;
             prim.a = f;
             prim.s = s;
+            prim.a_prev = topology.prev[f]; // -1, если бусина первая/изолированная
 
             const long long nxt = topology.next[f];
             if (nxt == -1)
             {
-                if (topology.prev[f] == -1)
+                if (prim.a_prev == -1)
                 {
                     // Изолированная бусина без соседей -- точечный контакт
                     // (решение 2 в шапке файла).
                     prim.has_b = false;
-                    prim.a_is_first = true;
                     out.primitives.push_back(prim);
                 }
                 // else: сегмент (prev(f),f) покрывает эту зону -- пропуск
@@ -267,11 +376,59 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
 
             prim.has_b = true;
             prim.b = static_cast<rhs::index_t>(nxt);
-            prim.a_is_first = (topology.prev[f] == -1);
             prim.b_is_last = (topology.next[prim.b] == -1);
             out.primitives.push_back(prim);
         }
     }
+}
+
+// ----------------------------------------------------------------------
+// FiberSolidSegmentParam -- результат fiber_solid_segment_param ниже:
+// valid=false <=> сегмент (xa,xb) вырожден (e2<=0, совпадающие бусины) --
+// параметр t не определён (защита от деления на 0, то же поведение, что
+// раньше -- прямой отказ от контакта на этом сегменте).
+// ----------------------------------------------------------------------
+struct FiberSolidSegmentParam
+{
+    bool valid = false;
+    double t = 0.0;
+};
+
+// ----------------------------------------------------------------------
+// fiber_solid_segment_param -- ЕДИНСТВЕННАЯ функция вычисления параметра t
+// проекции Solid-частицы xs на сегмент нити (xa,xb) (fiber/
+// fiber_solid_contact_fix.md, §1 п.1): используется и для "своего" сегмента
+// primitive (a,b), и для соседнего (prev(a),a) при проверке правила
+// владения узлом в compute_fiber_solid_contact_geometry -- поэтому
+// результат должен быть побитово воспроизводим для одинаковых входов (то же
+// выражение, тот же порядок операций, что раньше был инлайнен в
+// compute_fiber_solid_contact_geometry -- для прямой нити БЕЗ контактов у
+// узлов результат остаётся побитово прежним):
+//   t = dot(xs-xa, e)/dot(e,e),  e = xb-xa.
+// Прижатие к границам (η=kFiberContactSnapEta, interactions/
+// fiber_contact_common.hpp, общая с Fiber-Fiber-Contact; fiber/
+// fiber_solid_contact_fix.md, §1 п.2): значения СТРОГО за пределами [0,1]
+// сохраняются -- прижимаются только значения у самих границ (см. шапку
+// файла, решение 3, для полного разбора и обоснования):
+//   if (t > 1.0 - eta) t = std::max(t, 1.0);
+//   if (t < eta)       t = std::min(t, 0.0);
+// ----------------------------------------------------------------------
+inline FiberSolidSegmentParam fiber_solid_segment_param(const double xa[3], const double xb[3], const double xs[3])
+{
+    FiberSolidSegmentParam out;
+    const double e[3] = {xb[0] - xa[0], xb[1] - xa[1], xb[2] - xa[2]};
+    const double e2 = e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
+    if (!(e2 > 0.0)) return out; // вырожденный сегмент (совпадающие бусины) -- valid остаётся false
+
+    const double d[3] = {xs[0] - xa[0], xs[1] - xa[1], xs[2] - xa[2]};
+    double t = (d[0] * e[0] + d[1] * e[1] + d[2] * e[2]) / e2;
+
+    if (t > 1.0 - kFiberContactSnapEta) t = std::max(t, 1.0);
+    if (t < kFiberContactSnapEta) t = std::min(t, 0.0);
+
+    out.valid = true;
+    out.t = t;
+    return out;
 }
 
 // ----------------------------------------------------------------------
@@ -323,23 +480,38 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
             const Vec3 xa = point_f(prim.a);
             const Vec3 xb = point_f(prim.b);
             const Vec3 e = sub(xb, xa);
-            const double e2 = dot(e, e);
-            if (!(e2 > 0.0)) return geom; // вырожденный сегмент (совпадающие бусины) -- защита от деления на 0
 
-            // Сырой (до clamp) параметр t -- решение 3 в шапке файла:
-            // клэмп в границу разрешён ТОЛЬКО когда дальше по нити клэмпить
-            // некому (конец/начало нити), иначе примитив пропускается --
-            // ответственность за эту зону несёт соседний сегмент.
-            const double t = dot(sub(xs, xa), e) / e2;
+            // Правило владения узлом (fiber/fiber_solid_contact_fix.md, §1;
+            // шапка файла, решение 3) -- параметр t (после прижатия к
+            // границе) вычисляется общей функцией fiber_solid_segment_param.
+            const FiberSolidSegmentParam pt = fiber_solid_segment_param(xa.data(), xb.data(), xs.data());
+            if (!pt.valid) return geom; // вырожденный сегмент (совпадающие бусины) -- защита от деления на 0
+            const double t = pt.t;
+
             if (t >= 1.0)
             {
-                if (!prim.b_is_last) return geom;
+                if (!prim.b_is_last) return geom; // узел b -- у следующего сегмента
                 lambda = 1.0;
             }
-            else if (t < 0.0)
+            else if (t <= 0.0)
             {
-                if (!prim.a_is_first) return geom;
-                lambda = 0.0;
+                if (prim.a_prev == -1)
+                {
+                    lambda = 0.0; // первый сегмент нити -- клэмпить некому
+                }
+                else
+                {
+                    // Узел a -- общая точка с соседним сегментом (a_prev,a);
+                    // владелец решается пересчётом t_prev ТОЙ ЖЕ функцией с
+                    // тем же прижатием -- принимаем, только если у соседа
+                    // минимум оказался на его дальнем конце (t_prev>=1),
+                    // иначе минимум внутри соседнего сегмента, и владеет им
+                    // он (см. таблицу в шапке файла, решение 3).
+                    const Vec3 xap = point_f(static_cast<rhs::index_t>(prim.a_prev));
+                    const FiberSolidSegmentParam pt_prev = fiber_solid_segment_param(xap.data(), xa.data(), xs.data());
+                    if (!(pt_prev.valid && pt_prev.t >= 1.0)) return geom;
+                    lambda = 0.0;
+                }
             }
             else
             {
@@ -386,11 +558,19 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
 // импульса на primitive: F_a+F_b+F_s=0 (F_s=F*n, F_a=-(1-λ)F*n,
 // F_b=-λF*n) -- см. test_fiber_solid.cpp.
 // ----------------------------------------------------------------------
-inline void compute_fiber_solid_contact_contributions(
+//
+// Трения здесь нет (fiber/fiber_solid_friction_implementation.md, §5.1): kernel
+// ДОПОЛНИТЕЛЬНО заполняет friction_contacts[k] для каждого primitive;
+// friction_contacts.resize(primitives.size()) выполняется ДО parallel_for (вектор
+// переиспользуется между шагами). Возвращает true, если есть хотя бы один
+// активный слот (contact && mu>0); флаг -- отдельным parallel_reduce по слотам
+// (целочисленная сумма, детерминированно).
+inline bool compute_fiber_solid_contact_contributions(
     const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
     const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+    std::vector<FiberSolidFrictionContact>& friction_contacts)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (fiber_buffers.size() < nworkers) fiber_buffers.resize(nworkers);
@@ -399,12 +579,30 @@ inline void compute_fiber_solid_contact_contributions(
     for (auto& buf : solid_buffers) buf.clear();
 
     const std::size_t n = primitives.size();
-    if (n == 0) return;
+    friction_contacts.resize(n);
+    if (n == 0) return false;
 
     exec.parallel_for(n, [&](std::size_t k) {
+        friction_contacts[k] = FiberSolidFrictionContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Слот для стадии трения ---------------------------------------
+        const double mu = fiber_solid_friction_coefficient(
+            materials[static_cast<std::size_t>(state.material_id[prim.a])], sys.itype[prim.s]);
+        if (mu > 0.0)
+        {
+            FiberSolidFrictionContact& slot = friction_contacts[k];
+            slot.active = true;
+            slot.a = prim.a;
+            slot.b = prim.has_b ? static_cast<long long>(prim.b) : -1;
+            slot.s = prim.s;
+            slot.lambda = prim.has_b ? geom.lambda : 0.0;
+            for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
+            slot.N = geom.F;
+            slot.mu = mu;
+        }
 
         int w = rhs::CpuExecutor::worker_id();
         if (w < 0 || static_cast<std::size_t>(w) >= fiber_buffers.size()) w = 0;
@@ -439,6 +637,24 @@ inline void compute_fiber_solid_contact_contributions(
             fw.emit(prim.b, db, static_cast<std::uint64_t>(k), 2);
         }
     });
+
+    const std::size_t active_count = exec.parallel_reduce(
+        n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
+        [](std::size_t a, std::size_t b) { return a + b; });
+    return active_count > 0;
+}
+
+// Перегрузка без слотов трения (тесты нормального контакта): слоты во
+// временном векторе, флаг активности отбрасывается.
+inline void compute_fiber_solid_contact_contributions(
+    const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
+    const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+{
+    std::vector<FiberSolidFrictionContact> unused_slots;
+    (void)compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, primitives, fiber_buffers,
+                                                     solid_buffers, unused_slots);
 }
 
 // compute_fiber_solid_contact -- удобная обёртка: search + contributions +
@@ -448,6 +664,7 @@ struct FiberSolidContactResult
     std::vector<fiber::FiberDelta> fiber_delta;
     std::vector<SolidDelta> solid_delta;
     std::vector<FiberSolidContactPrimitive> primitives; // для dt_limit/диагностики без повторного поиска
+    bool has_active_friction = false; // есть активный слот трения (только при переданных friction_contacts)
 };
 
 inline FiberSolidContactResult compute_fiber_solid_contact(
@@ -455,13 +672,18 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
     const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr)
 {
     FiberSolidContactSearchResult search;
     build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
-    compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
-                                               solid_buffers);
     FiberSolidContactResult out;
+    if (friction_contacts)
+        out.has_active_friction = compute_fiber_solid_contact_contributions(
+            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts);
+    else
+        compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
+                                                   solid_buffers);
     out.fiber_delta = rhs::reduce_contributions(exec, fiber_buffers, state.size());
     out.solid_delta = rhs::reduce_contributions(exec, solid_buffers, ntotal);
     out.primitives = search.primitives;

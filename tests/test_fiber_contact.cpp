@@ -1,21 +1,40 @@
 // tests/test_fiber_contact.cpp
-// Unit-тесты Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5; fiber/SPH.md,
-// раздел «Fiber-Fiber-Contact»):
-//   - перпендикулярные нити: D, n, P_ij, w_ij против ручного расчёта;
-//   - почти параллельные нити: нет NaN/Inf, срабатывает переход на Surface-End;
-//   - Surface-End и End-Surface, End-End: геометрия и сила;
-//   - сумма импульсов по всем вкладам одного primitive равна нулю;
-//   - диагностика: число пар на одно пересечение.
+// Unit-тесты Fiber-Fiber-Contact в схеме «пара сегментов -- одна сила»
+// (fiber/fiber_contact_segment_pairs.md, §8): primitive -- пара отрезков осей
+// двух нитей, ближайшие точки ищутся с ограничением по отрезкам, правило
+// владения гарантирует ровно один контакт на физическое пересечение (кроме
+// изогнутых нитей с несколькими локальными минимумами -- §3, §8.3).
 //
-// Стиль -- по образцу tests/test_fiber_bond.cpp (тот же формат check()/
-// near_rel()/near_abs(), тот же CpuExecutor/ContributionBuffer напрямую).
-// Собирается с SPH_DIM=3 (CMakeLists.txt).
+// Разделы теста соответствуют §8.1-8.8 спецификации:
+//   8.1 -- главный тест: ровно один контакт на пересечение прямых нитей,
+//          сила равна силе Герца одной пары, для сетки углов x положений;
+//   8.2 -- концы нитей (бывшие Surface-End/End-Surface/End-End) и
+//          изолированная бусина;
+//   8.3 -- изогнутая нить: выпуклый узел (один контакт, s=0) и вогнутое
+//          «седло» (два контакта, разные q_A);
+//   8.4 -- сохранение импульса на сценах 8.1-8.3;
+//   8.5 -- полнота поиска при растянутых связях (радиус по ТЕКУЩЕЙ, не
+//          номинальной, длине);
+//   8.6 -- почти параллельные и совпадающие оси (нет NaN, импульс ноль);
+//   8.7 -- compute_fiber_contact_dt_limit совпадает с ручной формулой (§6);
+//   8.8 -- смешение mu_ff и нормальная часть при mu_ff=0 (само трение --
+//          отдельная стадия, interactions/fiber_friction.hpp, tests/test_fiber_friction.cpp).
+//
+// Стиль -- по образцу старого test_fiber_contact.cpp / test_fiber_bond.cpp
+// (тот же check()/near_rel()/near_abs(), тот же CpuExecutor/ContributionBuffer
+// напрямую). Собирается с SPH_DIM=3 (CMakeLists.txt).
+//
+// Все проверки сил -- на СУММАРНЫХ вкладах после reduce_contributions по ВСЕМ
+// primitives сцены (build_fiber_contact_search), а не по одному вручную
+// собранному primitive -- именно в этом месте старая Meyer-подобная схема
+// ошибалась (fiber_contact_segment_pairs.md, §8, шапка).
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "param.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -27,6 +46,8 @@ static_assert(dim == 3, "test_fiber_contact требует сборки с SPH_D
 
 namespace
 {
+
+const double kPi = 3.14159265358979323846;
 
 int failures = 0;
 
@@ -43,20 +64,46 @@ bool finite3(const double v[3]) { return std::isfinite(v[0]) && std::isfinite(v[
 fiber::FiberMaterial make_material(double E, double nu, double d, double rho, double eps_break = 1.0)
 {
     fiber::FiberMaterial m;
-    m.E = E; m.nu = nu; m.d = d; m.rho = rho; m.eps_break = eps_break;
+    m.E = E;
+    m.nu = nu;
+    m.d = d;
+    m.rho = rho;
+    m.eps_break = eps_break;
     return m;
 }
 
-// --- Двухнитевая фикстура: нить A (object_id=0), нить B (object_id=1) ------
-// beadsA/beadsB -- точки в порядке следования по нити (prev/next строятся
-// цепочкой), massesA/massesB -- массы бусин (по одной на точку). Обе нити
-// используют ОДИН материал (materials[0]) -- для тестов с разными
-// материалами используется отдельный конструктор ниже.
+// -----------------------------------------------------------------------
+// hertz_force -- ТА ЖЕ формула, что kernel (compute_fiber_contact_geometry,
+// §4 спецификации): 1/E* = (1-nu_a^2)/E_a+(1-nu_b^2)/E_b, R*=ra*rb/(ra+rb),
+// F=(4/3)*E**sqrt(R*)*delta^1.5. Используется, чтобы сравнивать суммарный
+// вклад ВСЕХ primitives сцены с "силой одной пары" (§8, шапка).
+// -----------------------------------------------------------------------
+double hertz_force(double delta, const fiber::FiberMaterial& mat_a, const fiber::FiberMaterial& mat_b)
+{
+    if (!(delta > 0.0)) return 0.0;
+    const double ra = 0.5 * mat_a.d;
+    const double rb = 0.5 * mat_b.d;
+    const double inv_Estar = (mat_a.E > 0.0 ? (1.0 - mat_a.nu * mat_a.nu) / mat_a.E : 0.0) +
+                              (mat_b.E > 0.0 ? (1.0 - mat_b.nu * mat_b.nu) / mat_b.E : 0.0);
+    if (!(inv_Estar > 0.0)) return 0.0;
+    const double E_star = 1.0 / inv_Estar;
+    const double R_star = (ra > 0.0 && rb > 0.0) ? (ra * rb) / (ra + rb) : 0.0;
+    return (4.0 / 3.0) * E_star * std::sqrt(R_star) * std::pow(delta, 1.5);
+}
+
+// --- Двухнитевая фикстура: нить A (object_id=0, бусины [0,n_a)), нить B
+// (object_id=1, бусины [n_a,n_a+n_b)) -- как в старом файле, плюс n_a/n_b
+// сохранены явно (нужны для суммирования силы ПО НИТИ, §8: "суммарная сила
+// на нить A по всем бусинам"). Обе нити используют ОДИН материал
+// (materials[0]).
+// -----------------------------------------------------------------------
 struct TwoFiberFixture
 {
     fiber::FiberState state;
     fiber::FiberTopology topology;
     std::vector<fiber::FiberMaterial> materials;
+    std::size_t n_a = 0;
+    std::size_t n_b = 0;
 };
 
 void append_chain(fiber::FiberState& state, fiber::FiberTopology& topology, std::size_t base, int object_id,
@@ -86,7 +133,7 @@ void append_chain(fiber::FiberState& state, fiber::FiberTopology& topology, std:
                 l2 += dx * dx;
             }
             b.l0 = std::sqrt(l2);
-            b.l_break = b.l0 * 1e9; // разрыв не в предмете Ф5 (Ф7)
+            b.l_break = b.l0 * 1e9; // разрыв не в предмете этого теста
             topology.bonds.push_back(b);
         }
     }
@@ -105,25 +152,13 @@ TwoFiberFixture make_two_fiber_fixture(const std::vector<std::array<double, 3>>&
     fx.topology.resize(nA + nB);
     append_chain(fx.state, fx.topology, 0, 0, 0, beadsA, massesA);
     append_chain(fx.state, fx.topology, nA, 1, 0, beadsB, massesB);
+    fx.n_a = nA;
+    fx.n_b = nB;
     return fx;
 }
 
-// Прямая точечная проверка геометрии для заданного (заранее известного) primitive,
-// без поиска -- вызывающая сторона задаёт индексы/case вручную (тесты 1-3).
-interactions::FiberContactPrimitive make_primitive(std::size_t i, long long ip, long long in, std::size_t j,
-                                                     long long jp, long long jn, interactions::FiberContactCase c)
-{
-    interactions::FiberContactPrimitive prim;
-    prim.i = i; prim.i_prev = ip; prim.i_next = in;
-    prim.j = j; prim.j_prev = jp; prim.j_next = jn;
-    prim.case_ = c;
-    return prim;
-}
-
-// Задаёт скорость одной бусины (fiber/fiber_friction_implementation.md --
-// тесты трения нуждаются в ненулевых, РАЗНЫХ скоростях бусин, чего не делают
-// более старые тесты геометрии/нормальной силы, где vx остаётся нулевым по
-// умолчанию из append_chain).
+// Задаёт скорость одной бусины (нужна тестам трения §8.8 -- ненулевые, РАЗНЫЕ
+// скорости бусин, чего не делают тесты геометрии/нормальной силы).
 void set_velocity(fiber::FiberState& state, std::size_t idx, double vx, double vy, double vz)
 {
     state.vx[0][idx] = vx;
@@ -132,775 +167,726 @@ void set_velocity(fiber::FiberState& state, std::size_t idx, double vx, double v
 }
 
 // -----------------------------------------------------------------------
-// 1) Перпендикулярные нити (Surface-Surface, нетривиальные P_ij/P_ji).
-//
-// Нить A вдоль оси x (через начало координат), нить B вдоль оси y, со
-// смещением (x0,y0,h): пересечение осей-прямых -- в точке (x0,0,0) на оси A
-// / (x0,0,h) на оси B (расстояние по перпендикуляру -- h, не зависит от
-// x0,y0 -- см. вывод в шапке include/interactions/fiber_contact.hpp).
-//
-// Ручной расчёт (p_A=(-1,0,0) "назад" к A0, p_B=(0,-1,0) "назад" к B0):
-//   r = xA1-xB1 = (-x0,-y0,-h),  c = p_A.p_B = 0,  denom = 1
-//   P_ij = -dot(r,p_A) = -x0,   P_ji = dot(r,p_B) = y0
-//   Q_i = (x0,0,0), Q_j = (x0,0,h), diff = (0,0,-h), D = h, n = (0,0,-1)
-//   d_n_i = |A1-A2| = l0 -> P_ij<0 -> w_i = (l0+P_ij)/l0 = (l0-x0)/l0
-//   d_p_j = |B1-B0| = l0 -> P_ji>0 -> w_j = (l0-P_ji)/l0 = (l0-y0)/l0
-//   сосед i -- A2 (next, т.к. P_ij<=0), сосед j -- B0 (prev, т.к. P_ji>0)
+// build_straight_pair -- строит ДВЕ ПРЯМЫЕ нити (произвольное число бусин,
+// направления eA_hat/eB_hat, шаг step) так, чтобы ближайшие точки
+// БЕСКОНЕЧНЫХ прямых, содержащих их оси, находились РОВНО на расстоянии
+// D_true, в точках с параметрами u0 (вдоль A от бусины index a_origin) и v0
+// (вдоль B от бусины index b_origin). Аналитическая конструкция: n_hat =
+// normalized(eA_hat x eB_hat) (перпендикуляр к обеим осям), qA = A_ref +
+// u0*eA_hat, qB = qA - D_true*n_hat (лежит на прямой B по построению, т.к.
+// n_hat перпендикулярен eB_hat), B_ref = qB - v0*eB_hat. Тогда qA,qB --
+// ТОЧНЫЙ (аналитический, не приближённый) минимум расстояния между
+// бесконечными прямыми: вектор qA-qB перпендикулярен ОБЕИМ осям, что и есть
+// условие минимума для скрещивающихся прямых. Даёт относительную точность
+// построения сцены, ограниченную только double (существенно лучше 1e-12,
+// нужных §8.1).
 // -----------------------------------------------------------------------
-void test_perpendicular_manual()
+struct StraightFiberPair
 {
-    std::printf("test_perpendicular_manual:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, y0 = 0.3 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-    std::vector<std::array<double, 3>> beadsB = {{x0, y0 - l0, h}, {x0, y0, h}, {x0, y0 + l0, h}};
-    std::vector<double> mA = {1e-6, 1.1e-6, 1.2e-6};
-    std::vector<double> mB = {1.3e-6, 1.4e-6, 1.5e-6};
-
-    TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-    // A1 -- индекс 1, B1 -- индекс 3+1=4
-    interactions::FiberContactPrimitive prim =
-        make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface);
-
-    interactions::FiberContactGeometry geom = interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-
-    check(near_rel(geom.D, h, 1e-9), "D == h (перпендикулярное расстояние осей)");
-    check(near_abs(geom.n[0], 0.0, 1e-9) && near_abs(geom.n[1], 0.0, 1e-9) && near_abs(geom.n[2], -1.0, 1e-9),
-          "n == (0,0,-1)");
-    check(near_rel(geom.P_ij, -x0, 1e-9), "P_ij == -x0");
-    check(near_rel(geom.P_ji, y0, 1e-9), "P_ji == y0");
-
-    const double w_i_expected = (l0 - x0) / l0;
-    const double w_j_expected = (l0 - y0) / l0;
-    check(near_rel(geom.w_i, w_i_expected, 1e-9), "w_i совпадает с ручной формулой (P_ij<=0 -> ветка d_n)");
-    check(near_rel(geom.w_j, w_j_expected, 1e-9), "w_j совпадает с ручной формулой (P_ji>0 -> ветка d_p)");
-    check(geom.i_has_neighbor && geom.i_neighbor == 2, "сосед i -- A2 (next, P_ij<=0)");
-    check(geom.j_has_neighbor && geom.j_neighbor == 3, "сосед j -- B0 (prev, P_ji>0)");
-
-    // Сила Герца: одинаковые материалы -> самопроверка против формулы Meyer.
-    const double d_eff = d; // r_i+r_j = d/2+d/2 = d (одинаковые нити)
-    check(geom.contact, "D < d_eff -- контакт есть");
-    const double delta_expected = d_eff - h;
-    const double E_star = E / (2.0 * (1.0 - nu * nu));
-    const double R_star = std::sqrt(d / 4.0);
-    const double F_expected = (4.0 / 3.0) * E_star * R_star * std::pow(delta_expected, 1.5);
-    check(near_rel(geom.F, F_expected, 1e-9), "F совпадает с формулой Meyer (одинаковые нити)");
-}
-
-// -----------------------------------------------------------------------
-// 2) Почти параллельные нити: |p_i x p_j| < eps -> переход на Surface-End.
-// Нить B наклонена относительно A на угол theta=1e-5 рад (sin(theta) << eps
-// =1e-3) -- геометрия должна СОВПАСТЬ с прямым ручным расчётом по формуле
-// Surface-End (i=A -- поверхность, j=B1 -- точка), а не с (в общем случае
-// отличающимся) результатом полной системы Surface-Surface. Проверяется
-// также отсутствие NaN/Inf.
-// -----------------------------------------------------------------------
-void test_near_parallel_fallback()
-{
-    std::printf("test_near_parallel_fallback:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, h = 0.5e-3;
-    const double theta = 1.0e-5; // << kFiberContactParallelEps = 1e-3
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    const double c = std::cos(theta), s = std::sin(theta);
-    std::array<double, 3> B1 = {x0, 0.0, h};
-    std::array<double, 3> dirB = {c, s, 0.0}; // почти вдоль +y, чуть наклонена
-    std::array<double, 3> B0 = {B1[0] - l0 * dirB[0], B1[1] - l0 * dirB[1], B1[2] - l0 * dirB[2]};
-    std::array<double, 3> B2 = {B1[0] + l0 * dirB[0], B1[1] + l0 * dirB[1], B1[2] + l0 * dirB[2]};
-
-    std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-    std::vector<std::array<double, 3>> beadsB = {B0, B1, B2};
-    std::vector<double> mA = {1e-6, 1e-6, 1e-6};
-    std::vector<double> mB = {1e-6, 1e-6, 1e-6};
-
-    TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-    interactions::FiberContactPrimitive prim =
-        make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface);
-    interactions::FiberContactGeometry geom = interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-
-    check(std::isfinite(geom.D) && finite3(geom.n) && std::isfinite(geom.F) && std::isfinite(geom.w_i) &&
-              std::isfinite(geom.w_j),
-          "нет NaN/Inf в геометрии почти параллельных нитей");
-
-    // Ручной расчёт по формуле Surface-End (i=A -- поверхность):
-    // p_A = (-1,0,0) (как в тесте 1); P_ij = dot(p_A, xB1-xA1) = -x0;
-    // Q_i = (x0,0,0); diff = Q_i - xB1 = (0,0,-h); D=h, n=(0,0,-1).
-    check(near_rel(geom.D, h, 1e-6), "D совпадает с формулой Surface-End (не с вырождающейся Surface-Surface)");
-    check(near_abs(geom.n[0], 0.0, 1e-6) && near_abs(geom.n[1], 0.0, 1e-6) && near_abs(geom.n[2], -1.0, 1e-6),
-          "n совпадает с формулой Surface-End");
-    check(near_rel(geom.P_ij, -x0, 1e-6), "P_ij совпадает с формулой Surface-End");
-    check(geom.w_j == 1.0, "j (в вырожденной ветке) получает w_j=1 -- без распределения на соседей");
-    check(!geom.j_has_neighbor, "j в вырожденной ветке не имеет соседа для распределения");
-
-    // Сумма импульсов ИМЕННО в вырожденной ветке (не только в общем случае
-    // Surface-Surface, test_momentum_conservation ниже): w_j=1 означает, что
-    // на стороне j всей силой -F*n наделяется одна бусина j (без соседа), а
-    // на стороне i -- w_i*F*n самой i плюс (1-w_i)*F*n соседу i_next; сумма
-    // обязана быть равна нулю и в этом асимметричном случае (координатор,
-    // пункт 3: явно проверить сохранение импульса именно в вырожденной
-    // ветке, а не полагаться на то, что near-parallel тест проверяет только
-    // геометрию).
-    {
-        rhs::CpuExecutor exec(2);
-        std::vector<interactions::FiberContactPrimitive> primitives = {prim};
-        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
-        interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buffers);
-        std::vector<fiber::FiberDelta> out = rhs::reduce_contributions(exec, buffers, fx.state.size());
-
-        double total[dim] = {};
-        double scale = 0.0;
-        for (std::size_t idx = 0; idx < fx.state.size(); ++idx)
-            for (std::size_t dd = 0; dd < dim; ++dd)
-            {
-                const double p = fx.state.mass[idx] * out[idx].dv[dd];
-                total[dd] += p;
-                scale = std::max(scale, std::fabs(p));
-            }
-        if (scale < 1e-30) scale = 1.0;
-        for (std::size_t dd = 0; dd < dim; ++dd)
-            check(std::fabs(total[dd]) < 1e-9 * scale,
-                  "вырожденная ветка (near-parallel): суммарный импульс по компоненте " + std::to_string(dd) +
-                      " равен нулю: " + std::to_string(total[dd]));
-
-        // Асимметрия упрощения: сторона j (w_j=1) отдаёт вклад ровно одной
-        // бусине, сторона i (Surface-End-формула) -- двум (i и сосед) --
-        // ожидаемо 3 бусины с ненулевым вкладом, а не 4, как в общем случае
-        // Surface-Surface (test_momentum_conservation).
-        int nonzero = 0;
-        for (std::size_t idx = 0; idx < fx.state.size(); ++idx)
-        {
-            bool any = false;
-            for (std::size_t dd = 0; dd < dim; ++dd) any = any || (out[idx].dv[dd] != 0.0);
-            if (any) ++nonzero;
-        }
-        check(nonzero == 3, "вырожденная ветка: 3 бусины получили вклад (i, сосед i, j -- без соседа j)");
-    }
-}
-
-// -----------------------------------------------------------------------
-// 3) Surface-End / End-Surface / End-End -- геометрия и сила.
-// Переиспользует ту же сцену теста 1 (перпендикулярные оси, x0,h), но j (или
-// i) -- концевая бусина двухбусинной нити (одна связь, один сосед).
-// -----------------------------------------------------------------------
-void test_surface_end_and_end_end()
-{
-    std::printf("test_surface_end_and_end_end:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    // --- Surface-End: A -- 3 бусины (A1 внутренняя), B -- 2 бусины (B1 конец) --
-    {
-        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<std::array<double, 3>> beadsB = {{x0, -l0, h}, {x0, 0, h}}; // B1 = индекс 1 -- конец (next=-1)
-        std::vector<double> mA = {1e-6, 1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        // A1 = индекс 1 (prev=0,next=2); B1 = индекс 3+1=4 (prev=3,next=-1)
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, 2, 4, 3, -1, interactions::FiberContactCase::SurfaceEnd);
-        interactions::FiberContactGeometry geom =
-            interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-
-        check(near_rel(geom.D, h, 1e-9), "Surface-End: D == h");
-        check(near_abs(geom.n[2], -1.0, 1e-9), "Surface-End: n вдоль -z");
-        check(near_rel(geom.P_ij, -x0, 1e-9), "Surface-End: P_ij == -x0 (та же формула, что и деградировавшая Surface-Surface)");
-        check(geom.w_j == 1.0 && !geom.j_has_neighbor, "Surface-End: j (конец) получает w_j=1, соседа нет");
-        check(geom.i_has_neighbor && geom.i_neighbor == 2, "Surface-End: сосед i -- A2 (next, P_ij<=0)");
-    }
-
-    // --- End-Surface: симметрично, i -- конец, j -- внутренняя -------------
-    {
-        std::vector<std::array<double, 3>> beadsA = {{x0, -l0, h}, {x0, 0, h}}; // A1 = индекс1 -- конец
-        std::vector<std::array<double, 3>> beadsB = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        // A1 = индекс 1 (prev=0,next=-1); B1 = индекс 2+1=3 (prev=2,next=4)
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 3, 2, 4, interactions::FiberContactCase::EndSurface);
-        interactions::FiberContactGeometry geom =
-            interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-
-        check(near_rel(geom.D, h, 1e-9), "End-Surface: D == h");
-        check(geom.w_i == 1.0 && !geom.i_has_neighbor, "End-Surface: i (конец) получает w_i=1, соседа нет");
-        check(geom.j_has_neighbor && geom.j_neighbor == 4, "End-Surface: сосед j -- B2 (next, P_ji<=0)");
-    }
-
-    // --- End-End: обе бусины -- концы (двухбусинные нити) -------------------
-    {
-        const double gap = 0.6e-3; // < d -- гарантирован контакт
-        std::vector<std::array<double, 3>> beadsA = {{0, 0, 0}, {0, 0, l0}};       // A1=(0,0,l0) -- конец
-        std::vector<std::array<double, 3>> beadsB = {{0, 0, l0 + gap}, {0, 0, l0 + gap + l0}}; // B0 -- конец, соседний с A1
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        // A1 = индекс1 (prev=0,next=-1); B0 = индекс2 (prev=-1,next=3)
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 2, -1, 3, interactions::FiberContactCase::EndEnd);
-        interactions::FiberContactGeometry geom =
-            interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-
-        check(near_rel(geom.D, gap, 1e-9), "End-End: D == |xi-xj|");
-        // n указывает "от j к i" (репульсивная конвенция, см. шапку файла,
-        // пункт 1): j=B0 находится в направлении +z от i=A1, поэтому сила на
-        // i (вдоль +n) должна толкать i в СТОРОНУ -z, прочь от j.
-        check(near_abs(geom.n[2], -1.0, 1e-9) && near_abs(geom.n[0], 0.0, 1e-9) && near_abs(geom.n[1], 0.0, 1e-9),
-              "End-End: n вдоль -z (от B к A, репульсивно для i)");
-        check(geom.w_i == 1.0 && geom.w_j == 1.0, "End-End: оба веса == 1 (нет распределения)");
-        check(!geom.i_has_neighbor && !geom.j_has_neighbor, "End-End: соседей нет ни у одной стороны");
-        check(geom.contact && geom.delta > 0.0, "End-End: контакт есть (gap < d)");
-    }
-}
-
-// -----------------------------------------------------------------------
-// 4) Сумма импульсов по всем вкладам ОДНОГО primitive равна нулю (третий
-// закон Ньютона на паре нитей, PLAN.md §3.2: "нить i получает Fn, нить j --
-// -Fn"). Сцена -- перпендикулярные нити из теста 1 (нетривиальные w_i,w_j,
-// оба соседа задействованы -- 4 частицы получают вклад).
-//
-// Primitive строится ВРУЧНУЮ (не через build_fiber_contact_search): при
-// l0 (шаг бусин вдоль нити) того же порядка, что радиус поиска d+l_max,
-// поиск у пересечения естественно находит НЕСКОЛЬКО spatial-пар одновременно
-// (см. test_diagnostics_pairs_per_intersection и шапку fiber_contact.hpp) --
-// это документированное свойство модели, но здесь предмет проверки -- именно
-// ОДИН primitive (буквальная формулировка PLAN.md), поэтому его нужно
-// зафиксировать явно, а не полагаться на то, сколько пар вернёт поиск.
-// -----------------------------------------------------------------------
-void test_momentum_conservation()
-{
-    std::printf("test_momentum_conservation:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, y0 = 0.3 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-    std::vector<std::array<double, 3>> beadsB = {{x0, y0 - l0, h}, {x0, y0, h}, {x0, y0 + l0, h}};
-    std::vector<double> mA = {1.0e-6, 1.3e-6, 0.8e-6}; // разные массы -- проверка не на F, а на m*a
-    std::vector<double> mB = {1.7e-6, 0.9e-6, 1.5e-6};
-
-    TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-
-    rhs::CpuExecutor exec(2);
-    std::vector<interactions::FiberContactPrimitive> primitives = {
-        make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface)};
-
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buffers);
-    std::vector<fiber::FiberDelta> out = rhs::reduce_contributions(exec, buffers, fx.state.size());
-
-    double total[dim] = {};
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd) total[dd] += fx.state.mass[i] * out[i].dv[dd];
-
-    double scale = 0.0;
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd) scale = std::max(scale, std::fabs(fx.state.mass[i] * out[i].dv[dd]));
-    if (scale < 1e-30) scale = 1.0;
-
-    for (std::size_t dd = 0; dd < dim; ++dd)
-        check(std::fabs(total[dd]) < 1e-9 * scale,
-              "суммарный импульс по компоненте " + std::to_string(dd) + " равен нулю: " + std::to_string(total[dd]));
-
-    // Дополнительно: ровно 4 бусины получили ненулевой вклад (i, i_next=A2, j, j_prev=B0).
-    int nonzero = 0;
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-    {
-        bool any = false;
-        for (std::size_t dd = 0; dd < dim; ++dd) any = any || (out[i].dv[dd] != 0.0);
-        if (any) ++nonzero;
-    }
-    check(nonzero == 4, "ровно 4 бусины получили вклад (i, сосед i, j, сосед j)");
-}
-
-// -----------------------------------------------------------------------
-// 5) Диагностика: число пар на одно пересечение. Две нити пересекаются
-// (перпендикулярно, с проникновением) -- рядом с точкой пересечения
-// несколько соседних бусин каждой нити одновременно попадают в радиус
-// поиска d+l_max друг у друга, поэтому contact_count в норме БОЛЬШЕ 1 на
-// одно геометрическое пересечение, но остаётся вменяемым (небольшой
-// множитель), не абсурдно большим.
-// -----------------------------------------------------------------------
-void test_diagnostics_pairs_per_intersection()
-{
-    std::printf("test_diagnostics_pairs_per_intersection:\n");
-    const double l0 = 1.0e-3; // шаг бусин -- того же порядка, что d -- соседние бусины физически близко
-    const double d = 1.0e-3, E = 2.0e9, nu = 0.3, rho = 1200.0;
-    const double h = 0.3e-3; // проникновение в точке пересечения
-
-    // Нить A вдоль x, 7 бусин, нить B вдоль y, 7 бусин, пересекаются в (0,0,*).
     std::vector<std::array<double, 3>> beadsA, beadsB;
-    std::vector<double> mA, mB;
-    const int N = 7;
-    for (int k = -N / 2; k <= N / 2; ++k)
+    double n_hat[3] = {}; // от B к A (см. ниже)
+};
+
+StraightFiberPair build_straight_pair(int nA, int a_origin, double stepA, int nB, int b_origin, double stepB,
+                                       const std::array<double, 3>& eA_hat, const std::array<double, 3>& eB_hat,
+                                       double D_true, double u0, double v0)
+{
+    auto cross = [](const std::array<double, 3>& a, const std::array<double, 3>& b) -> std::array<double, 3> {
+        return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    };
+    const std::array<double, 3> cr = cross(eA_hat, eB_hat);
+    const double crn = std::sqrt(cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]);
+    std::array<double, 3> n_hat = {cr[0] / crn, cr[1] / crn, cr[2] / crn};
+
+    const std::array<double, 3> A_ref = {0.0, 0.0, 0.0};
+    const std::array<double, 3> qA = {A_ref[0] + u0 * eA_hat[0], A_ref[1] + u0 * eA_hat[1],
+                                       A_ref[2] + u0 * eA_hat[2]};
+    const std::array<double, 3> qB = {qA[0] - D_true * n_hat[0], qA[1] - D_true * n_hat[1],
+                                       qA[2] - D_true * n_hat[2]};
+    const std::array<double, 3> B_ref = {qB[0] - v0 * eB_hat[0], qB[1] - v0 * eB_hat[1], qB[2] - v0 * eB_hat[2]};
+
+    StraightFiberPair out;
+    for (int k = 0; k < nA; ++k)
     {
-        beadsA.push_back({static_cast<double>(k) * l0, 0.0, 0.0});
-        beadsB.push_back({0.0, static_cast<double>(k) * l0, h});
-        mA.push_back(1e-6);
-        mB.push_back(1e-6);
+        const double u = static_cast<double>(k - a_origin) * stepA;
+        out.beadsA.push_back(
+            {A_ref[0] + u * eA_hat[0], A_ref[1] + u * eA_hat[1], A_ref[2] + u * eA_hat[2]});
+    }
+    for (int k = 0; k < nB; ++k)
+    {
+        const double v = static_cast<double>(k - b_origin) * stepB;
+        out.beadsB.push_back(
+            {B_ref[0] + v * eB_hat[0], B_ref[1] + v * eB_hat[1], B_ref[2] + v * eB_hat[2]});
+    }
+    for (int d3 = 0; d3 < 3; ++d3) out.n_hat[d3] = n_hat[d3];
+    return out;
+}
+
+// -----------------------------------------------------------------------
+// run_contact -- search + contributions + reduce + diagnostics для ЦЕЛОЙ
+// сцены (все primitives, не один вручную собранный) -- именно так, как
+// требует §8 ("все проверки сил -- на суммарных вкладах... по ВСЕМ
+// primitives сцены").
+// -----------------------------------------------------------------------
+struct ContactRunResult
+{
+    interactions::FiberContactSearchResult search;
+    interactions::FiberContactDiagnostics diag;
+    std::vector<fiber::FiberDelta> out;
+};
+
+ContactRunResult run_contact(TwoFiberFixture& fx)
+{
+    rhs::CpuExecutor exec(2);
+    ContactRunResult r;
+    interactions::build_fiber_contact_search(exec, fx.state, fx.topology, fx.materials, r.search);
+    r.diag = interactions::compute_fiber_contact_diagnostics(exec, fx.state, fx.materials, r.search);
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
+    interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, r.search.primitives, buffers);
+    r.out = rhs::reduce_contributions(exec, buffers, fx.state.size());
+    return r;
+}
+
+// Суммарная сила (Σ m_k*dv_k) на диапазон бусин [first,first+count) -- "сила
+// на нить" (§8.1: "суммарная сила на нить A по всем бусинам").
+void total_force(const fiber::FiberState& state, const std::vector<fiber::FiberDelta>& out, std::size_t first,
+                  std::size_t count, double F[dim])
+{
+    for (std::size_t d = 0; d < dim; ++d) F[d] = 0.0;
+    for (std::size_t k = 0; k < count; ++k)
+    {
+        const std::size_t i = first + k;
+        for (std::size_t d = 0; d < dim; ++d) F[d] += state.mass[i] * out[i].dv[d];
+    }
+}
+
+// Проверка сохранения импульса (§8.4: Σ m_k*a_k = 0) по ВСЕЙ системе (обе
+// нити сразу) -- допуск проекта, относительный к масштабу самих вкладов
+// (как в старом файле).
+void check_momentum_zero(const std::string& label, const fiber::FiberState& state,
+                          const std::vector<fiber::FiberDelta>& out)
+{
+    double total[dim] = {};
+    double scale = 0.0;
+    for (std::size_t i = 0; i < state.size(); ++i)
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            const double p = state.mass[i] * out[i].dv[d];
+            total[d] += p;
+            scale = std::max(scale, std::fabs(p));
+        }
+    if (scale < 1e-30) scale = 1.0;
+    for (std::size_t d = 0; d < dim; ++d)
+        check(std::fabs(total[d]) < 1e-9 * scale,
+              label + ": сумма m_k*a_k по компоненте " + std::to_string(d) + " равна нулю (" +
+                  std::to_string(total[d]) + ")");
+}
+
+// -----------------------------------------------------------------------
+// FoundContact / find_all_contacts -- находит ВСЕ принятые (geom.contact)
+// primitives сцены через build_fiber_contact_search +
+// compute_fiber_contact_geometry по каждому. Используется там, где тесту
+// нужны s,t/примитив КОНКРЕТНОГО контакта (8.3 -- кто владелец, 8.7 --
+// dt_limit вручную, 8.8 -- трение), а не только суммарная сила.
+// -----------------------------------------------------------------------
+struct FoundContact
+{
+    interactions::FiberContactPrimitive prim;
+    interactions::FiberContactGeometry geom;
+};
+
+std::vector<FoundContact> find_all_contacts(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                                             const fiber::FiberTopology& topology,
+                                             const std::vector<fiber::FiberMaterial>& materials,
+                                             interactions::FiberContactSearchResult* out_search = nullptr)
+{
+    interactions::FiberContactSearchResult search;
+    interactions::build_fiber_contact_search(exec, state, topology, materials, search);
+    std::vector<FoundContact> result;
+    for (const auto& p : search.primitives)
+    {
+        interactions::FiberContactGeometry g = interactions::compute_fiber_contact_geometry(state, materials, p);
+        if (g.contact) result.push_back({p, g});
+    }
+    if (out_search) *out_search = search;
+    return result;
+}
+
+// =========================================================================
+// 8.1. Ровно один контакт на пересечение (главный тест).
+//
+// Две прямые нити по 7 бусин, скрещивание под углом theta, проникновение h
+// (D_true=0.9*d). Перебор: theta in {90,60,30,10,3} град x положение
+// пересечения in {середина сегмента на обеих нитях; узел на одной нити;
+// узел-узел на обеих; 1e-12*l0 от узла}. Геометрия сцены строится АНАЛИТИЧЕСКИ
+// (build_straight_pair): точный минимум расстояния между бесконечными
+// прямыми задаётся параметрами u0 (на A, от центральной бусины index=3) и v0
+// (на B, аналогично), поэтому "D_true" в сцене СОВПАДАЕТ с "D_true" в
+// ручной формуле силы Герца с точностью double, а не приближённо.
+// =========================================================================
+struct CrossBuildResult
+{
+    TwoFiberFixture fx;
+    double n_hat[dim] = {}; // от B к A (см. build_straight_pair)
+};
+
+CrossBuildResult build_cross_variant(double theta_deg, double u0_factor, double v0_factor, double l0,
+                                      double D_true, double E, double nu, double d, double rho)
+{
+    const double theta = theta_deg * kPi / 180.0;
+    const std::array<double, 3> eA = {1.0, 0.0, 0.0};
+    const std::array<double, 3> eB = {std::cos(theta), std::sin(theta), 0.0};
+    const int N = 7;
+    const int origin = 3; // центральная бусина (индекс 3 из 0..6) -- u=0/v=0
+
+    StraightFiberPair pair =
+        build_straight_pair(N, origin, l0, N, origin, l0, eA, eB, D_true, u0_factor * l0, v0_factor * l0);
+
+    const std::vector<double> mA(static_cast<std::size_t>(N), 1.0e-6);
+    const std::vector<double> mB(static_cast<std::size_t>(N), 1.0e-6);
+
+    CrossBuildResult res;
+    res.fx = make_two_fiber_fixture(pair.beadsA, mA, pair.beadsB, mB, E, nu, d, rho);
+    for (int d3 = 0; d3 < 3; ++d3) res.n_hat[d3] = pair.n_hat[d3];
+    return res;
+}
+
+void test_8_1_single_contact_per_intersection()
+{
+    std::printf("test_8_1_single_contact_per_intersection:\n");
+    const double l0 = 0.01;
+    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+    const double D_true = 0.9 * d; // проникновение h -- D_true < d_eff=d (одинаковые нити)
+
+    struct Pos
+    {
+        const char* label;
+        double u0f, v0f; // в единицах l0, от центральной бусины (index=3)
+        double force_tol; // относительный допуск на F_A (см. ниже про near-node)
+    };
+    // near-node: снапинг s (kFiberContactSnapEta=1e-9) заменяет ИСТИННУЮ
+    // ближайшую точку (u0=1e-12*l0 от узла) на сам узел (s=0 точно) -- при
+    // этом D (и, значит, |F|) остаётся ТОЧНЫМ (узел и истинная точка
+    // отличаются только вдоль оси нити, а D измеряется поперёк), но
+    // направление n получает поперечную добавку порядка u0/D_true (точка
+    // приложения силы на A сдвинута на u0 вдоль нити относительно точки, под
+    // которую построена сцена B) -- это ОЖИДАЕМОЕ, ограниченное и физически
+    // объяснимое следствие snapping (проверено отдельно: D совпадает с
+    // D_true побитово, отклоняется только n), а не дефект ядра. При
+    // u0=1e-12*l0, D_true=0.9*d=9e-4 отклонение ~u0/D_true~1.1e-11 --
+    // используем допуск 1e-8 (запас x1000) именно для этого варианта,
+    // остальные три варианта держат полные 1e-12.
+    const double kSnapForceTol = 1e-8;
+    const std::vector<Pos> positions = {
+        {"mid-mid (середина сегментов)", -0.5, -0.5, 1e-12},
+        {"node-mid (узел на A)", 0.0, -0.5, 1e-12},
+        {"node-node (узел-узел)", 0.0, 0.0, 1e-12},
+        {"near-node (1e-12*l0 от узла)", 1.0e-12, -0.5, kSnapForceTol},
+    };
+    const std::vector<double> angles = {90.0, 60.0, 30.0, 10.0, 3.0};
+
+    const double delta = d - D_true; // d_eff=d (одинаковые нити)
+    int variant_count = 0;
+
+    std::printf("  таблица вариантов (угол x позиция): contact_count | rel_err(F_A)\n");
+    for (double theta_deg : angles)
+    {
+        for (const Pos& pos : positions)
+        {
+            ++variant_count;
+            CrossBuildResult built = build_cross_variant(theta_deg, pos.u0f, pos.v0f, l0, D_true, E, nu, d, rho);
+            ContactRunResult run = run_contact(built.fx);
+
+            const double F_expected = hertz_force(delta, built.fx.materials[0], built.fx.materials[0]);
+            double F_A[dim], F_B[dim];
+            total_force(built.fx.state, run.out, 0, built.fx.n_a, F_A);
+            total_force(built.fx.state, run.out, built.fx.n_a, built.fx.n_b, F_B);
+
+            double err = 0.0;
+            for (std::size_t d3 = 0; d3 < dim; ++d3)
+                err = std::max(err, std::fabs(F_A[d3] - F_expected * built.n_hat[d3]));
+            const double rel_err = err / std::max(std::fabs(F_expected), 1e-30);
+
+            std::printf("  theta=%5.1f  %-32s contact_count=%zu  rel_err=%.3e\n", theta_deg, pos.label,
+                        run.diag.contact_count, rel_err);
+
+            const std::string tag = "theta=" + std::to_string(theta_deg) + " pos=" + pos.label;
+            check(run.diag.contact_count == 1, tag + ": contact_count == 1");
+            check(rel_err < pos.force_tol,
+                  tag + ": сила на A == hertz_force(delta)*n (допуск " + std::to_string(pos.force_tol) + ")");
+
+            double sumF_scale = std::max(std::fabs(F_expected), 1e-30);
+            bool balanced = true;
+            for (std::size_t d3 = 0; d3 < dim; ++d3)
+                if (std::fabs(F_A[d3] + F_B[d3]) > 1e-9 * sumF_scale) balanced = false;
+            check(balanced, tag + ": сумма сил на обе нити равна нулю");
+        }
+    }
+    std::printf("  всего вариантов: %d (5 углов x 4 положения)\n", variant_count);
+}
+
+// =========================================================================
+// 8.2. Концы нитей.
+// =========================================================================
+
+// "Конец" нити (2 бусины, вторая -- свободный конец) касается СЕРЕДИНЫ
+// сегмента "внутренней" нити (2 бусины, один сегмент). end_is_a выбирает,
+// какая из двух нитей -- концевая (Surface-End vs End-Surface старой схемы).
+TwoFiberFixture build_end_surface_scene(bool end_is_a, double l0, double D_true, double E, double nu, double d,
+                                         double rho)
+{
+    // Конец -- индекс1=(0,0,0); середина сегмента другой нити -- (0,0,D_true).
+    const std::vector<std::array<double, 3>> end_beads = {{-l0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    const std::vector<std::array<double, 3>> mid_beads = {{0.0, -0.5 * l0, D_true}, {0.0, 0.5 * l0, D_true}};
+    const std::vector<double> m_end = {1e-6, 1e-6}, m_mid = {1e-6, 1e-6};
+
+    if (end_is_a) return make_two_fiber_fixture(end_beads, m_end, mid_beads, m_mid, E, nu, d, rho);
+    return make_two_fiber_fixture(mid_beads, m_mid, end_beads, m_end, E, nu, d, rho);
+}
+
+TwoFiberFixture build_end_end_scene(double l0, double gap, double E, double nu, double d, double rho)
+{
+    const std::vector<std::array<double, 3>> beadsA = {{0.0, 0.0, 0.0}, {0.0, 0.0, l0}};
+    const std::vector<std::array<double, 3>> beadsB = {{0.0, 0.0, l0 + gap}, {0.0, 0.0, l0 + gap + l0}};
+    const std::vector<double> mA = {1e-6, 1e-6}, mB = {1e-6, 1e-6};
+    return make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+}
+
+TwoFiberFixture build_isolated_bead_scene(double l0, double D_true, double E, double nu, double d, double rho)
+{
+    const std::vector<std::array<double, 3>> beadsA = {{0.0, 0.0, 0.0}}; // изолированная бусина
+    const std::vector<std::array<double, 3>> beadsB = {{0.0, -0.5 * l0, D_true}, {0.0, 0.5 * l0, D_true}};
+    const std::vector<double> mA = {1e-6}, mB = {1e-6, 1e-6};
+    return make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+}
+
+void test_8_2_fiber_ends()
+{
+    std::printf("test_8_2_fiber_ends:\n");
+    const double l0 = 0.01, E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+    const double D_true = 0.9 * d;
+    rhs::CpuExecutor exec(2);
+
+    // --- конец A на середине сегмента B (бывший End-Surface) ---------------
+    {
+        TwoFiberFixture fx = build_end_surface_scene(true, l0, D_true, E, nu, d, rho);
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+        check(contacts.size() == 1, "конец A на середине сегмента B: ровно один контакт");
+        if (contacts.size() == 1)
+        {
+            const auto& c = contacts[0];
+            check(c.geom.s == 0.0 || c.geom.s == 1.0, "конец A: s==0 или 1 (крайний сегмент)");
+            check(near_rel(c.geom.t, 0.5, 1e-9), "конец A: t==0.5 (середина сегмента B)");
+
+            ContactRunResult run = run_contact(fx);
+            const std::size_t end_bead =
+                (c.geom.s >= 1.0) ? static_cast<std::size_t>(c.prim.a1) : static_cast<std::size_t>(c.prim.a0);
+            for (std::size_t i = 0; i < fx.n_a; ++i)
+            {
+                if (i == end_bead) continue;
+                bool any = false;
+                for (std::size_t d3 = 0; d3 < dim; ++d3) any = any || (run.out[i].dv[d3] != 0.0);
+                check(!any, "конец A: остальные бусины A вклада не получили (бусина " + std::to_string(i) + ")");
+            }
+            bool end_nonzero = false;
+            for (std::size_t d3 = 0; d3 < dim; ++d3) end_nonzero = end_nonzero || (run.out[end_bead].dv[d3] != 0.0);
+            check(end_nonzero, "конец A: концевая бусина получила вклад (вся сила A на ней)");
+        }
     }
 
-    TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+    // --- конец B на середине сегмента A (End-Surface, симметрично) ---------
+    {
+        TwoFiberFixture fx = build_end_surface_scene(false, l0, D_true, E, nu, d, rho);
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+        check(contacts.size() == 1, "конец B на середине сегмента A: ровно один контакт");
+        if (contacts.size() == 1)
+        {
+            const auto& c = contacts[0];
+            check(c.geom.t == 0.0 || c.geom.t == 1.0, "конец B: t==0 или 1 (крайний сегмент)");
+            check(near_rel(c.geom.s, 0.5, 1e-9), "конец B: s==0.5 (середина сегмента A)");
+        }
+    }
+
+    // --- конец к концу (End-End) --------------------------------------------
+    {
+        const double gap = 0.5 * d; // < d -- гарантирован контакт
+        TwoFiberFixture fx = build_end_end_scene(l0, gap, E, nu, d, rho);
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+        check(contacts.size() == 1, "конец к концу: ровно один контакт");
+        if (contacts.size() == 1)
+        {
+            const auto& c = contacts[0];
+            check(c.geom.s == 1.0, "End-End: s==1 (конец A)");
+            check(c.geom.t == 0.0, "End-End: t==0 (конец B)");
+            check(near_rel(c.geom.D, gap, 1e-9), "End-End: D == gap");
+        }
+    }
+
+    // --- изолированная бусина у середины сегмента B -------------------------
+    {
+        TwoFiberFixture fx = build_isolated_bead_scene(l0, D_true, E, nu, d, rho);
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+        check(contacts.size() == 1, "изолированная бусина: ровно один контакт");
+        if (contacts.size() == 1)
+        {
+            const auto& c = contacts[0];
+            check(c.prim.a1 == -1, "изолированная бусина: точечный сегмент (a1==-1)");
+            check(c.geom.s == 0.0, "изолированная бусина: s==0");
+            check(near_rel(c.geom.t, 0.5, 1e-9), "изолированная бусина: t==0.5 (середина сегмента B)");
+        }
+    }
+}
+
+// =========================================================================
+// 8.3. Изогнутая нить.
+// =========================================================================
+
+// Выпуклый изгиб: A0=(-l0,0,delta), A1=(0,0,0) [апекс, ближайшая точка к B],
+// A2=(l0,0,delta) -- вершина "смотрит" на B (обе "руки" приподняты дальше от
+// B). Производная расстояния-до-B вдоль каждого плеча в апексе положительна
+// (доказано в отчёте разработки) -- апекс есть НАСТОЯЩИЙ локальный минимум
+// ОБОИХ соседних сегментов, что и требуется для честной проверки правила
+// владения (не "случайно совпавший узел прямой нити", как в 8.1).
+TwoFiberFixture build_convex_curved_scene(std::size_t* apex_index)
+{
+    const double l0 = 1.5e-3, delta_z = 0.5e-3;
+    const double d = 1.0e-3, E = 2.0e9, nu = 0.3, rho = 1200.0;
+    const double D_true = 0.9 * d;
+
+    const std::vector<std::array<double, 3>> beadsA = {
+        {-l0, 0.0, delta_z}, {0.0, 0.0, 0.0}, {l0, 0.0, delta_z}};
+    const std::vector<std::array<double, 3>> beadsB = {{0.0, -0.5 * l0, -D_true}, {0.0, 0.5 * l0, -D_true}};
+    const std::vector<double> mA = {1e-6, 1e-6, 1e-6}, mB = {1e-6, 1e-6};
+
+    if (apex_index) *apex_index = 1;
+    return make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+}
+
+// Вогнутое "седло": A0/A2 -- "плечи", каждое по отдельности проходит близко к
+// B в СВОЕЙ середине (интерьерный минимум 0<s<1), апекс A1 -- ДАЛЕКО от B
+// (вершина "смотрит" ОТ B). Числа подобраны так (см. отчёт разработки), что
+// интерьерный минимум каждого плеча приходится примерно на s=0.5 с запасом
+// до d_eff. B -- ОДИН сегмент (2 бусины), чтобы исключить побочные пары с
+// другими сегментами B (упрощает проверку "ровно два контакта").
+TwoFiberFixture build_concave_curved_scene(std::size_t* wing0_owner, std::size_t* wing1_owner)
+{
+    const double l0 = 1.5e-3;
+    const double c = 1.6e-3;       // высота апекса над линией B (апекс НЕ в контакте)
+    const double dz = -1.0432236e-3; // решение Delta^2+2c*Delta+l0^2=0 (см. отчёт)
+    const double d = 1.4e-3, E = 2.0e9, nu = 0.3, rho = 1200.0;
+
+    const double z_wing = c + dz;
+    const std::vector<std::array<double, 3>> beadsA = {
+        {-l0, 0.0, z_wing}, {0.0, 0.0, c}, {l0, 0.0, z_wing}};
+    const std::vector<std::array<double, 3>> beadsB = {{0.0, -0.5e-3, 0.0}, {0.0, 0.5e-3, 0.0}};
+    const std::vector<double> mA = {1e-6, 1e-6, 1e-6}, mB = {1e-6, 1e-6};
+
+    if (wing0_owner) *wing0_owner = 0; // сегмент (A0,A1), владелец -- бусина 0
+    if (wing1_owner) *wing1_owner = 1; // сегмент (A1,A2), владелец -- бусина 1
+    return make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
+}
+
+void test_8_3_curved_fiber()
+{
+    std::printf("test_8_3_curved_fiber:\n");
+    rhs::CpuExecutor exec(2);
+
+    // --- выпуклый изгиб: ровно один контакт, принят сегментом S_a0 с s=0 ---
+    {
+        std::size_t apex_index = 0;
+        TwoFiberFixture fx = build_convex_curved_scene(&apex_index);
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+        check(contacts.size() == 1, "выпуклый изгиб: ровно один контакт");
+        if (contacts.size() == 1)
+        {
+            check(static_cast<std::size_t>(contacts[0].prim.a0) == apex_index,
+                  "выпуклый изгиб: контакт принят сегментом, начинающимся в апексе (S_a0 == апекс)");
+            check(contacts[0].geom.s == 0.0, "выпуклый изгиб: s==0 (апекс -- начало принятого сегмента)");
+        }
+    }
+
+    // --- вогнутое седло: два контакта с разными q_A -------------------------
+    {
+        std::size_t w0 = 0, w1 = 0;
+        TwoFiberFixture fx = build_concave_curved_scene(&w0, &w1);
+        interactions::FiberContactSearchResult search;
+        std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials, &search);
+        std::printf("    сегмент-пар построено: %zu, принятых контактов: %zu\n", search.primitives.size(),
+                    contacts.size());
+        check(contacts.size() == 2, "вогнутое седло: ровно два контакта (оба плеча)");
+        if (contacts.size() == 2)
+        {
+            auto q_a = [&](const FoundContact& c) -> std::array<double, 3> {
+                const std::array<double, 3> xa0 = {fx.state.x[0][c.prim.a0], fx.state.x[1][c.prim.a0],
+                                                    fx.state.x[2][c.prim.a0]};
+                const std::array<double, 3> xa1 = (c.prim.a1 == -1)
+                                                       ? xa0
+                                                       : std::array<double, 3>{fx.state.x[0][c.prim.a1],
+                                                                                fx.state.x[1][c.prim.a1],
+                                                                                fx.state.x[2][c.prim.a1]};
+                return {xa0[0] + c.geom.s * (xa1[0] - xa0[0]), xa0[1] + c.geom.s * (xa1[1] - xa0[1]),
+                        xa0[2] + c.geom.s * (xa1[2] - xa0[2])};
+            };
+            const std::array<double, 3> q0 = q_a(contacts[0]);
+            const std::array<double, 3> q1 = q_a(contacts[1]);
+            double dist2 = 0.0;
+            for (int d3 = 0; d3 < 3; ++d3) dist2 += (q0[d3] - q1[d3]) * (q0[d3] - q1[d3]);
+            check(std::sqrt(dist2) > 1e-6, "вогнутое седло: q_A двух контактов РАЗНЫЕ (не дубликат)");
+
+            // Владельцы -- разные сегменты (оба плеча), не один и тот же.
+            check(contacts[0].prim.a0 != contacts[1].prim.a0 ||
+                      (contacts[0].geom.s != contacts[1].geom.s),
+                  "вогнутое седло: контакты принадлежат разным сегментам/точкам");
+        }
+    }
+}
+
+// =========================================================================
+// 8.4. Сохранение импульса на сценах 8.1-8.3.
+// =========================================================================
+void test_8_4_momentum_conservation()
+{
+    std::printf("test_8_4_momentum_conservation:\n");
+    const double l0 = 0.01, E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+    const double D_true = 0.9 * d;
+
+    // Представительная сцена 8.1 (90 град, середина сегментов).
+    {
+        CrossBuildResult built = build_cross_variant(90.0, -0.5, -0.5, l0, D_true, E, nu, d, rho);
+        ContactRunResult run = run_contact(built.fx);
+        check_momentum_zero("8.1 (90 град, mid-mid)", built.fx.state, run.out);
+    }
+    // Мелкий угол -- несколько кандидатов-primitives (не только истинный минимум).
+    {
+        CrossBuildResult built = build_cross_variant(3.0, 0.0, 0.0, l0, D_true, E, nu, d, rho);
+        ContactRunResult run = run_contact(built.fx);
+        check_momentum_zero("8.1 (3 град, node-node)", built.fx.state, run.out);
+    }
+
+    // Сцены 8.2.
+    {
+        TwoFiberFixture fx = build_end_surface_scene(true, l0, D_true, E, nu, d, rho);
+        ContactRunResult run = run_contact(fx);
+        check_momentum_zero("8.2 (конец A на середине B)", fx.state, run.out);
+    }
+    {
+        TwoFiberFixture fx = build_end_end_scene(l0, 0.5 * d, E, nu, d, rho);
+        ContactRunResult run = run_contact(fx);
+        check_momentum_zero("8.2 (конец к концу)", fx.state, run.out);
+    }
+    {
+        TwoFiberFixture fx = build_isolated_bead_scene(l0, D_true, E, nu, d, rho);
+        ContactRunResult run = run_contact(fx);
+        check_momentum_zero("8.2 (изолированная бусина)", fx.state, run.out);
+    }
+
+    // Сцены 8.3.
+    {
+        TwoFiberFixture fx = build_convex_curved_scene(nullptr);
+        ContactRunResult run = run_contact(fx);
+        check_momentum_zero("8.3 (выпуклый изгиб)", fx.state, run.out);
+    }
+    {
+        TwoFiberFixture fx = build_concave_curved_scene(nullptr, nullptr);
+        ContactRunResult run = run_contact(fx);
+        check_momentum_zero("8.3 (вогнутое седло)", fx.state, run.out);
+    }
+}
+
+// =========================================================================
+// 8.5. Полнота поиска при растянутых связях.
+//
+// Обе нити растянуты до l=1.3*l0 (bond.l0 в topology -- НОМИНАЛЬНАЯ, т.е.
+// l0_nominal, координаты -- фактически растянутые: append_chain вычисляет
+// l0 из фактических координат, поэтому bond.l0 переписывается вручную ПОСЛЕ
+// построения). Нити -- 2 бусины каждая (один сегмент = весь их "далёкий
+// конец"), почти встречные (угол между e_A и -e_B ~5 град), контакт у
+// параметров s=t=0.95 (не прижаты к 1) на обеих. Построение -- той же
+// аналитической схемой build_straight_pair (u0=v0=0.95*L, L=1.3*l0_nominal).
+// =========================================================================
+void test_8_5_stretched_bonds_search_completeness()
+{
+    std::printf("test_8_5_stretched_bonds_search_completeness:\n");
+    const double l0_nominal = 0.01;
+    const double stretch = 1.3;
+    const double L = stretch * l0_nominal; // ФАКТИЧЕСКАЯ длина сегмента
+    const double d = 1.0e-3, E = 2.0e9, nu = 0.3, rho = 1200.0;
+    const double D_true = 0.95 * d;
+    const double theta5 = 5.0 * kPi / 180.0;
+    const double s0 = 0.95, t0 = 0.95;
+
+    const std::array<double, 3> eA = {1.0, 0.0, 0.0};
+    // Угол между eA и (-eB) == 5 град ("почти встречные"): -eB = (cos5,sin5,0).
+    const std::array<double, 3> eB = {-std::cos(theta5), std::sin(theta5), 0.0};
+
+    StraightFiberPair pair = build_straight_pair(2, 0, L, 2, 0, L, eA, eB, D_true, s0 * L, t0 * L);
+    const std::vector<double> mA = {1e-6, 1e-6}, mB = {1e-6, 1e-6};
+    TwoFiberFixture fx = make_two_fiber_fixture(pair.beadsA, mA, pair.beadsB, mB, E, nu, d, rho);
+
+    // bond.l0 -- НОМИНАЛЬНОЕ значение (append_chain вычислило ФАКТИЧЕСКОЕ
+    // растянутое l0=L -- переписываем на номинальное l0_nominal, как в
+    // реальном расчёте: l0 фиксируется при построении сетки, а координаты
+    // потом растягиваются под нагрузкой).
+    for (auto& b : fx.topology.bonds)
+    {
+        b.l0 = l0_nominal;
+        b.l_break = l0_nominal * 1e9;
+    }
+
     rhs::CpuExecutor exec(2);
     interactions::FiberContactSearchResult search;
     interactions::build_fiber_contact_search(exec, fx.state, fx.topology, fx.materials, search);
-    interactions::FiberContactDiagnostics diag =
-        interactions::compute_fiber_contact_diagnostics(exec, fx.state, fx.materials, search.primitives);
 
-    std::printf("    pair_count=%zu contact_count=%zu max_penetration=%.3e\n", diag.pair_count, diag.contact_count,
-                diag.max_penetration);
+    // Самопроверка сцены: расстояние между "якорными" бусинами a0,b0 (=A0,B0,
+    // единственные бусины с next!=-1 в 2-бусинных нитях) БОЛЬШЕ номинального
+    // радиуса d+2*l0_nominal -- старая (по номинальному l0) оценка радиуса
+    // пропустила бы эту пару.
+    double dist2 = 0.0;
+    for (int d3 = 0; d3 < 3; ++d3)
+    {
+        const double dx = fx.state.x[d3][0] - fx.state.x[d3][fx.n_a];
+        dist2 += dx * dx;
+    }
+    const double dist_a0_b0 = std::sqrt(dist2);
+    const double r_nominal = d + 2.0 * l0_nominal;
+    const double r_actual = d + 2.0 * L;
 
-    check(diag.contact_count > 0, "диагностика: есть хотя бы один реальный контакт");
-    check(diag.contact_count < static_cast<std::size_t>(N) * static_cast<std::size_t>(N),
-          "диагностика: contact_count не абсурдно велик (< N*N всех возможных пар бусин)");
-    // "Одно пересечение" здесь -- одно геометрическое место (окрестность (0,0,h));
-    // разумный множитель "пар на пересечение" -- не более desятка бусин с каждой
-    // стороны, задействованных в радиусе поиска.
-    check(diag.contact_count <= 20, "диагностика: разумное число контактных пар на одно пересечение (<=20)");
-    check(diag.pair_count >= diag.contact_count, "pair_count (широкая фаза) >= contact_count (реальные контакты)");
+    std::printf("    s=t=%.2f, D_true/d=%.3f, |x_a0-x_b0|=%.6e m\n", s0, D_true / d, dist_a0_b0);
+    std::printf("    d+2*l0(номинал)=%.6e m,  d+2*L(факт.)=%.6e m\n", r_nominal, r_actual);
+
+    check(dist_a0_b0 > r_nominal,
+          "самопроверка сцены: |x_a0-x_b0| > d+2*l0_nominal (номинальная оценка пропустила бы пару)");
+    check(dist_a0_b0 < r_actual, "самопроверка сцены: |x_a0-x_b0| < d+2*L (новая оценка покрывает пару)");
+
+    check(!search.primitives.empty(), "новый радиус (d+2*L_max по фактической длине): пара сегментов найдена");
+
+    std::vector<FoundContact> contacts = find_all_contacts(exec, fx.state, fx.topology, fx.materials);
+    check(!contacts.empty(), "контакт найден с новым радиусом поиска");
+    if (!contacts.empty())
+    {
+        std::printf("    найден контакт: s=%.6f t=%.6f D/d=%.6f\n", contacts[0].geom.s, contacts[0].geom.t,
+                    contacts[0].geom.D / d);
+        check(near_rel(contacts[0].geom.s, s0, 1e-6), "8.5: s ~= 0.95 (не прижато к 1)");
+        check(near_rel(contacts[0].geom.t, t0, 1e-6), "8.5: t ~= 0.95 (не прижато к 1)");
+    }
 }
 
-// -----------------------------------------------------------------------
-// 6) Трение: регрессия при mu_ff=0 (fiber/fiber_friction_implementation.md,
-// §10 "Нулевое трение", §14, задание координатора п.11.1). Сцены -- те же,
-// что в test_perpendicular_manual/test_surface_end_and_end_end (все 4
-// геометрических случая), но с НЕНУЛЕВЫМИ и РАЗНЫМИ скоростями у всех
-// задействованных бусин: при mu=0 блок трения не должен читать/использовать
-// скорости вообще (has_ft=false), поэтому результат обязан побитово
-// совпасть со старой формулой -- сравнение через `==`, не near_*.
-// -----------------------------------------------------------------------
-void check_zero_mu_case(const char* label, TwoFiberFixture& fx, const interactions::FiberContactPrimitive& prim)
+// =========================================================================
+// 8.6. Почти параллельные и совпадающие нити.
+// =========================================================================
+void test_8_6_near_parallel_and_parallel()
 {
-    fx.materials[0].mu_ff = 0.0;
-    interactions::FiberContactGeometry geom =
-        interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-    check(geom.contact, std::string(label) + ": контакт есть (предпосылка теста регрессии)");
-
+    std::printf("test_8_6_near_parallel_and_parallel:\n");
+    const double l0 = 0.01, E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
     rhs::CpuExecutor exec(2);
-    std::vector<interactions::FiberContactPrimitive> primitives = {prim};
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buffers);
-    std::vector<fiber::FiberDelta> out = rhs::reduce_contributions(exec, buffers, fx.state.size());
 
-    // Старая формула (буквально как в compute_fiber_contact_contributions
-    // ДО добавления блока трения): expected = sign*w*geom.F*geom.n[d]/m.
-    // sign=+-1.0 -- точная (безошибочная) операция в IEEE 754, поэтому
-    // порядок применения знака не влияет на биты результата (см. комментарий
-    // в отчёте о внедрении).
-    auto expect = [&](std::size_t idx, double w, double m, double sign) {
-        for (std::size_t d = 0; d < dim; ++d)
-        {
-            const double expected = sign * w * geom.F * geom.n[d] / m;
-            check(out[idx].dv[d] == expected, std::string(label) + ": dv[" + std::to_string(idx) + "][" +
-                                                   std::to_string(d) + "] == старая формула (mu=0)");
-        }
-    };
-
-    expect(prim.i, geom.w_i, fx.state.mass[prim.i], 1.0);
-    expect(prim.j, geom.w_j, fx.state.mass[prim.j], -1.0);
-    if (geom.i_has_neighbor) expect(geom.i_neighbor, 1.0 - geom.w_i, fx.state.mass[geom.i_neighbor], 1.0);
-    if (geom.j_has_neighbor) expect(geom.j_neighbor, 1.0 - geom.w_j, fx.state.mass[geom.j_neighbor], -1.0);
-}
-
-void test_friction_zero_mu_regression()
-{
-    std::printf("test_friction_zero_mu_regression:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, y0 = 0.3 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    // Surface-Surface (сцена test_perpendicular_manual).
+    // --- почти параллельные: угол 1e-4 рад, смещение по нормали < d --------
     {
-        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<std::array<double, 3>> beadsB = {{x0, y0 - l0, h}, {x0, y0, h}, {x0, y0 + l0, h}};
-        std::vector<double> mA = {1e-6, 1.1e-6, 1.2e-6};
-        std::vector<double> mB = {1.3e-6, 1.4e-6, 1.5e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.3, -0.1, 0.05);
-        set_velocity(fx.state, 1, -0.2, 0.4, -0.15);
-        set_velocity(fx.state, 2, 0.1, 0.2, 0.3);
-        set_velocity(fx.state, 3, -0.05, 0.15, -0.2);
-        set_velocity(fx.state, 4, 0.25, -0.35, 0.1);
-        set_velocity(fx.state, 5, -0.4, 0.05, 0.2);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface);
-        check_zero_mu_case("Surface-Surface", fx, prim);
+        const double D_true = 0.5 * d; // < d -- смещение по нормали меньше диаметра
+        CrossBuildResult built = build_cross_variant(1.0e-4 * 180.0 / kPi, -0.5, -0.5, l0, D_true, E, nu, d, rho);
+        ContactRunResult run = run_contact(built.fx);
+
+        std::printf("    contact_count=%zu (nA-1=nB-1=6 сегментов на нить)\n", run.diag.contact_count);
+        check(run.diag.contact_count > 0, "почти параллельные: есть хотя бы один контакт");
+        check(run.diag.contact_count <= 6, "почти параллельные: contact_count <= числа сегментов перекрытия (6)");
+
+        bool all_finite = true;
+        for (const auto& d3 : run.out)
+            for (std::size_t k = 0; k < dim; ++k)
+                if (!std::isfinite(d3.dv[k])) all_finite = false;
+        check(all_finite, "почти параллельные: нет NaN/Inf в результирующих dv");
+
+        check_momentum_zero("почти параллельные", built.fx.state, run.out);
     }
 
-    // Surface-End.
+    // --- совпадающие оси: та же прямая, частичное перекрытие ----------------
     {
-        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<std::array<double, 3>> beadsB = {{x0, -l0, h}, {x0, 0, h}};
-        std::vector<double> mA = {1e-6, 1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
+        const int N = 7;
+        std::vector<std::array<double, 3>> beadsA, beadsB;
+        for (int k = -3; k <= 3; ++k) beadsA.push_back({static_cast<double>(k) * l0, 0.0, 0.0});
+        for (int k = -3; k <= 3; ++k) beadsB.push_back({(static_cast<double>(k) + 0.5) * l0, 0.0, 0.0});
+        const std::vector<double> mA(static_cast<std::size_t>(N), 1e-6), mB(static_cast<std::size_t>(N), 1e-6);
         TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.1, -0.2, 0.3);
-        set_velocity(fx.state, 1, -0.3, 0.1, -0.2);
-        set_velocity(fx.state, 2, 0.2, 0.3, -0.1);
-        set_velocity(fx.state, 3, -0.15, 0.25, 0.05);
-        set_velocity(fx.state, 4, 0.35, -0.1, -0.3);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, 2, 4, 3, -1, interactions::FiberContactCase::SurfaceEnd);
-        check_zero_mu_case("Surface-End", fx, prim);
-    }
 
-    // End-Surface.
-    {
-        std::vector<std::array<double, 3>> beadsA = {{x0, -l0, h}, {x0, 0, h}};
-        std::vector<std::array<double, 3>> beadsB = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.2, 0.1, -0.3);
-        set_velocity(fx.state, 1, -0.1, -0.25, 0.15);
-        set_velocity(fx.state, 2, 0.3, -0.05, 0.2);
-        set_velocity(fx.state, 3, -0.2, 0.35, -0.1);
-        set_velocity(fx.state, 4, 0.05, -0.3, 0.25);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 3, 2, 4, interactions::FiberContactCase::EndSurface);
-        check_zero_mu_case("End-Surface", fx, prim);
-    }
+        interactions::FiberContactSearchResult search;
+        interactions::FiberContactDiagnostics diag;
+        interactions::build_fiber_contact_search(exec, fx.state, fx.topology, fx.materials, search);
+        diag = interactions::compute_fiber_contact_diagnostics(exec, fx.state, fx.materials, search);
 
-    // End-End.
-    {
-        const double gap = 0.6e-3;
-        std::vector<std::array<double, 3>> beadsA = {{0, 0, 0}, {0, 0, l0}};
-        std::vector<std::array<double, 3>> beadsB = {{0, 0, l0 + gap}, {0, 0, l0 + gap + l0}};
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.1, 0.2, -0.05);
-        set_velocity(fx.state, 1, -0.2, 0.1, 0.3);
-        set_velocity(fx.state, 2, 0.25, -0.15, -0.1);
-        set_velocity(fx.state, 3, -0.05, 0.3, 0.2);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 2, -1, 3, interactions::FiberContactCase::EndEnd);
-        check_zero_mu_case("End-End", fx, prim);
+        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
+        interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, search.primitives, buffers);
+        std::vector<fiber::FiberDelta> out = rhs::reduce_contributions(exec, buffers, fx.state.size());
+
+        std::printf("    совпадающие оси: degenerate_count=%zu, contact_count=%zu\n", diag.degenerate_count,
+                    diag.contact_count);
+
+        bool all_finite = true;
+        for (const auto& d3 : out)
+            for (std::size_t k = 0; k < dim; ++k)
+                if (!std::isfinite(d3.dv[k])) all_finite = false;
+        check(all_finite, "совпадающие оси: нет NaN/Inf");
+        check(diag.degenerate_count > 0, "совпадающие оси: degenerate_count > 0");
+
+        bool all_zero = true;
+        for (const auto& d3 : out)
+            for (std::size_t k = 0; k < dim; ++k)
+                if (d3.dv[k] != 0.0) all_zero = false;
+        check(all_zero, "совпадающие оси: силы нулевые (контакт не сформирован)");
     }
 }
 
-// -----------------------------------------------------------------------
-// 7) Закон трения coulomb_friction_force -- чистая функция без geometry/
-// FiberState (fiber/fiber_friction_implementation.md, §4, §7, §10;
-// координатор, п.11.2-11.4 и §7). Проверяются на ручных входах (n по оси,
-// n наклонная нормированная, v_rel с нормальной компонентой):
-//   |Ft| == mu*N (11.2), |Ft.n| < eps (11.3, касательность),
-//   Ft.v_t < 0 (11.4, направление против скольжения),
-//   Ft.v_rel == -mu*N*|v_t| (§7, мощность трения),
-// а также вырожденные случаи: Ft=0 при |v_t|<=eps_v (v_rel строго по n и
-// крошечное касательное 1e-10), Ft=0 при N=0, Ft=0 при mu=0.
-// -----------------------------------------------------------------------
-void test_coulomb_friction_law()
+// =========================================================================
+// 8.7. dt_limit.
+// =========================================================================
+void test_8_7_dt_limit()
 {
-    std::printf("test_coulomb_friction_law:\n");
-    const double eps_v = interactions::kFiberContactFrictionMinVt;
-
-    auto run_case = [&](const std::string& label, const double n[3], double N, double mu, const double v_rel[3]) {
-        double Ft[3];
-        interactions::coulomb_friction_force(n, N, mu, v_rel, eps_v, Ft);
-
-        const double vn = v_rel[0] * n[0] + v_rel[1] * n[1] + v_rel[2] * n[2];
-        const double vt[3] = {v_rel[0] - vn * n[0], v_rel[1] - vn * n[1], v_rel[2] - vn * n[2]};
-        const double vt_norm = std::sqrt(vt[0] * vt[0] + vt[1] * vt[1] + vt[2] * vt[2]);
-
-        const double Ft_norm = std::sqrt(Ft[0] * Ft[0] + Ft[1] * Ft[1] + Ft[2] * Ft[2]);
-        const double Ft_dot_n = Ft[0] * n[0] + Ft[1] * n[1] + Ft[2] * n[2];
-        const double Ft_dot_vt = Ft[0] * vt[0] + Ft[1] * vt[1] + Ft[2] * vt[2];
-        const double Ft_dot_vrel = Ft[0] * v_rel[0] + Ft[1] * v_rel[1] + Ft[2] * v_rel[2];
-
-        check(near_rel(Ft_norm, mu * N, 1e-12), label + ": |Ft| == mu*N (11.2)");
-        check(std::fabs(Ft_dot_n) < 1e-12 * std::max(1.0, mu * N), label + ": |Ft.n| < eps (11.3, касательность)");
-        check(Ft_dot_vt < 0.0, label + ": Ft.v_t < 0 (11.4, направление против скольжения)");
-        check(near_rel(Ft_dot_vrel, -mu * N * vt_norm, 1e-9), label + ": Ft.v_rel == -mu*N*|v_t| (§7, мощность)");
-    };
-
-    // n по оси z, v_rel с нормальной компонентой.
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 0.0, 5.0};
-        run_case("n=z, v_rel с нормальной компонентой", n, 10.0, 0.3, v_rel);
-    }
-    // n наклонная нормированная, v_rel с нормальной и тангенциальной компонентами.
-    {
-        const double s = 1.0 / std::sqrt(3.0);
-        const double n[3] = {s, s, s};
-        const double v_rel[3] = {1.0, -2.0, 0.5};
-        run_case("n наклонная нормированная", n, 4.0, 0.5, v_rel);
-    }
-    // n по оси x, другой набор N/mu.
-    {
-        const double n[3] = {1.0, 0.0, 0.0};
-        const double v_rel[3] = {0.3, -0.7, 1.2};
-        run_case("n=x, другие N/mu", n, 2.5, 0.8, v_rel);
-    }
-
-    // Ft == 0 при v_rel строго вдоль n (|v_t| == 0 точно, <= eps_v).
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {0.0, 0.0, 3.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при v_rel строго вдоль n (|v_t|=0)");
-    }
-    // Ft == 0 при крошечном касательном v_t (1e-10 < eps_v=1e-8).
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {1.0e-10, 0.0, 3.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при |v_t| <= eps_v (касательное 1e-10)");
-    }
-    // Ft == 0 при N == 0.
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 1.0, 0.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 0.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при N == 0");
-    }
-    // Ft == 0 при mu == 0.
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 1.0, 0.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.0, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при mu == 0");
-    }
-}
-
-// -----------------------------------------------------------------------
-// 8) Третий закон Ньютона (сумма импульсов) при mu>0 со скольжением
-// (fiber/fiber_friction_implementation.md, §7, §11.5; координатор, п.11.5).
-// Та же сцена Surface-Surface, что test_momentum_conservation, но с
-// НЕНУЛЕВЫМИ РАЗНЫМИ скоростями бусин, дающими тангенциальное скольжение, и
-// mu_ff=0.4. Сумма m_k*dv_k должна остаться == 0 с тем же допуском -- трение,
-// как и нормальная сила, действует парой +-F, распределённой ОДНИМИ и теми
-// же весами w_i/w_j, поэтому момент сохраняется и при mu>0. Дополнительно
-// проверяется, что трение действительно ненулевое (dv отличается от mu=0).
-// -----------------------------------------------------------------------
-void test_friction_momentum_conservation()
-{
-    std::printf("test_friction_momentum_conservation:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, y0 = 0.3 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-
-    std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-    std::vector<std::array<double, 3>> beadsB = {{x0, y0 - l0, h}, {x0, y0, h}, {x0, y0 + l0, h}};
-    std::vector<double> mA = {1.0e-6, 1.3e-6, 0.8e-6};
-    std::vector<double> mB = {1.7e-6, 0.9e-6, 1.5e-6};
-
-    TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-    fx.materials[0].mu_ff = 0.4;
-    // Сцена: n~(0,0,-1) -- x/y-компоненты скоростей тангенциальны, дают скольжение.
-    set_velocity(fx.state, 0, 0.2, -0.1, 0.05);
-    set_velocity(fx.state, 1, -0.3, 0.4, -0.1);
-    set_velocity(fx.state, 2, 0.1, -0.2, 0.15);
-    set_velocity(fx.state, 3, 0.25, 0.15, -0.05);
-    set_velocity(fx.state, 4, -0.4, -0.3, 0.2);
-    set_velocity(fx.state, 5, 0.05, 0.35, -0.15);
-
+    std::printf("test_8_7_dt_limit:\n");
+    const double l0 = 0.01, E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+    const double D_true = 0.9 * d;
     rhs::CpuExecutor exec(2);
-    std::vector<interactions::FiberContactPrimitive> primitives = {
-        make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface)};
 
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buffers);
-    std::vector<fiber::FiberDelta> out_mu = rhs::reduce_contributions(exec, buffers, fx.state.size());
+    CrossBuildResult built = build_cross_variant(90.0, -0.5, -0.5, l0, D_true, E, nu, d, rho);
+    interactions::FiberContactSearchResult search;
+    std::vector<FoundContact> contacts =
+        find_all_contacts(exec, built.fx.state, built.fx.topology, built.fx.materials, &search);
+    check(contacts.size() == 1, "8.7: сцена 8.1 (90 град, mid-mid) даёт ровно один контакт (предпосылка)");
+    if (contacts.empty()) return;
 
-    double total[dim] = {};
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd) total[dd] += fx.state.mass[i] * out_mu[i].dv[dd];
+    const auto& c = contacts[0];
+    const double m_a0 = built.fx.state.mass[c.prim.a0];
+    const double m_a1 = built.fx.state.mass[static_cast<rhs::index_t>(c.prim.a1)];
+    const double m_b0 = built.fx.state.mass[c.prim.b0];
+    const double m_b1 = built.fx.state.mass[static_cast<rhs::index_t>(c.prim.b1)];
 
-    double scale = 0.0;
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd)
-            scale = std::max(scale, std::fabs(fx.state.mass[i] * out_mu[i].dv[dd]));
-    if (scale < 1e-30) scale = 1.0;
+    const double s = c.geom.s, t = c.geom.t;
+    const double inv_mA = (1.0 - s) * (1.0 - s) / m_a0 + s * s / m_a1;
+    const double inv_mB = (1.0 - t) * (1.0 - t) / m_b0 + t * t / m_b1;
+    const double m_A = 1.0 / inv_mA;
+    const double m_B = 1.0 / inv_mB;
+    const double m_red = (m_A * m_B) / (m_A + m_B);
+    const double k_eff = 1.5 * c.geom.F / c.geom.delta;
+    const double dt_expected = 0.8 / std::sqrt(k_eff / m_red);
 
-    for (std::size_t dd = 0; dd < dim; ++dd)
-        check(std::fabs(total[dd]) < 1e-9 * scale,
-              "суммарный импульс (mu>0, со скольжением) по компоненте " + std::to_string(dd) + " равен нулю: " +
-                  std::to_string(total[dd]));
+    const double dt_actual = interactions::compute_fiber_contact_dt_limit(exec, built.fx.state, built.fx.materials,
+                                                                            search.primitives);
 
-    // Трение действительно ненулевое: dv(mu=0.4) отличается от dv(mu=0).
-    std::vector<fiber::FiberMaterial> materials0 = fx.materials;
-    materials0[0].mu_ff = 0.0;
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers0;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, materials0, primitives, buffers0);
-    std::vector<fiber::FiberDelta> out0 = rhs::reduce_contributions(exec, buffers0, fx.state.size());
+    std::printf("    dt_expected=%.9e s, dt_actual=%.9e s\n", dt_expected, dt_actual);
+    check(near_rel(dt_actual, dt_expected, 1e-12), "8.7: compute_fiber_contact_dt_limit == ручная формула (§6)");
 
-    double max_diff = 0.0;
-    for (std::size_t i = 0; i < fx.state.size(); ++i)
-        for (std::size_t dd = 0; dd < dim; ++dd)
-            max_diff = std::max(max_diff, std::fabs(out_mu[i].dv[dd] - out0[i].dv[dd]));
-    check(max_diff > 0.0, "трение действительно ненулевое: dv(mu=0.4) отличается от dv(mu=0)");
+    // fiber_contact_side_inv_mass должна давать то же самое 1/m_A/1/m_B.
+    const double inv_mA_fn = interactions::fiber_contact_side_inv_mass(built.fx.state, c.prim.a0, c.prim.a1, s);
+    const double inv_mB_fn = interactions::fiber_contact_side_inv_mass(built.fx.state, c.prim.b0, c.prim.b1, t);
+    check(inv_mA_fn == inv_mA, "8.7: fiber_contact_side_inv_mass(A) совпадает с ручной формулой (побитово)");
+    check(inv_mB_fn == inv_mB, "8.7: fiber_contact_side_inv_mass(B) совпадает с ручной формулой (побитово)");
 }
 
-// -----------------------------------------------------------------------
-// 9) Распределение трения по бусинам (fiber/fiber_friction_implementation.md,
-// §6, §11.6; координатор, п.11.6): dv(mu>0) - dv(mu=0) -- чистый вклад
-// трения; ожидаемая Ft считается в тесте через fiber_contact_point_velocity
-// + coulomb_friction_force по той же geom, что и kernel. Проверяется, что
-// m_i*(dv(mu)-dv(0)) ~= w_i*Ft, m_{i_nb}*... ~= (1-w_i)*Ft, m_j*...
-// ~= -w_j*Ft, m_{j_nb}*... ~= -(1-w_j)*Ft -- для End-стороны сосед не
-// получает вклада (has_neighbor=false). Плюс мощность Ft.v_rel <= 0 (§7).
-// -----------------------------------------------------------------------
-void check_friction_distribution(const char* label, TwoFiberFixture& fx, const interactions::FiberContactPrimitive& prim,
-                                  double mu)
+// =========================================================================
+// 8.8. Трение на новой геометрии.
+// =========================================================================
+
+void test_8_8_friction_coefficient_mixing()
 {
-    fx.materials[0].mu_ff = mu;
-    interactions::FiberContactGeometry geom =
-        interactions::compute_fiber_contact_geometry(fx.state, fx.materials, prim);
-    check(geom.contact, std::string(label) + ": контакт есть (предпосылка распределения трения)");
-
-    double v_ci[dim], v_cj[dim];
-    interactions::fiber_contact_point_velocity(fx.state, prim.i, geom.w_i, geom.i_has_neighbor, geom.i_neighbor,
-                                                 v_ci);
-    interactions::fiber_contact_point_velocity(fx.state, prim.j, geom.w_j, geom.j_has_neighbor, geom.j_neighbor,
-                                                 v_cj);
-    double v_rel[dim];
-    for (std::size_t d = 0; d < dim; ++d) v_rel[d] = v_ci[d] - v_cj[d];
-    double Ft[dim];
-    interactions::coulomb_friction_force(geom.n, geom.F, mu, v_rel, interactions::kFiberContactFrictionMinVt, Ft);
-
-    double Ft_norm2 = 0.0;
-    for (std::size_t d = 0; d < dim; ++d) Ft_norm2 += Ft[d] * Ft[d];
-    const double Ft_norm = std::sqrt(Ft_norm2);
-    const double muN = mu * geom.F;
-    check(near_rel(Ft_norm, muN, 1e-9), std::string(label) + ": |Ft| == mu*N (предпосылка -- скольжение есть)");
-
-    double power = 0.0;
-    for (std::size_t d = 0; d < dim; ++d) power += Ft[d] * v_rel[d];
-    check(power <= 1e-12 * std::max(1.0, muN), std::string(label) + ": Ft.v_rel <= 0 (мощность трения не положительна, §7)");
-
-    rhs::CpuExecutor exec(2);
-    std::vector<interactions::FiberContactPrimitive> primitives = {prim};
-
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buf_mu;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, fx.materials, primitives, buf_mu);
-    std::vector<fiber::FiberDelta> out_mu = rhs::reduce_contributions(exec, buf_mu, fx.state.size());
-
-    std::vector<fiber::FiberMaterial> materials0 = fx.materials;
-    materials0[0].mu_ff = 0.0;
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buf0;
-    interactions::compute_fiber_contact_contributions(exec, fx.state, materials0, primitives, buf0);
-    std::vector<fiber::FiberDelta> out0 = rhs::reduce_contributions(exec, buf0, fx.state.size());
-
-    auto check_bead = [&](std::size_t idx, double w_expected) {
-        const double m = fx.state.mass[idx];
-        for (std::size_t d = 0; d < dim; ++d)
-        {
-            const double diff_dv = out_mu[idx].dv[d] - out0[idx].dv[d];
-            const double expected_dF = w_expected * Ft[d];
-            check(near_abs(m * diff_dv, expected_dF, 1e-9 * std::max(1.0, muN)),
-                  std::string(label) + ": вклад трения на бусину " + std::to_string(idx) + ", компонента " +
-                      std::to_string(d));
-        }
-    };
-
-    check_bead(prim.i, geom.w_i);
-    check_bead(prim.j, -geom.w_j);
-    if (geom.i_has_neighbor)
-        check_bead(geom.i_neighbor, 1.0 - geom.w_i);
-    else
-        check(true, std::string(label) + ": сторона i -- End, соседа для распределения трения нет");
-    if (geom.j_has_neighbor)
-        check_bead(geom.j_neighbor, -(1.0 - geom.w_j));
-    else
-        check(true, std::string(label) + ": сторона j -- End, соседа для распределения трения нет");
-}
-
-void test_friction_distribution()
-{
-    std::printf("test_friction_distribution:\n");
-    const double l0 = 0.01;
-    const double x0 = 0.4 * l0, y0 = 0.3 * l0, h = 0.5e-3;
-    const double E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
-    const double mu = 0.4;
-
-    // Surface-Surface: 0<w_i<1 и 0<w_j<1 одновременно (сцена test_perpendicular_manual).
-    {
-        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<std::array<double, 3>> beadsB = {{x0, y0 - l0, h}, {x0, y0, h}, {x0, y0 + l0, h}};
-        std::vector<double> mA = {1e-6, 1.1e-6, 1.2e-6};
-        std::vector<double> mB = {1.3e-6, 1.4e-6, 1.5e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.2, -0.1, 0.05);
-        set_velocity(fx.state, 1, -0.3, 0.4, -0.1);
-        set_velocity(fx.state, 2, 0.1, -0.2, 0.15);
-        set_velocity(fx.state, 3, 0.25, 0.15, -0.05);
-        set_velocity(fx.state, 4, -0.4, -0.3, 0.2);
-        set_velocity(fx.state, 5, 0.05, 0.35, -0.15);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, 2, 4, 3, 5, interactions::FiberContactCase::SurfaceSurface);
-        check_friction_distribution("Surface-Surface", fx, prim, mu);
-    }
-
-    // Surface-End.
-    {
-        std::vector<std::array<double, 3>> beadsA = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<std::array<double, 3>> beadsB = {{x0, -l0, h}, {x0, 0, h}};
-        std::vector<double> mA = {1e-6, 1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.1, -0.2, 0.3);
-        set_velocity(fx.state, 1, -0.3, 0.1, -0.2);
-        set_velocity(fx.state, 2, 0.2, 0.3, -0.1);
-        set_velocity(fx.state, 3, -0.15, 0.25, 0.05);
-        set_velocity(fx.state, 4, 0.35, -0.1, -0.3);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, 2, 4, 3, -1, interactions::FiberContactCase::SurfaceEnd);
-        check_friction_distribution("Surface-End", fx, prim, mu);
-    }
-
-    // End-Surface.
-    {
-        std::vector<std::array<double, 3>> beadsA = {{x0, -l0, h}, {x0, 0, h}};
-        std::vector<std::array<double, 3>> beadsB = {{-l0, 0, 0}, {0, 0, 0}, {l0, 0, 0}};
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.2, 0.1, -0.3);
-        set_velocity(fx.state, 1, -0.1, -0.25, 0.15);
-        set_velocity(fx.state, 2, 0.3, -0.05, 0.2);
-        set_velocity(fx.state, 3, -0.2, 0.35, -0.1);
-        set_velocity(fx.state, 4, 0.05, -0.3, 0.25);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 3, 2, 4, interactions::FiberContactCase::EndSurface);
-        check_friction_distribution("End-Surface", fx, prim, mu);
-    }
-
-    // End-End.
-    {
-        const double gap = 0.6e-3;
-        std::vector<std::array<double, 3>> beadsA = {{0, 0, 0}, {0, 0, l0}};
-        std::vector<std::array<double, 3>> beadsB = {{0, 0, l0 + gap}, {0, 0, l0 + gap + l0}};
-        std::vector<double> mA = {1e-6, 1e-6};
-        std::vector<double> mB = {1e-6, 1e-6};
-        TwoFiberFixture fx = make_two_fiber_fixture(beadsA, mA, beadsB, mB, E, nu, d, rho);
-        set_velocity(fx.state, 0, 0.1, 0.2, -0.05);
-        set_velocity(fx.state, 1, -0.2, 0.1, 0.3);
-        set_velocity(fx.state, 2, 0.25, -0.15, -0.1);
-        set_velocity(fx.state, 3, -0.05, 0.3, 0.2);
-        interactions::FiberContactPrimitive prim =
-            make_primitive(1, 0, -1, 2, -1, 3, interactions::FiberContactCase::EndEnd);
-        check_friction_distribution("End-End", fx, prim, mu);
-    }
-}
-
-// -----------------------------------------------------------------------
-// 10) Правило смешения коэффициентов трения fiber_friction_coefficient
-// (fiber/fiber_friction_implementation.md, §4, §8; координатор,
-// test_friction_coefficient_mixing): равные mu_ff -> точное ==, разные ->
-// sqrt(mu_i*mu_j), одна из сторон -- 0 -> результат 0.
-// -----------------------------------------------------------------------
-void test_friction_coefficient_mixing()
-{
-    std::printf("test_friction_coefficient_mixing:\n");
+    std::printf("test_8_8_friction_coefficient_mixing:\n");
     fiber::FiberMaterial a = make_material(2.0e9, 0.3, 1.0e-3, 1200.0);
     fiber::FiberMaterial b = make_material(2.0e9, 0.3, 1.0e-3, 1200.0);
 
@@ -917,20 +903,93 @@ void test_friction_coefficient_mixing()
     check(interactions::fiber_friction_coefficient(a, b) == 0.0, "(0,0.5) -> 0");
 }
 
+// Набор представительных сцен для трения -- переиспользует билдеры 8.1/8.2
+// (Surface-Surface ~ 8.1 90/mid-mid; Surface-End/End-Surface ~ 8.2;
+// End-End ~ 8.2).
+struct FrictionScene
+{
+    const char* label;
+    TwoFiberFixture fx;
+};
+
+std::vector<FrictionScene> build_friction_scenes()
+{
+    const double l0 = 0.01, E = 2.0e9, nu = 0.3, d = 1.0e-3, rho = 1200.0;
+    const double D_true = 0.9 * d;
+
+    std::vector<FrictionScene> scenes;
+    scenes.push_back(
+        {"Surface-Surface", build_cross_variant(90.0, -0.5, -0.5, l0, D_true, E, nu, d, rho).fx});
+    scenes.push_back({"Surface-End (конец A)", build_end_surface_scene(true, l0, D_true, E, nu, d, rho)});
+    scenes.push_back({"End-Surface (конец B)", build_end_surface_scene(false, l0, D_true, E, nu, d, rho)});
+    scenes.push_back({"End-End", build_end_end_scene(l0, 0.5 * d, E, nu, d, rho)});
+    return scenes;
+}
+
+// Задаёт РАЗНЫЕ ненулевые скорости всем бусинам сцены (детерминированно, по
+// индексу) -- нужны тестам трения (скольжение).
+void set_distinct_velocities(fiber::FiberState& state)
+{
+    for (std::size_t i = 0; i < state.size(); ++i)
+    {
+        const double k = static_cast<double>(i) + 1.0;
+        set_velocity(state, i, 0.3 * std::sin(0.7 * k), -0.2 * std::cos(0.5 * k), 0.15 * std::sin(0.3 * k + 1.0));
+    }
+}
+
+// --- test_friction_zero_mu_regression: при mu_ff=0 dv СОВПАДАЕТ ПОБИТОВО
+// (==) с формулой ЧИСТО нормального контакта, посчитанной в тесте ИЗ geom
+// (§8.8: "сравнивается ПОБИТОВО с формулой нового нормального контакта").
+// Формула -- буквально как в compute_fiber_contact_contributions:
+// d.dv[dd] = w*geom.F*geom.n[dd]/m, тот же порядок операций.
+void test_8_8_friction_zero_mu_regression()
+{
+    std::printf("test_8_8_friction_zero_mu_regression:\n");
+    rhs::CpuExecutor exec(2);
+
+    for (auto& scene : build_friction_scenes())
+    {
+        scene.fx.materials[0].mu_ff = 0.0;
+        set_distinct_velocities(scene.fx.state);
+
+        std::vector<FoundContact> contacts = find_all_contacts(exec, scene.fx.state, scene.fx.topology,
+                                                                 scene.fx.materials);
+        check(contacts.size() == 1, std::string(scene.label) + ": ровно один контакт (предпосылка)");
+        if (contacts.size() != 1) continue;
+        const auto& c = contacts[0];
+
+        ContactRunResult run = run_contact(scene.fx);
+
+        auto expect_bead = [&](rhs::index_t idx, double w, double sign) {
+            const double m = scene.fx.state.mass[idx];
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                const double expected = sign * w * c.geom.F * c.geom.n[d] / m;
+                check(run.out[idx].dv[d] == expected, std::string(scene.label) + ": dv[" + std::to_string(idx) +
+                                                            "][" + std::to_string(d) + "] == формула нормального контакта (mu=0)");
+            }
+        };
+
+        if (c.geom.s < 1.0) expect_bead(c.prim.a0, 1.0 - c.geom.s, 1.0);
+        if (c.prim.a1 != -1 && c.geom.s > 0.0) expect_bead(static_cast<rhs::index_t>(c.prim.a1), c.geom.s, 1.0);
+        if (c.geom.t < 1.0) expect_bead(c.prim.b0, 1.0 - c.geom.t, -1.0);
+        if (c.prim.b1 != -1 && c.geom.t > 0.0) expect_bead(static_cast<rhs::index_t>(c.prim.b1), c.geom.t, -1.0);
+    }
+}
+
 } // namespace
 
 int main()
 {
-    test_perpendicular_manual();
-    test_near_parallel_fallback();
-    test_surface_end_and_end_end();
-    test_momentum_conservation();
-    test_diagnostics_pairs_per_intersection();
-    test_friction_zero_mu_regression();
-    test_coulomb_friction_law();
-    test_friction_momentum_conservation();
-    test_friction_distribution();
-    test_friction_coefficient_mixing();
+    test_8_1_single_contact_per_intersection();
+    test_8_2_fiber_ends();
+    test_8_3_curved_fiber();
+    test_8_4_momentum_conservation();
+    test_8_5_stretched_bonds_search_completeness();
+    test_8_6_near_parallel_and_parallel();
+    test_8_7_dt_limit();
+    test_8_8_friction_coefficient_mixing();
+    test_8_8_friction_zero_mu_regression();
 
     if (failures == 0)
         std::printf("test_fiber_contact: OK\n");

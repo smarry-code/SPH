@@ -260,6 +260,25 @@ endif()
 add_test(NAME fiber_contact_test COMMAND test_fiber_contact)
 set_tests_properties(fiber_contact_test PROPERTIES LABELS "3d")
 
+# --- Трение нить-нить: проекция на уровне скоростей (стадия между dt и
+#     advance(); include/interactions/fiber_friction.hpp,
+#     fiber/fiber_friction_projection.md, §8). Нити -- только SPH_DIM=3.
+add_executable(test_fiber_friction tests/test_fiber_friction.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_friction PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_friction PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_friction PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_friction PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_friction PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_friction PRIVATE -fopenmp)
+    target_link_options(test_fiber_friction PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_friction_test COMMAND test_fiber_friction)
+set_tests_properties(fiber_friction_test PROPERTIES LABELS "3d")
+
 # --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
 #     крест-накрест, отскакивают без взаимного проникания»).
 add_executable(test_e2e_fiber_contact tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})

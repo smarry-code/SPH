@@ -286,12 +286,231 @@ void test_predictor_corrector_energy_bound()
     check(e_max < 5.0 * e0, "энергия PredictorCorrector ограничена (не расходится, в отличие от Эйлера)");
 }
 
+// ---------------------------------------------------------------------------
+// 4) Интерфейс решателя fiber_velocity_update (fiber/fiber_friction_projection.md
+//    §4, тест 8.9): advance() даёт fb.vx ПОБИТОВО равную base + h*dv, где
+//    base/h взяты из fiber_velocity_update() ДО advance().
+//    Сравнение -- ровно тем же выражением `base + h * dv`, что в
+//    pc_finalize_velocity_position (`base + coeff * dv[d][i]`) и в
+//    euler_step_position_velocity (`vx += dt * dv`, то есть vx + dt*dv); один
+//    компилятор и один режим контракции FMA дают одинаковый результат в обоих
+//    местах, поэтому проверка именно на равенство (==) битов.
+// ---------------------------------------------------------------------------
+struct Lcg
+{
+    unsigned long long s = 0x9E3779B97F4A7C15ULL;
+    double next() // равномерно в [-1, 1)
+    {
+        s = s * 6364136223846793005ULL + 1442695040888963407ULL;
+        return static_cast<double>(s >> 11) * (2.0 / 9007199254740992.0) - 1.0;
+    }
+};
+
+template <class Solver>
+void check_velocity_update_step(Solver& solver, fiber::FiberState& fb, std::size_t n, double dt, Lcg& rng,
+                                const char* label, double expect_h, bool expect_base_is_fb)
+{
+    ParticleSystem sys;
+    solver.predict(sys, 0, fb, n, dt);
+    // RHS шага: новая dv (в боевом цикле -- между predict и advance).
+    for (std::size_t d = 0; d < dim; ++d)
+        for (std::size_t i = 0; i < n; ++i) solver.fiber_rhs.dv[d][i] = 10.0 * rng.next();
+
+    const auto upd = solver.fiber_velocity_update(fb, dt);
+    std::vector<double> base[dim];
+    std::vector<double> dv[dim];
+    bool base_ptr_ok = true;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        base[d] = *upd.base[d];
+        dv[d] = solver.fiber_rhs.dv[d];
+        if (expect_base_is_fb && upd.base[d] != &fb.vx[d]) base_ptr_ok = false;
+        if (!expect_base_is_fb && upd.base[d] == &fb.vx[d]) base_ptr_ok = false;
+    }
+
+    solver.advance(sys, 0, fb, n, dt);
+
+    bool bitwise = true;
+    for (std::size_t d = 0; d < dim; ++d)
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const double expected = base[d][i] + upd.h * dv[d][i];
+            if (!(fb.vx[d][i] == expected)) bitwise = false;
+        }
+    check(upd.h == expect_h, std::string(label) + ": h == " + (expect_h == dt ? "dt" : "dt/2"));
+    check(base_ptr_ok, std::string(label) + ": база = " + (expect_base_is_fb ? "fb.vx" : "v_min_fiber_ (не fb.vx)"));
+    check(bitwise, std::string(label) + ": fb.vx побитово == base + h*dv");
+}
+
+void test_fiber_velocity_update()
+{
+    std::printf("test_fiber_velocity_update:\n");
+    const std::size_t n = 37;
+    const double dt = 0.0137;
+    Lcg rng;
+
+    auto make_fb = [&](fiber::FiberState& fb) {
+        fb.resize(n);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            fb.mass[i] = 1.0 + 0.1 * static_cast<double>(i);
+            fb.object_id[i] = 0;
+            fb.material_id[i] = 0;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                fb.x[d][i] = rng.next();
+                fb.vx[d][i] = 3.0 * rng.next();
+            }
+        }
+    };
+
+    {
+        fiber::FiberState fb;
+        make_fb(fb);
+        ode::PredictorCorrectorSolver pc;
+        pc.reset(0, 0, n);
+        check_velocity_update_step(pc, fb, n, dt, rng, "PC шаг 1", dt / 2.0, /*base_is_fb=*/true);
+        // шаг n>=2: predict сдвигает fb.vx (u*), база -- сохранённая v^n
+        check_velocity_update_step(pc, fb, n, dt * 1.3, rng, "PC шаг 2", dt * 1.3, false);
+        check_velocity_update_step(pc, fb, n, dt * 0.7, rng, "PC шаг 3", dt * 0.7, false);
+    }
+    {
+        fiber::FiberState fb;
+        make_fb(fb);
+        ode::EulerSolver eu;
+        eu.reset(0, 0, n);
+        check_velocity_update_step(eu, fb, n, dt, rng, "Euler шаг 1", dt, true);
+        check_velocity_update_step(eu, fb, n, dt * 1.3, rng, "Euler шаг 2", dt * 1.3, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 5) Интерфейс решателя solid_velocity_update (fiber/fiber_solid_friction_
+//    implementation.md §4, аналог 8.9 для Solid): advance() даёт sys.vx
+//    ПОБИТОВО равную (base + h*dvx) + av (PC; av -- поправка XSPH,
+//    pc_finalize_velocity_position_with_av: `base + coeff*dv + av`) либо
+//    base + h*dvx (Эйлер, av == nullptr), где base/h/av взяты из
+//    solid_velocity_update() ДО advance(). Порядок сложения именно такой --
+//    (base + h*dvx) + av; проверяется равенство (==) битов.
+// ---------------------------------------------------------------------------
+template <class Solver>
+void check_solid_velocity_update_step(Solver& solver, ParticleSystem& sys, fiber::FiberState& fb, std::size_t ns,
+                                      std::size_t nf, double dt, double dt_prev, Lcg& rng, const char* label,
+                                      double expect_h, bool expect_base_is_sysvx, bool expect_av)
+{
+    solver.predict(sys, ns, fb, nf, dt_prev);
+    // RHS шага: новые dvx и XSPH-поправка av (в боевом цикле -- между predict и advance).
+    for (std::size_t d = 0; d < dim; ++d)
+        for (std::size_t i = 0; i < ns; ++i)
+        {
+            solver.solid_rhs.dvx[d][i] = 10.0 * rng.next();
+            solver.solid_rhs.av[d][i] = 0.05 * rng.next();
+        }
+
+    const auto upd = solver.solid_velocity_update(sys, dt);
+    std::vector<double> base[dim];
+    std::vector<double> dvx[dim];
+    std::vector<double> avv[dim];
+    bool base_ptr_ok = true;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        base[d] = *upd.base[d];
+        dvx[d] = solver.solid_rhs.dvx[d];
+        avv[d] = solver.solid_rhs.av[d];
+        const bool is_sysvx = (upd.base[d] == &sys.vx[d]);
+        if (expect_base_is_sysvx != is_sysvx) base_ptr_ok = false;
+    }
+    const bool av_ok = expect_av ? (upd.av == &solver.solid_rhs.av) : (upd.av == nullptr);
+
+    solver.advance(sys, ns, fb, nf, dt);
+
+    bool bitwise = true;
+    bool differs_from_no_av = false; // самопроверка: av на самом деле влияет на результат (PC)
+    for (std::size_t d = 0; d < dim; ++d)
+        for (std::size_t i = 0; i < ns; ++i)
+        {
+            double expected = base[d][i] + upd.h * dvx[d][i];
+            const double without_av = expected;
+            if (upd.av) expected += avv[d][i];
+            if (!(sys.vx[d][i] == expected)) bitwise = false;
+            if (sys.vx[d][i] != without_av) differs_from_no_av = true;
+        }
+    check(upd.h == expect_h, std::string(label) + ": h == " + (expect_h == dt ? "dt" : "dt/2"));
+    check(base_ptr_ok, std::string(label) + ": база = " + (expect_base_is_sysvx ? "sys.vx" : "v_min_ (не sys.vx)"));
+    check(av_ok, std::string(label) + (expect_av ? ": av == &solid_rhs.av (XSPH)" : ": av == nullptr (у Эйлера XSPH нет)"));
+    check(bitwise, std::string(label) + ": sys.vx побитово == (base + h*dvx) + av");
+    if (expect_av) check(differs_from_no_av, std::string(label) + ": самопроверка: av влияет на результат (тест не тривиален)");
+}
+
+void test_solid_velocity_update()
+{
+    std::printf("test_solid_velocity_update:\n");
+    const std::size_t ns = 41, nf = 3;
+    const double dt = 0.0137;
+    Lcg rng;
+
+    auto make_sys = [&](ParticleSystem& sys) {
+        sys.resize(ns);
+        for (std::size_t i = 0; i < ns; ++i)
+        {
+            sys.inzializ_index(i);
+            sys.mass[i] = 1.0 + 0.1 * static_cast<double>(i);
+            sys.rho[i] = 1000.0;
+            sys.rho_0[i] = 1000.0;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                sys.x[d][i] = rng.next();
+                sys.vx[d][i] = 3.0 * rng.next();
+            }
+        }
+    };
+    auto make_fb = [&](fiber::FiberState& fb) {
+        fb.resize(nf);
+        for (std::size_t i = 0; i < nf; ++i)
+        {
+            fb.mass[i] = 1.0;
+            fb.object_id[i] = 0;
+            fb.material_id[i] = 0;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                fb.x[d][i] = rng.next();
+                fb.vx[d][i] = rng.next();
+            }
+        }
+    };
+
+    {
+        ParticleSystem sys;
+        fiber::FiberState fb;
+        make_sys(sys);
+        make_fb(fb);
+        ode::PredictorCorrectorSolver pc;
+        pc.reset(ns, ns, nf);
+        check_solid_velocity_update_step(pc, sys, fb, ns, nf, dt, dt, rng, "PC шаг 1", dt / 2.0, /*base=sys.vx*/ true, true);
+        // шаг n>=2: predict сдвигает sys.vx (u*), база -- сохранённая v^n
+        check_solid_velocity_update_step(pc, sys, fb, ns, nf, dt * 1.3, dt, rng, "PC шаг 2", dt * 1.3, false, true);
+        check_solid_velocity_update_step(pc, sys, fb, ns, nf, dt * 0.7, dt * 1.3, rng, "PC шаг 3", dt * 0.7, false, true);
+    }
+    {
+        ParticleSystem sys;
+        fiber::FiberState fb;
+        make_sys(sys);
+        make_fb(fb);
+        ode::EulerSolver eu;
+        eu.reset(ns, ns, nf);
+        check_solid_velocity_update_step(eu, sys, fb, ns, nf, dt, dt, rng, "Euler шаг 1", dt, true, false);
+        check_solid_velocity_update_step(eu, sys, fb, ns, nf, dt * 1.3, dt, rng, "Euler шаг 2", dt * 1.3, true, false);
+    }
+}
+
 } // namespace
 
 int main()
 {
     test_euler_convergence();
     test_predictor_corrector_energy_bound();
+    test_fiber_velocity_update();
+    test_solid_velocity_update();
 
     if (failures == 0)
         std::printf("test_ode_solver: OK\n");
