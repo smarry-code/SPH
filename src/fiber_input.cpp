@@ -247,9 +247,15 @@ void load_fiber_file(const std::string& filename, Model& model)
                 }
             }
 
-            // Проверяем, что xmin <= xmax для всех компонент
+            // Проверяем, что координаты конечны (NaN прошёл бы проверку min <= max
+            // и закрепил бы всё) и xmin <= xmax для всех компонент
             for (std::size_t d = 0; d < dim; ++d)
             {
+                if (!std::isfinite(box.lo[d]) || !std::isfinite(box.hi[d]))
+                {
+                    throw std::runtime_error(
+                        "fiber::load_fiber_file: неконечная координата CLAMP_BOX в строке " + std::to_string(line_no));
+                }
                 if (box.lo[d] > box.hi[d])
                 {
                     throw std::runtime_error(

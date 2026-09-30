@@ -264,7 +264,6 @@ void test_u2_size(std::size_t n, std::size_t nclamped)
         bool fdv_ok = true, free_ok = true;
         for (std::size_t d = 0; d < dim; ++d)
         {
-            
             for (std::size_t i = 0; i < n; ++i)
             {
                 const bool clamped = (mask[i] >> d) & 1u;
@@ -527,23 +526,47 @@ void test_validate()
 }
 
 // --------------------------------------------------------------------------
-// Вспомогательная функция: пишет содержимое в файл
-void write_fiber_file(const std::string& filename, const std::string& content)
+// Временный файл нитей: имя уникально для процесса (три регистрации теста
+// идут параллельно при ctest -j), удаляется и при исключении (RAII).
+struct TempFiberFile
 {
-    std::ofstream out(filename);
-    out << content;
-}
+    std::filesystem::path path;
+    explicit TempFiberFile(const std::string& content)
+    {
+        static int counter = 0;
+        path = std::filesystem::temp_directory_path() /
+               ("test_clamp_box_" + std::to_string(std::random_device{}()) + "_" + std::to_string(counter++) + ".fib");
+        std::ofstream out(path);
+        out << content;
+    }
+    ~TempFiberFile()
+    {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+};
 
-// Вспомогательная функция: читает файл нитей и возвращает модель
+// Читает файл нитей из строки и возвращает модель.
 fiber::Model load_from_content(const std::string& content)
 {
-    const auto tmpdir = std::filesystem::temp_directory_path();
-    const auto tmpfile = tmpdir / "test_clamp_box_temp.fib";
-    write_fiber_file(tmpfile.string(), content);
+    TempFiberFile f(content);
     fiber::Model model;
-    fiber::load_fiber_file(tmpfile.string(), model);
-    std::filesystem::remove(tmpfile);
+    fiber::load_fiber_file(f.path.string(), model);
     return model;
+}
+
+// Текст std::runtime_error разбора или "" (исключения не было).
+std::string load_error(const std::string& content)
+{
+    try
+    {
+        load_from_content(content);
+    }
+    catch (const std::runtime_error& e)
+    {
+        return e.what();
+    }
+    return "";
 }
 
 // --------------------------------------------------------------------------
@@ -628,95 +651,40 @@ void test_u6_clamp_box()
         check(model.clamps.fiber_mask.empty(), "без директив fiber_mask пуст (не заполнен нулями)");
     }
 
-    // Тест 6: ошибки формата с правильными номерами строк
+    // Тест 6: ошибки формата -- std::runtime_error с номером строки директивы.
     {
-        // Не число в lo координате
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX abc -1.0 -1.0 0.5 1.0 1.0\n";       // строка 5
-
-        check(throws([&]
+        const std::string head = "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        const std::string fib = "FIBER 0 2\n0.0 0.0 0.0\n1.0 0.0 0.0\n";       // строки 2-4
+        struct Case
         {
-            load_from_content(content.str());
-        }), "ошибка: не число в lo координате");
-    }
-
-    {
-        // xmin > xmax
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX 1.0 -1.0 -1.0 0.5 1.0 1.0\n";       // строка 5
-
-        check(throws([&]
+            const char* what;
+            std::string text;
+            int line;
+        };
+        const Case cases[] = {
+            {"не число в lo", head + fib + "CLAMP_BOX abc -1.0 -1.0 0.5 1.0 1.0\n", 5},
+            {"число с мусором", head + fib + "CLAMP_BOX 0.0x -1.0 -1.0 0.5 1.0 1.0\n", 5},
+            {"незаконченная экспонента", head + fib + "CLAMP_BOX 1e -1.0 -1.0 0.5 1.0 1.0\n", 5},
+            {"nan", head + fib + "CLAMP_BOX nan -1.0 -1.0 0.5 1.0 1.0\n", 5},
+            {"inf", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 inf 1.0 1.0\n", 5},
+            {"не хватает hi", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0\n", 5},
+            {"xmin > xmax", head + fib + "CLAMP_BOX 1.0 -1.0 -1.0 0.5 1.0 1.0\n", 5},
+            {"zmin > zmax", head + fib + "CLAMP_BOX 0.0 -1.0 2.0 0.5 1.0 1.0\n", 5},
+            {"недопустимая буква", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyw\n", 5},
+            {"заглавная буква", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 X\n", 5},
+            {"повтор буквы", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyx\n", 5},
+            {"лишний токен", head + fib + "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xy extra\n", 5},
+            // директива до FIBER и после комментариев/пустых строк: номер строки файла
+            {"ошибка до FIBER", head + "# комментарий\n\nCLAMP_BOX 1.0 0 0 0.0 1 1\n" + fib, 4},
+        };
+        for (const Case& c : cases)
         {
-            load_from_content(content.str());
-        }), "ошибка: xmin > xmax");
-    }
-
-    {
-        // Недопустимая буква в маске
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyw\n";   // строка 5
-
-        check(throws([&]
-        {
-            load_from_content(content.str());
-        }), "ошибка: недопустимая буква в маске");
-    }
-
-    {
-        // Повтор буквы в маске
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyx\n";   // строка 5
-
-        check(throws([&]
-        {
-            load_from_content(content.str());
-        }), "ошибка: повтор буквы в маске");
-    }
-
-    {
-        // Лишние токены после маски
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xy extra\n"; // строка 5
-
-        check(throws([&]
-        {
-            load_from_content(content.str());
-        }), "ошибка: лишние токены после маски");
-    }
-
-    {
-        // Отсутствует hi координата
-        std::ostringstream content;
-        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
-        content << "FIBER 0 2\n";                                 // строка 2
-        content << "0.0 0.0 0.0\n";                               // строка 3
-        content << "1.0 0.0 0.0\n";                               // строка 4
-        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0\n";           // строка 5
-
-        check(throws([&]
-        {
-            load_from_content(content.str());
-        }), "ошибка: отсутствует hi координата");
+            const std::string msg = load_error(c.text);
+            const std::string want = "строке " + std::to_string(c.line);
+            check(!msg.empty() && msg.find(want) != std::string::npos &&
+                      msg.find("строке " + std::to_string(c.line) + "0") == std::string::npos,
+                  std::string("ошибка CLAMP_BOX (") + c.what + "): runtime_error с '" + want + "'");
+        }
     }
 }
 
