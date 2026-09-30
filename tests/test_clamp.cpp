@@ -2,9 +2,12 @@
 // Unit-тесты кинематического закрепления (interactions/clamp.hpp;
 // fiber/TZ_CLAMP_SOLID_FIBER.md, §10): U1 список, U2 проекция и детерминизм
 // реакции, U3 блочная сумма, U4 счётчики трения, U5 mark_clamp_box,
-// плюс validate_clamps. Параллельные варианты -- явные rhs::CpuExecutor(1),
-// (2), (7). Double сравниваются побитово. Собирается с SPH_DIM=3.
+// U6 директива CLAMP_BOX в файле нитей, плюс validate_clamps. Параллельные
+// варианты -- явные rhs::CpuExecutor(1), (2), (7). Double сравниваются
+// побитово. Собирается с SPH_DIM=3.
+#include "fiber/fiber_input.hpp"
 #include "fiber/fiber_system.hpp"
+#include "fiber/model.hpp"
 #include "interactions/clamp.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
@@ -13,7 +16,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <random>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -479,6 +485,200 @@ void test_validate()
     check(same_bits(rep.solid_max_h, sys.hsml[2]), "clamp_report_counts: solid_max_h");
 }
 
+// --------------------------------------------------------------------------
+// Вспомогательная функция: пишет содержимое в файл
+void write_fiber_file(const std::string& filename, const std::string& content)
+{
+    std::ofstream out(filename);
+    out << content;
+}
+
+// Вспомогательная функция: читает файл нитей и возвращает модель
+fiber::Model load_from_content(const std::string& content)
+{
+    const auto tmpdir = std::filesystem::temp_directory_path();
+    const auto tmpfile = tmpdir / "test_clamp_box_temp.fib";
+    write_fiber_file(tmpfile.string(), content);
+    fiber::Model model;
+    fiber::load_fiber_file(tmpfile.string(), model);
+    std::filesystem::remove(tmpfile);
+    return model;
+}
+
+// --------------------------------------------------------------------------
+void test_u6_clamp_box()
+{
+    std::printf("U6. CLAMP_BOX в файле нитей\n");
+
+    // Тест 1: директива с маской и без маски
+    {
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n";
+        content << "FIBER 0 3\n";
+        content << "0.0 0.0 0.0\n";
+        content << "1.0 0.0 0.0\n";
+        content << "2.0 0.0 0.0\n";
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0\n"; // закрепляет бусину 0 полностью
+        content << "CLAMP_BOX 1.5 -1.0 -1.0 2.5 1.0 1.0 xy\n"; // закрепляет бусину 2 по x,y
+
+        auto model = load_from_content(content.str());
+        check(!model.clamps.fiber_mask.empty(), "директива CLAMP_BOX: fiber_mask не пустой");
+        check(model.clamps.fiber_mask.size() == 3, "директива CLAMP_BOX: размер fiber_mask = nfiber");
+        check(model.clamps.fiber_mask[0] == interactions::kClampAll,
+              "директива CLAMP_BOX: бусина 0 закреплена полностью");
+        check(model.clamps.fiber_mask[2] == 0x3, "директива CLAMP_BOX: бусина 2 закреплена по xy (маска 0x3)");
+        check(model.clamps.fiber_mask[1] == 0, "директива CLAMP_BOX: бусина 1 свободна");
+    }
+
+    // Тест 2: несколько директив объединяются по «или»
+    {
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n";
+        content << "FIBER 0 2\n";
+        content << "0.0 0.0 0.0\n";
+        content << "1.0 0.0 0.0\n";
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 x\n"; // бусина 0 по x
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 y\n"; // бусина 0 по y
+
+        auto model = load_from_content(content.str());
+        check(model.clamps.fiber_mask[0] == 0x3, "две директивы на одну бусину: маска объединена");
+    }
+
+    // Тест 3: директива до и после FIBER блоков
+    {
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n";
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0\n"; // до FIBER
+        content << "FIBER 0 2\n";
+        content << "0.0 0.0 0.0\n";
+        content << "1.0 0.0 0.0\n";
+        content << "CLAMP_BOX 0.5 -1.0 -1.0 1.5 1.0 1.0\n"; // после FIBER
+
+        auto model = load_from_content(content.str());
+        check(model.clamps.fiber_mask[0] == interactions::kClampAll, "директива до FIBER работает");
+        check(model.clamps.fiber_mask[1] == interactions::kClampAll, "директива после FIBER работает");
+    }
+
+    // Тест 4: бусина на грани бокса закреплена (замкнутый бокс)
+    {
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n";
+        content << "FIBER 0 3\n";
+        content << "0.0 0.0 0.0\n";
+        content << "1.0 0.0 0.0\n";
+        content << "2.0 0.0 0.0\n";
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 2.0 1.0 1.0\n"; // все три бусины на границе включены
+
+        auto model = load_from_content(content.str());
+        check(model.clamps.fiber_mask[0] == interactions::kClampAll, "бусина на lo закреплена");
+        check(model.clamps.fiber_mask[1] == interactions::kClampAll, "бусина внутри закреплена");
+        check(model.clamps.fiber_mask[2] == interactions::kClampAll, "бусина на hi закреплена");
+    }
+
+    // Тест 5: без директив fiber_mask пуст
+    {
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n";
+        content << "FIBER 0 2\n";
+        content << "0.0 0.0 0.0\n";
+        content << "1.0 0.0 0.0\n";
+
+        auto model = load_from_content(content.str());
+        check(model.clamps.fiber_mask.empty(), "без директив fiber_mask пуст (не заполнен нулями)");
+    }
+
+    // Тест 6: ошибки формата с правильными номерами строк
+    {
+        // Не число в lo координате
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX abc -1.0 -1.0 0.5 1.0 1.0\n";       // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: не число в lo координате");
+    }
+
+    {
+        // xmin > xmax
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX 1.0 -1.0 -1.0 0.5 1.0 1.0\n";       // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: xmin > xmax");
+    }
+
+    {
+        // Недопустимая буква в маске
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyw\n";   // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: недопустимая буква в маске");
+    }
+
+    {
+        // Повтор буквы в маске
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xyx\n";   // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: повтор буквы в маске");
+    }
+
+    {
+        // Лишние токены после маски
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0 1.0 xy extra\n"; // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: лишние токены после маски");
+    }
+
+    {
+        // Отсутствует hi координата
+        std::ostringstream content;
+        content << "MATERIAL 0 2.0e9 0.35 1.0e-4 1200.0 0.05\n"; // строка 1
+        content << "FIBER 0 2\n";                                 // строка 2
+        content << "0.0 0.0 0.0\n";                               // строка 3
+        content << "1.0 0.0 0.0\n";                               // строка 4
+        content << "CLAMP_BOX 0.0 -1.0 -1.0 0.5 1.0\n";           // строка 5
+
+        check(throws([&]
+        {
+            load_from_content(content.str());
+        }), "ошибка: отсутствует hi координата");
+    }
+}
+
 } // namespace
 
 int main()
@@ -489,7 +689,7 @@ int main()
     test_u4();
     test_u5();
     test_validate();
-    // U6: CLAMP_BOX в файле нитей (src/fiber_input.cpp) -- добавляется отдельно.
+    test_u6_clamp_box();
     // F1-F5, S1-S4: интеграционные тесты через time_integration -- добавляются отдельно.
 
     std::printf("\n%s (failures = %d)\n", failures == 0 ? "ALL OK" : "FAILED", failures);

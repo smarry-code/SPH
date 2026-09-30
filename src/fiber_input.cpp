@@ -24,17 +24,28 @@
 //       нити, в ненагруженной (недеформированной) конфигурации. <point_count>
 //       >= 2. Каждая ломаная становится отдельной Fiber с собственным
 //       object_id (0, 1, 2, ... в порядке следования блоков FIBER в файле).
+//   - "CLAMP_BOX <xmin> <ymin> <zmin> <xmax> <ymax> <zmax> [<mask>]"
+//       НЕОБЯЗАТЕЛЬНАЯ директива кинематического закрепления бусин в
+//       прямоугольной области (interactions/clamp.hpp, fiber/SPH.md,
+//       раздел «Clamp (кинематическое закрепление)»). Координат столько,
+//       сколько dim (в 3D — шесть чисел). <mask> — непустая строка из букв
+//       x, y, z без повторов; по умолчанию все компоненты закреплены. Бусины,
+//       попавшие в замкнутый бокс, закрепляются по указанным компонентам.
+//       Несколько директив объединяются по «или». Может появиться в файле
+//       в любом месте (до/после блоков FIBER).
 //
 // Пример:
-//   # Нить из капрона, две прямые ломаные по 3 и 2 точки
+//   # Нить из капрона, две прямые ломаные по 3 и 2 точки, концы закреплены
 //   MATERIAL 0 2.0e9 0.35 1.0e-4 1140.0 0.02
 //   FIBER 0 3
 //   0.0 0.0 0.0
 //   0.01 0.0 0.0
 //   0.02 0.0 0.0
+//   CLAMP_BOX 0.0 -0.01 -0.01 0.0 0.01 0.01
 //   FIBER 0 2
 //   0.0 0.01 0.0
 //   0.0 0.02 0.0
+//   CLAMP_BOX 0.0 0.01 -0.01 0.0 0.02 0.01 xy
 //
 // Вычисления при разборе (fiber/SPH.md, раздел «Fiber»):
 //   l0 связи (k, k+1) = расстояние между точками файла (как заданы, без
@@ -53,7 +64,9 @@
 #include <stdexcept>
 #include <vector>
 
+#include "interactions/clamp.hpp"
 #include "param.hpp"
+#include "rhs/cpu_executor.hpp"
 
 namespace fiber
 {
@@ -65,6 +78,13 @@ struct RawFiber
 {
     int material_id = -1;
     std::vector<std::array<double, 3>> points;
+};
+
+struct ClampBox
+{
+    double lo[dim];
+    double hi[dim];
+    std::uint8_t mask = interactions::kClampAll;
 };
 
 // Обрезает комментарий, начинающийся с '#'. Возвращает true, если после
@@ -96,6 +116,7 @@ void load_fiber_file(const std::string& filename, Model& model)
     std::vector<FiberMaterial> materials;
     std::vector<char> material_defined;
     std::vector<RawFiber> fibers;
+    std::vector<ClampBox> boxes;
 
     std::string line;
     std::size_t line_no = 0;
@@ -204,6 +225,94 @@ void load_fiber_file(const std::string& filename, Model& model)
             }
             fibers.push_back(std::move(rf));
         }
+        else if (kw == "CLAMP_BOX")
+        {
+            ClampBox box;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                if (!(iss >> box.lo[d]))
+                {
+                    throw std::runtime_error(
+                        "fiber::load_fiber_file: не удалось прочитать минимальную координату CLAMP_BOX в строке " +
+                        std::to_string(line_no));
+                }
+            }
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                if (!(iss >> box.hi[d]))
+                {
+                    throw std::runtime_error(
+                        "fiber::load_fiber_file: не удалось прочитать максимальную координату CLAMP_BOX в строке " +
+                        std::to_string(line_no));
+                }
+            }
+
+            // Проверяем, что xmin <= xmax для всех компонент
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                if (box.lo[d] > box.hi[d])
+                {
+                    throw std::runtime_error(
+                        "fiber::load_fiber_file: в CLAMP_BOX координата min[" + std::to_string(d) +
+                        "] > max[" + std::to_string(d) + "] в строке " + std::to_string(line_no));
+                }
+            }
+
+            // Читаем опциональную маску
+            std::string mask_str;
+            if (iss >> mask_str)
+            {
+                // Маска не пустая и содержит только x, y, z без повторов
+                if (mask_str.empty())
+                {
+                    throw std::runtime_error(
+                        "fiber::load_fiber_file: маска CLAMP_BOX не должна быть пустой в строке " +
+                        std::to_string(line_no));
+                }
+
+                box.mask = 0;
+                std::vector<bool> seen(dim, false);
+                for (char c : mask_str)
+                {
+                    std::size_t component = 0;
+                    if (c == 'x') component = 0;
+                    else if (c == 'y') component = 1;
+                    else if (c == 'z') component = 2;
+                    else
+                    {
+                        throw std::runtime_error(
+                            "fiber::load_fiber_file: недопустимая буква '" + std::string(1, c) +
+                            "' в маске CLAMP_BOX в строке " + std::to_string(line_no));
+                    }
+
+                    if (component >= dim)
+                    {
+                        throw std::runtime_error(
+                            "fiber::load_fiber_file: буква '" + std::string(1, c) + "' недопустима для dim=" +
+                            std::to_string(dim) + " в строке " + std::to_string(line_no));
+                    }
+
+                    if (seen[component])
+                    {
+                        throw std::runtime_error(
+                            "fiber::load_fiber_file: повтор буквы '" + std::string(1, c) +
+                            "' в маске CLAMP_BOX в строке " + std::to_string(line_no));
+                    }
+                    seen[component] = true;
+                    box.mask |= static_cast<std::uint8_t>(1u << component);
+                }
+            }
+
+            // Проверяем, что нет лишних токенов после маски
+            std::string extra;
+            if (iss >> extra)
+            {
+                throw std::runtime_error(
+                    "fiber::load_fiber_file: лишние токены после CLAMP_BOX в строке " + std::to_string(line_no));
+            }
+
+            boxes.push_back(box);
+        }
         else
         {
             throw std::runtime_error(
@@ -281,6 +390,23 @@ void load_fiber_file(const std::string& filename, Model& model)
         }
 
         base += n;
+    }
+
+    // Применяем все собранные boxes к clamps.fiber_mask
+    if (!boxes.empty())
+    {
+        rhs::CpuExecutor exec(1);
+        model.clamps.fiber_mask.assign(total_n, 0);
+        for (const auto& box : boxes)
+        {
+            interactions::mark_clamp_box(exec, model.fiber.x, total_n, box.lo, box.hi, box.mask,
+                                        model.clamps.fiber_mask);
+        }
+    }
+    else
+    {
+        // Нет директив CLAMP_BOX -> оставляем fiber_mask пустым (не заполненным нулями)
+        model.clamps.fiber_mask.clear();
     }
 }
 
