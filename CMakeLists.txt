@@ -279,6 +279,28 @@ endif()
 add_test(NAME fiber_friction_test COMMAND test_fiber_friction)
 set_tests_properties(fiber_friction_test PROPERTIES LABELS "3d")
 
+# --- Кинематическое закрепление Solid/Fiber (include/interactions/clamp.hpp,
+#     fiber/TZ_CLAMP_SOLID_FIBER.md, §10). Регистрируется при 1, 2 и 4 потоках.
+add_executable(test_clamp tests/test_clamp.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_clamp PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_clamp PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_clamp PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_clamp PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_clamp PRIVATE -fopenmp)
+    target_link_options(test_clamp PRIVATE -fopenmp)
+endif()
+add_test(NAME clamp_test_t1 COMMAND test_clamp)
+set_tests_properties(clamp_test_t1 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=1")
+add_test(NAME clamp_test_t2 COMMAND test_clamp)
+set_tests_properties(clamp_test_t2 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=2")
+add_test(NAME clamp_test_t4 COMMAND test_clamp)
+set_tests_properties(clamp_test_t4 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=4")
+
 # --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
 #     крест-накрест, отскакивают без взаимного проникания»).
 add_executable(test_e2e_fiber_contact tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
