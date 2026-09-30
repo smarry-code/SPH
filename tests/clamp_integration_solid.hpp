@@ -735,6 +735,79 @@ inline S2Result s2_production(double mu_fs, double v_t0, int ode_solver, bool wi
     return res;
 }
 
+// Малый боевой прогон сцены S2 с CFL по умолчанию (cfg.apply_defaults): проверяет,
+// что зажатые частицы Solid остаются в выборе dt (TZ §3.4) -- в основном прогоне
+// CFL = 1e6 отключает ограничение Solid ради совпадения dt с эталоном.
+inline void s2_default_cfl_check()
+{
+    const double mu = 0.2, v_t0 = 2.0;
+    const std::size_t n = 100, maxn = 140, nsteps = 20;
+    S2Scene sc;
+    s2_build_fiber(sc, mu, v_t0);
+    fiber::Model model;
+    SimulationConfig cfg = make_cfg(0, maxn); // CFL -- значение apply_defaults
+    cfg.t_total = 1.0e30;
+    s2_build_plate(model.solid, maxn);
+    init_eos(cfg, model.solid, n);
+    model.fiber = sc.state;
+    model.topology = sc.topology;
+    model.materials = sc.materials;
+    model.clamps.solid_mask.assign(n, kClampAll);
+    std::vector<double> x0[dim];
+    for (std::size_t d = 0; d < dim; ++d) x0[d].assign(model.solid.x[d].begin(), model.solid.x[d].begin() + n);
+
+    double dt = compute_cfl_timestep(cfg, model.solid, n), time = 0.0;
+    const double cfl0 = dt;
+    bool ok = true;
+    std::string err;
+    double dt_last = 0.0, cfl_before_last = 0.0;
+    {
+        e2e::ScopedWorkDir wd("sph_clamp_solid", "s2cfl");
+        e2e::ScopedSilence silence(true);
+        try
+        {
+            // nsteps-1 шагов, затем замер CFL плиты непосредственно перед последним шагом
+            // (плита неподвижна, но c, rho зажатых живут -- CFL может дрейфовать).
+            RunGuard g1(0.0, 0.0, 0);
+            g1.set_step_limit(nsteps - 1);
+            time_integration(cfg, model, n, dt, time, 0.0, &g1);
+            cfl_before_last = compute_cfl_timestep(cfg, model.solid, n);
+            RunGuard g2(0.0, 0.0, 0);
+            g2.set_step_limit(1);
+            time_integration(cfg, model, n, dt, time, 0.0, &g2);
+            dt_last = dt;
+        }
+        catch (const std::exception& ex)
+        {
+            ok = false;
+            err = ex.what();
+        }
+    }
+    check(ok, std::string("S2 (CFL по умолчанию): прогон без исключений") + (ok ? "" : ": " + err));
+    if (!ok) return;
+    const double cfl_after = compute_cfl_timestep(cfg, model.solid, n);
+    bool x_ok = true, v_ok = true;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            x_ok = x_ok && same_bits_u64(model.solid.x[d][i], x0[d][i]);
+            v_ok = v_ok && (model.solid.vx[d][i] == 0.0);
+        }
+    bool fin = solid_finite(model.solid, n) && std::isfinite(dt_last);
+    for (std::size_t i = 0; i < model.fiber.size(); ++i)
+        for (std::size_t d = 0; d < dim; ++d)
+            fin = fin && std::isfinite(model.fiber.x[d][i]) && std::isfinite(model.fiber.vx[d][i]);
+    std::printf("  info : S2, CFL по умолчанию (cfg.CFL = %g): %zu шагов, compute_cfl_timestep(начало) = %.6e, "
+                "(перед последним шагом) = %.6e, (после) = %.6e, dt последнего шага = %.6e (dt/CFL = %.6f)\n",
+                cfg.CFL, nsteps, cfl0, cfl_before_last, cfl_after, dt_last, dt_last / cfl_before_last);
+    check(x_ok && v_ok, "S2 (CFL по умолчанию): плита побитово неподвижна (x == x0, v == 0.0)");
+    check(fin, "S2 (CFL по умолчанию): нет NaN/Inf");
+    check(dt_last > 0.0 && dt_last <= cfl_before_last * (1.0 + 1e-12),
+          "S2 (CFL по умолчанию): dt <= compute_cfl_timestep(плита): зажатые частицы Solid остаются в выборе dt");
+    check(std::fabs(dt_last / cfl_before_last - 1.0) <= 1e-9,
+          "S2 (CFL по умолчанию): dt == compute_cfl_timestep(плита) -- CFL зажатой плиты здесь и есть ограничивающий (лимиты нити выше)");
+}
+
 inline void test_s2()
 {
     std::printf("S2. нить скользит по зажатой плите (PC): mu_fs = 0.2, v_t0 = 2 м/с, T = %.1e с\n", kS2TEnd);
@@ -782,6 +855,8 @@ inline void test_s2()
     check(fin, "нет NaN/Inf (плита и нить)");
     const auto& rep = model.clamp_report;
     check(rep.solid_clamped == 100, "clamp_report.solid_clamped == 100");
+
+    s2_default_cfl_check();
 }
 
 } // namespace clamp_solid_it

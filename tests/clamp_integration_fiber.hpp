@@ -20,7 +20,12 @@
 // пишет log.txt и fiber_output_*.txt в текущий каталог.
 #include "fiber/fiber_output.hpp"
 #include "fiber/model.hpp"
+#include "interactions/clamp.hpp"
 #include "interactions/fiber_bond.hpp"
+#include "interactions/fiber_contact.hpp"
+#include "interactions/fiber_friction.hpp"
+#include "ode/ode_solver.hpp"
+#include "rhs/cpu_executor.hpp"
 #include "run_guard.hpp"
 #include "simulation_config.hpp"
 #include "time_integration.hpp"
@@ -435,9 +440,156 @@ inline double mean_vy_B(const fiber::Model& m)
     return s / static_cast<double>(m.fiber.size() - kF1N);
 }
 
+// ---------------------------------------------------------------------------
+// Прямая проверка стадии трения для подсцены F2 «две нити касаются с проникновением»
+// (нить A вдоль x, нить B вдоль y, зазор 0.9 мм < d, mu_ff = 0.5). Повторяет
+// последовательность src/time_integration.cpp для нить-нить: поиск контактов ->
+// слоты трения -> dv = Bond + Contact -> [1] проекция закрепления -> пробная
+// скорость по FiberVelocityUpdate -> compute_friction_counts -> [2]
+// apply_clamp_friction_counts -> compute_friction_contributions -> reduce.
+// Чтобы проверка не была вырожденной (нулевые скорости дают нулевое трение
+// тривиально), к dv ДО проекции добавляется касательная нагрузка (A: +x, B: +y),
+// которая на закреплённых бусинах должна быть снята проекцией [1].
+// ---------------------------------------------------------------------------
+struct F2FrictionProbe
+{
+    bool has_active = false;       // compute_fiber_contact_contributions вернул true
+    std::size_t active_slots = 0;  // активные слоты трения (mu*N > 0)
+    std::size_t force_slots = 0;   // слоты с has_force (mu*N > 0 и |u_t| > 0)
+    double max_raw_dv_clamped = 0.0; // max |dv| закреплённых бусин ДО проекции (нагрузка + нормаль)
+    double max_ut = 0.0;           // max |u_t| пробной относительной скорости по слотам
+    double max_delta = 0.0;        // max |friction_delta| по всем бусинам после reduce
+    double max_delta_A = 0.0, max_delta_B = 0.0;
+};
+
+inline F2FrictionProbe probe_f2_friction(fiber::Model& m, std::size_t nA, bool project)
+{
+    F2FrictionProbe res;
+    const std::size_t nf = m.fiber.size();
+    rhs::CpuExecutor exec;
+    interactions::FiberContactSearchResult search;
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> bond_buf, contact_buf, fr_fiber_buf;
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fr_solid_buf;
+    std::vector<rhs::ContributionBuffer<interactions::FiberCountDelta>> cnt_fiber_buf;
+    std::vector<rhs::ContributionBuffer<interactions::SolidCountDelta>> cnt_solid_buf;
+    std::vector<interactions::FiberFrictionContact> slots;
+    std::vector<interactions::FiberSolidFrictionContact> no_solid_slots;
+    std::vector<double> bead_count, solid_count;
+
+    const auto bond = interactions::compute_fiber_bond(exec, m.fiber, m.topology, m.materials, bond_buf);
+    interactions::build_fiber_contact_search(exec, m.fiber, m.topology, m.materials, search);
+    res.has_active = interactions::compute_fiber_contact_contributions(exec, m.fiber, m.materials, search.primitives,
+                                                                        contact_buf, slots);
+    const auto contact = rhs::reduce_contributions(exec, contact_buf, nf);
+    std::vector<double> dv[3];
+    for (std::size_t d = 0; d < 3; ++d)
+    {
+        dv[d].assign(nf, 0.0);
+        for (std::size_t k = 0; k < nf; ++k)
+            dv[d][k] = bond[k].dv[d] + contact[k].dv[d] + (k < nA ? (d == 0 ? 5.0e3 : 0.0) : (d == 1 ? 5.0e3 : 0.0));
+    }
+    for (std::size_t k = 0; k < nf; ++k)
+        if (m.clamps.fiber_mask[k] == interactions::kClampAll)
+            for (std::size_t d = 0; d < 3; ++d) res.max_raw_dv_clamped = std::max(res.max_raw_dv_clamped, std::fabs(dv[d][k]));
+
+    interactions::ClampWorkspace ws;
+    interactions::validate_clamps(m.clamps, m.solid, 0, m.fiber);
+    interactions::prepare_clamp_workspace(m.clamps, 0, nf, ws);
+    if (project)
+    {
+        double R[3] = {};
+        interactions::apply_clamp_projection(exec, ws.fiber, m.fiber.mass, dv,
+                                             static_cast<std::vector<std::vector<double>>*>(nullptr), ws, R);
+    }
+
+    const double h = 1.0e-5;
+    ode::FiberVelocityUpdate upd{};
+    for (std::size_t d = 0; d < 3; ++d) upd.base[d] = &m.fiber.vx[d];
+    upd.h = h;
+    ode::SolidVelocityUpdate supd{};
+    for (std::size_t d = 0; d < 3; ++d) supd.base[d] = &m.solid.vx[d];
+    supd.h = 0.0;
+    supd.av = nullptr;
+    std::vector<std::vector<double>> zero_dvx(3);
+
+    interactions::compute_friction_counts(exec, nf, 0, slots, no_solid_slots, cnt_fiber_buf, cnt_solid_buf, bead_count,
+                                           solid_count);
+    interactions::apply_clamp_friction_counts(exec, ws, bead_count, solid_count); // [2] (c_k = 0 у полностью зажатых)
+
+    for (const auto& c : slots)
+    {
+        if (!c.active) continue;
+        ++res.active_slots;
+        interactions::FiberFrictionImpulse imp;
+        interactions::fiber_friction_impulse(m.fiber, upd, dv, c, imp, bead_count.data());
+        if (imp.has_force) ++res.force_slots;
+        res.max_ut = std::max(res.max_ut, imp.ut_norm);
+    }
+    interactions::compute_friction_contributions(exec, m.fiber, upd, dv, slots, m.solid, supd, zero_dvx, no_solid_slots,
+                                                  bead_count, solid_count, false, fr_fiber_buf, fr_solid_buf);
+    const auto fr = rhs::reduce_contributions(exec, fr_fiber_buf, nf);
+    for (std::size_t k = 0; k < nf; ++k)
+        for (std::size_t d = 0; d < 3; ++d)
+        {
+            const double a = std::fabs(fr[k].dv[d]);
+            res.max_delta = std::max(res.max_delta, a);
+            (k < nA ? res.max_delta_A : res.max_delta_B) = std::max(k < nA ? res.max_delta_A : res.max_delta_B, a);
+        }
+    return res;
+}
+
+inline void build_f2_pair(fiber::Model& m, std::size_t maskA, std::size_t maskB_count)
+{
+    init_model(m);
+    m.materials = {make_mat(0.5, 10.0)};
+    const double oa[3] = {0, 0, 0}, da[3] = {1, 0, 0};
+    const double ob[3] = {0.05, -0.05, 0.9e-3}, db[3] = {0, 1, 0};
+    add_chain(m, 11, oa, da, kF1L0, kF1L0, 0, 0);
+    add_chain(m, 11, ob, db, kF1L0, kF1L0, 0, 1);
+    m.clamps.fiber_mask.assign(m.fiber.size(), 0);
+    set_mask(m, 0, maskA);
+    set_mask(m, 11, maskB_count);
+}
+
+inline void check_f2_friction_stage()
+{
+    // 1) Боевая последовательность, обе нити полностью закреплены: активный слот есть,
+    //    пробная u_t == 0 (проекция [1] сняла нагрузку), ни одного слота с силой, вклады ровно 0.0.
+    fiber::Model m;
+    build_f2_pair(m, 11, 11);
+    const F2FrictionProbe p = probe_f2_friction(m, 11, true);
+    std::printf("    info: трение зажатая-зажатая: активных слотов %zu, слотов с силой %zu, max|dv_raw| закреплённых до проекции = %.3e, "
+                "max|u_t| = %.3e, max|friction_delta| = %.3e\n",
+                p.active_slots, p.force_slots, p.max_raw_dv_clamped, p.max_ut, p.max_delta);
+    check(p.has_active && p.active_slots > 0, "F2: подсцена -- есть активный слот трения (mu*N > 0)");
+    check(p.max_raw_dv_clamped > 1.0, "F2: подсцена -- до проекции на закреплённых бусинах ненулевое ускорение (проверка не вырождена)");
+    check(p.force_slots == 0 && p.max_ut == 0.0, "F2: стадия трения -- у контакта двух полностью закреплённых нитей нет силы (has_force == false, u_t == 0)");
+    check(p.max_delta == 0.0, "F2: стадия трения -- вклад трения на КАЖДОЙ бусине ровно 0.0 (до проекции [3], не маскируется суммой)");
+
+    // 2) Положительный контроль А: проекция [1] пропущена -- тот же слот видит пробную u_t != 0 и даёт силу.
+    fiber::Model mc;
+    build_f2_pair(mc, 11, 11);
+    const F2FrictionProbe pc = probe_f2_friction(mc, 11, false);
+    std::printf("    info: контроль (без проекции [1]): слотов с силой %zu, max|u_t| = %.3e, max|friction_delta| = %.3e\n",
+                pc.force_slots, pc.max_ut, pc.max_delta);
+    check(pc.force_slots > 0 && pc.max_delta > 0.0,
+          "F2: контроль -- без проекции [1] тот же слот даёт ненулевую силу трения (проверка чувствительна)");
+
+    // 3) Положительный контроль Б: A закреплена, B свободна и движется -- трение есть и действует на B.
+    fiber::Model mf;
+    build_f2_pair(mf, 11, 0);
+    for (std::size_t k = 11; k < 22; ++k) mf.fiber.vx[1][k] = 1.0;
+    const F2FrictionProbe pf = probe_f2_friction(mf, 11, true);
+    std::printf("    info: контроль (A закреплена, B свободна и движется): слотов с силой %zu, max|u_t| = %.3e, "
+                "max|delta| B = %.3e\n", pf.force_slots, pf.max_ut, pf.max_delta_B);
+    check(pf.force_slots > 0 && pf.max_delta_B > 0.0,
+          "F2: контроль -- у закреплённой A и свободной движущейся B слот трения даёт ненулевую силу на B");
+}
+
 inline void test_f2()
 {
     std::printf("F2: закрепление + трение нить-нить (mu_ff = 0.5):\n");
+    check_f2_friction_stage();
     double vyB[2][2] = {}; // [solver][mu 0 / 0.5]
     for (int solver = 0; solver < 2; ++solver)
     {
@@ -664,8 +816,8 @@ inline void test_f3()
 // set_step_limit(1) вызывается подряд на одной модели; каждый вызов создаёт
 // новый решатель => ПЕРВЫЙ шаг: PC имеет h = dt/2 (v += dt/2 * a), Euler h = dt,
 // где dt -- значение, которое time_integration записывает в свой аргумент.
-// Нормировка: max(|dP|, h|R|, 1e-13*sum(m|v|)) -- последний член пол на уровне
-// округления P. Число шагов: PC 200, Euler 30 (см. steps_for).
+// Критерий ТЗ -- чистая относительная ошибка 1e-12 на каждом шаге (без абсолютных
+// добавок), режим «от покоя», см. run_f4. Число шагов: PC 200, Euler 30 (см. steps_for).
 // ---------------------------------------------------------------------------
 // Сцена F4: геометрия F1, скорости нулевые, свободные бусины смещены по z
 // профилем 1.5e-3*sin(pi*k/20) (связи у зажима натянуты, реакция ненулевая с
@@ -683,16 +835,19 @@ inline void build_f4(fiber::Model& m)
 }
 
 // Два режима (оба на каждом решателе):
-//   reset=true  -- перед каждым шагом v := 0 у всех бусин и свободные бусины
-//       случайно смещены (LCG, до 3 % l0): P^n = 0, поэтому |dP| ~ sum(m|v|) и
-//       округление P почти не затмевает dP (у большинства шагов); для них
-//       требуется чистая относительная ошибка |dP - hR| / max(|dP|, h|R|) <= 1e-12;
-//   reset=false -- сквозная динамика из состояния build_f4 (P накапливается).
-//       v^{n+1} хранится с ошибкой ~eps*|v|, поэтому P известен с абсолютной
-//       точностью ~eps*Pscale, Pscale = sum m|v|; критерий шага:
-//       |dP - hR| <= 1e-12*max(|dP|, h|R|) + 100*eps*Pscale
-//       (тот же критерий -- на всех шагах обоих режимов; "строгие" шаги --
-//       den >= 1e-2*Pscale, где второй член несущественен: max_rel по ним <= 1e-12).
+//   reset=true  -- КРИТЕРИЙ ТЗ. Перед каждым шагом v := 0 у всех бусин (P^n = 0 ТОЧНО),
+//       свободные бусины случайно смещены (LCG, до 3 % l0), чтобы реакция была
+//       ненулевой и разной на каждом шаге. Тогда dP = P^{n+1} - 0 вычисляется без
+//       вычитания накопленного импульса, и на КАЖДОМ шаге требуется чистая
+//       относительная ошибка (без каких-либо абсолютных добавок):
+//           |dP - h R| <= 1e-12 * max(|dP|, h|R|),
+//       при этом на каждом шаге утверждается h|R| > 0 (проверка не вырождена).
+//   reset=false -- сквозная динамика из состояния build_f4, ТОЛЬКО справка (info) и
+//       проверка ненулевой реакции. Критерий 1e-12 здесь НЕ применяется: P^{n+1} - P^n
+//       -- разность двух накопленных сумм, и её ошибка -- округление v^{n+1}
+//       (~eps*sum m|v|, а не ошибка зажима), поэтому относительная ошибка dP
+//       определяется отношением sum m|v| / |dP|, а не корректностью R. Проверку
+//       точности зажима несёт режим reset.
 inline void run_f4(int solver, bool reset)
 {
     const std::string tag = std::string(" [") + solver_name(solver) + (reset ? ", от покоя" : ", сквозной") + "]";
@@ -700,8 +855,8 @@ inline void run_f4(int solver, bool reset)
     build_f4(m);
     Runner r("f4");
     const SimulationConfig cfg = make_cfg(solver);
-    double max_rel = 0.0, max_hR = 0.0;
-    int n_bad = 0, n_strict = 0;
+    double max_rel = 0.0, max_hR = 0.0, min_hR = 1e300, max_info = 0.0;
+    int n_bad = 0, n_zero_R = 0;
     bool ok_run = true;
     const int nsteps = static_cast<int>(steps_for(solver) / (solver == 0 ? 15 : 1)); // PC 200, Euler 30
     std::uint64_t lcg = 12345;
@@ -710,6 +865,8 @@ inline void run_f4(int solver, bool reset)
         lcg = lcg * 6364136223846793005ull + 1442695040888963407ull;
         return static_cast<double>(lcg >> 11) / 9007199254740992.0 - 0.5; // [-0.5, 0.5)
     };
+    std::vector<double> xbase[3];
+    save_x(m, xbase);
     for (int s = 0; s < nsteps; ++s)
     {
         if (reset)
@@ -718,7 +875,16 @@ inline void run_f4(int solver, bool reset)
                 for (std::size_t d = 0; d < 3; ++d)
                 {
                     m.fiber.vx[d][k] = 0.0;
-                    if (m.clamps.fiber_mask[k] == 0) m.fiber.x[d][k] += 6e-4 * rnd();
+                    // Положение свободных бусин ПЕРЕЗАДАЁТСЯ на каждом шаге (а не накапливается):
+                    // база (build_f4) + линейный сдвиг по x от +1e-3 (бусина 3) до -1e-3
+                    // (последняя свободная) -- оба крайних звена (у зажимов) гарантированно
+                    // растянуты (связь работает только на растяжение), поэтому h|R| > 0 на
+                    // каждом шаге -- + случайное смещение до 3 % l0.
+                    if (m.clamps.fiber_mask[k] == 0)
+                    {
+                        const double frac = (static_cast<double>(k) - 3.0) / static_cast<double>(kF1N - 7); // 0..1
+                        m.fiber.x[d][k] = xbase[d][k] + (d == 0 ? 1e-3 * (1.0 - 2.0 * frac) : 0.0) + 6e-4 * rnd();
+                    }
                 }
         }
         double P0[3] = {}, P1[3] = {};
@@ -743,24 +909,34 @@ inline void run_f4(int solver, bool reset)
             hR2 += hR * hR;
             diff2 += (dP - hR) * (dP - hR);
         }
-        const double den = std::max(std::sqrt(dP2), std::sqrt(hR2));
+        const double ndP = std::sqrt(dP2), nhR = std::sqrt(hR2);
+        const double den = std::max(ndP, nhR);
         const double err = std::sqrt(diff2);
-        if (err > 1e-12 * den + 100.0 * 2.2e-16 * Pscale) ++n_bad;
-        if (den >= 1e-2 * Pscale && den > 0.0)
+        max_hR = std::max(max_hR, nhR);
+        min_hR = std::min(min_hR, nhR);
+        if (!(nhR > 0.0)) ++n_zero_R;
+        if (reset)
         {
-            ++n_strict;
-            max_rel = std::max(max_rel, err / den);
+            // Чистая относительная проверка на КАЖДОМ шаге; нулевая реакция -- тоже нарушение.
+            if (!(nhR > 0.0) || !(err <= 1e-12 * den)) ++n_bad;
+            if (den > 0.0) max_rel = std::max(max_rel, err / den);
         }
-        max_hR = std::max(max_hR, std::sqrt(hR2));
+        else if (Pscale > 0.0)
+            max_info = std::max(max_info, err / Pscale); // справка: ошибка относительно sum m|v|
     }
     check(ok_run, "F4: нет исключений" + tag);
     check(max_hR > 0.0, "F4: реакция ненулевая (max h|R| = " + std::to_string(max_hR) + ")" + tag);
-    check(n_strict >= (reset ? nsteps / 2 : 2) && max_rel <= 1e-12,
-          "F4: max относительная ошибка баланса импульса = " + std::to_string(max_rel) + " <= 1e-12 (строгих шагов " +
-              std::to_string(n_strict) + " из " + std::to_string(nsteps) + ")" + tag);
-    check(n_bad == 0, "F4: критерий шага выполнен на всех шагах, нарушений " + std::to_string(n_bad) + tag);
-    std::printf("    info:%s %d шагов, строгих %d, max rel = %.3e, нарушений %d\n", tag.c_str(), nsteps, n_strict, max_rel,
-                n_bad);
+    if (reset)
+    {
+        check(n_zero_R == 0 && min_hR > 0.0,
+              "F4: h|R| > 0 на каждом шаге (min h|R| = " + std::to_string(min_hR) + ")" + tag);
+        check(n_bad == 0 && max_rel <= 1e-12,
+              "F4: на КАЖДОМ шаге |dP - hR| <= 1e-12*max(|dP|, h|R|); max относительная ошибка = " +
+                  std::to_string(max_rel) + ", нарушений " + std::to_string(n_bad) + " из " + std::to_string(nsteps) + tag);
+    }
+    std::printf("    info:%s %d шагов, h|R| in [%.3e, %.3e], max rel = %.3e, нарушений %d%s", tag.c_str(), nsteps, min_hR,
+                max_hR, max_rel, n_bad, reset ? "\n" : "");
+    if (!reset) std::printf(", справка: max |dP-hR|/sum(m|v|) = %.3e (округление P, не критерий)\n", max_info);
 }
 
 inline void test_f4()
