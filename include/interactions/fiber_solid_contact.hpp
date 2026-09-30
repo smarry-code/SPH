@@ -12,6 +12,14 @@
 // временным прибавлением к ускорению внутри single_step (развилка
 // PLAN.md была на случай Ф6-раньше-Ф4, здесь не актуальна).
 //
+// ТРЕНИЕ (fiber/fiber_solid_friction_implementation.md, задача 4 из 4): kernel
+// compute_fiber_solid_contact_contributions считает ТОЛЬКО нормальную силу
+// Герца и дополнительно заполняет по одному слоту FiberSolidFrictionContact на
+// primitive (запись по индексу k); само трение (проекция на уровне скоростей,
+// единый проход Якоби с трением нить-нить, mass splitting) -- в
+// interactions/fiber_friction.hpp. Коэффициент -- mu_fs материала бусины a
+// (fiber_solid_friction_coefficient). При mu_fs = 0 активных слотов нет.
+//
 // ============================================================================
 // РЕШЕНИЯ (задокументированы явно, т.к. постановка оставляла их на усмотрение
 // реализации — fiber/PLAN.md, этап Ф6, последний абзац):
@@ -160,12 +168,45 @@ namespace interactions
 // SolidDelta) суммируются в НЕЗАВИСИМЫХ reduce_contributions, поэтому
 // коллизия численного значения между "доменами" разных Delta не критична, но
 // внутри своего домена значение обязано быть уникальным:
-//   FiberDelta:  1 = Fiber-Bond, 2 = Fiber-Fiber-Contact, 3 = ЗДЕСЬ (сторона Fiber);
-//   SolidDelta: 10 = Solid-SPH, 11 = Solid-Solid-Contact, 12 = ЗДЕСЬ (сторона Solid).
+//   FiberDelta:  1 = Fiber-Bond, 2 = Fiber-Fiber-Contact, 3 = ЗДЕСЬ (сторона Fiber),
+//                4 = трение нить-нить, 5 = трение Fiber-Solid, сторона нити
+//                (interactions/fiber_friction.hpp);
+//   SolidDelta: 10 = Solid-SPH, 11 = Solid-Solid-Contact, 12 = ЗДЕСЬ (сторона Solid),
+//               13 = трение Fiber-Solid, сторона Solid (fiber_friction.hpp).
 constexpr std::uint32_t kFiberSolidContactFiberType = 3;
 constexpr std::uint32_t kFiberSolidContactSolidType = 12;
 
 constexpr double kFiberSolidContactMinD = 1e-12;
+
+// ----------------------------------------------------------------------
+// fiber_solid_friction_coefficient -- правило выбора коэффициента трения
+// нить-Solid (fiber/fiber_solid_friction_implementation.md, §2): сейчас mu_fs
+// материала нити (бусины a сегмента, как K_fs, решение 4 в шапке). У материалов
+// Solid параметра трения нет; если он появится, менять только эту функцию.
+// ----------------------------------------------------------------------
+inline double fiber_solid_friction_coefficient(const fiber::FiberMaterial& fiber_mat, int /*solid_itype*/)
+{
+    return fiber_mat.mu_fs;
+}
+
+// ----------------------------------------------------------------------
+// FiberSolidFrictionContact -- слот принятого контакта Fiber-Solid для стадии
+// трения (fiber/fiber_solid_friction_implementation.md, §5.1). ПО ОДНОМУ слоту
+// на primitive, запись по индексу k -- без гонок и аллокаций внутри kernel; POD
+// (переносится в device-память как есть). active = контакт принят && mu>0;
+// неактивный слот -- value-initialized.
+// ----------------------------------------------------------------------
+struct FiberSolidFrictionContact
+{
+    bool active = false; // contact && mu > 0
+    rhs::index_t a = 0;
+    long long b = -1; // -1 -- точечный контакт
+    rhs::index_t s = 0;
+    double lambda = 0.0; // доля нити на b (для точечного 0)
+    double n[dim] = {};  // от нити к Solid, как в геометрии
+    double N = 0.0;      // нормальная сила Герца (geom.F), >= 0
+    double mu = 0.0;
+};
 
 // ----------------------------------------------------------------------
 // FiberSolidContactPrimitive = (a, b, s) -- fiber/SPH.md, «Fiber-Solid-
@@ -517,11 +558,19 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
 // импульса на primitive: F_a+F_b+F_s=0 (F_s=F*n, F_a=-(1-λ)F*n,
 // F_b=-λF*n) -- см. test_fiber_solid.cpp.
 // ----------------------------------------------------------------------
-inline void compute_fiber_solid_contact_contributions(
+//
+// Трения здесь нет (fiber/fiber_solid_friction_implementation.md, §5.1): kernel
+// ДОПОЛНИТЕЛЬНО заполняет friction_contacts[k] для каждого primitive;
+// friction_contacts.resize(primitives.size()) выполняется ДО parallel_for (вектор
+// переиспользуется между шагами). Возвращает true, если есть хотя бы один
+// активный слот (contact && mu>0); флаг -- отдельным parallel_reduce по слотам
+// (целочисленная сумма, детерминированно).
+inline bool compute_fiber_solid_contact_contributions(
     const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
     const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+    std::vector<FiberSolidFrictionContact>& friction_contacts)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (fiber_buffers.size() < nworkers) fiber_buffers.resize(nworkers);
@@ -530,12 +579,30 @@ inline void compute_fiber_solid_contact_contributions(
     for (auto& buf : solid_buffers) buf.clear();
 
     const std::size_t n = primitives.size();
-    if (n == 0) return;
+    friction_contacts.resize(n);
+    if (n == 0) return false;
 
     exec.parallel_for(n, [&](std::size_t k) {
+        friction_contacts[k] = FiberSolidFrictionContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Слот для стадии трения ---------------------------------------
+        const double mu = fiber_solid_friction_coefficient(
+            materials[static_cast<std::size_t>(state.material_id[prim.a])], sys.itype[prim.s]);
+        if (mu > 0.0)
+        {
+            FiberSolidFrictionContact& slot = friction_contacts[k];
+            slot.active = true;
+            slot.a = prim.a;
+            slot.b = prim.has_b ? static_cast<long long>(prim.b) : -1;
+            slot.s = prim.s;
+            slot.lambda = prim.has_b ? geom.lambda : 0.0;
+            for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
+            slot.N = geom.F;
+            slot.mu = mu;
+        }
 
         int w = rhs::CpuExecutor::worker_id();
         if (w < 0 || static_cast<std::size_t>(w) >= fiber_buffers.size()) w = 0;
@@ -570,6 +637,24 @@ inline void compute_fiber_solid_contact_contributions(
             fw.emit(prim.b, db, static_cast<std::uint64_t>(k), 2);
         }
     });
+
+    const std::size_t active_count = exec.parallel_reduce(
+        n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
+        [](std::size_t a, std::size_t b) { return a + b; });
+    return active_count > 0;
+}
+
+// Перегрузка без слотов трения (тесты нормального контакта): слоты во
+// временном векторе, флаг активности отбрасывается.
+inline void compute_fiber_solid_contact_contributions(
+    const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
+    const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+{
+    std::vector<FiberSolidFrictionContact> unused_slots;
+    (void)compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, primitives, fiber_buffers,
+                                                     solid_buffers, unused_slots);
 }
 
 // compute_fiber_solid_contact -- удобная обёртка: search + contributions +
@@ -579,6 +664,7 @@ struct FiberSolidContactResult
     std::vector<fiber::FiberDelta> fiber_delta;
     std::vector<SolidDelta> solid_delta;
     std::vector<FiberSolidContactPrimitive> primitives; // для dt_limit/диагностики без повторного поиска
+    bool has_active_friction = false; // есть активный слот трения (только при переданных friction_contacts)
 };
 
 inline FiberSolidContactResult compute_fiber_solid_contact(
@@ -586,13 +672,18 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
     const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr)
 {
     FiberSolidContactSearchResult search;
     build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
-    compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
-                                               solid_buffers);
     FiberSolidContactResult out;
+    if (friction_contacts)
+        out.has_active_friction = compute_fiber_solid_contact_contributions(
+            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts);
+    else
+        compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
+                                                   solid_buffers);
     out.fiber_delta = rhs::reduce_contributions(exec, fiber_buffers, state.size());
     out.solid_delta = rhs::reduce_contributions(exec, solid_buffers, ntotal);
     out.primitives = search.primitives;

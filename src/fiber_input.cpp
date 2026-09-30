@@ -5,7 +5,7 @@
 // ФОРМАТ ФАЙЛА (текстовый, свободный формат, разделители — пробелы):
 //   - строки-комментарии и хвостовые комментарии начинаются с '#';
 //   - пустые строки игнорируются;
-//   - "MATERIAL <id> <E> <nu> <d> <rho> <eps_break> [mu_ff]"
+//   - "MATERIAL <id> <E> <nu> <d> <rho> <eps_break> [mu_ff [mu_fs]]"
 //       определяет материал нити с индексом <id> (целое >= 0; индексы не
 //       обязаны быть подряд, но должны быть объявлены ДО первой ссылки на
 //       них из FIBER). E, nu, d, rho, eps_break — double (модуль Юнга,
@@ -15,6 +15,9 @@
 //       трения нить-нить (fiber/fiber_friction_implementation.md, §8);
 //       если не задан, mu_ff = 0 (старое поведение без трения). Если задан,
 //       должен быть числом >= 0, иначе — ошибка формата.
+//       mu_fs — НЕОБЯЗАТЕЛЬНОЕ восьмое поле (только после mu_ff),
+//       коэффициент трения нить-Solid (fiber/fiber_solid_friction_
+//       implementation.md, §2); по умолчанию 0; правила те же, что у mu_ff.
 //   - "FIBER <material_id> <point_count>"
 //       открывает одну ломаную (= одну нить). За строкой заголовка следуют
 //       РОВНО <point_count> строк "x y z" — вершины ломаной в порядке вдоль
@@ -125,25 +128,30 @@ void load_fiber_file(const std::string& filename, Model& model)
             // для остальных полей MATERIAL выше) и быть неотрицательным.
             // Разбор — потоком, как у остальных полей (локаль потока
             // "classic"), а не std::stod, зависящим от глобальной C-локали.
-            double mu_ff = 0.0;
-            std::string mu_ff_tok;
-            if (iss >> mu_ff_tok)
-            {
-                std::istringstream tok(mu_ff_tok);
-                const bool ok = static_cast<bool>(tok >> mu_ff) && (tok >> std::ws).eof();
+            // mu_fs (коэффициент трения нить-Solid, fiber/
+            // fiber_solid_friction_implementation.md, §2) -- НЕОБЯЗАТЕЛЬНОЕ
+            // восьмое поле (только после mu_ff), те же правила разбора и
+            // проверок; по умолчанию 0.0.
+            auto read_optional_mu = [&](const char* name, double& value) {
+                std::string tok_str;
+                if (!(iss >> tok_str)) return;
+                std::istringstream tok(tok_str);
+                const bool ok = static_cast<bool>(tok >> value) && (tok >> std::ws).eof();
                 if (!ok)
                 {
-                    throw std::runtime_error(
-                        "fiber::load_fiber_file: неверный формат MATERIAL (mu_ff) в строке " +
-                        std::to_string(line_no));
+                    throw std::runtime_error(std::string("fiber::load_fiber_file: неверный формат MATERIAL (") + name +
+                                             ") в строке " + std::to_string(line_no));
                 }
-                if (mu_ff < 0.0)
+                if (value < 0.0)
                 {
-                    throw std::runtime_error(
-                        "fiber::load_fiber_file: mu_ff должен быть >= 0 в MATERIAL, строка " +
-                        std::to_string(line_no));
+                    throw std::runtime_error(std::string("fiber::load_fiber_file: ") + name +
+                                             " должен быть >= 0 в MATERIAL, строка " + std::to_string(line_no));
                 }
-            }
+            };
+            double mu_ff = 0.0;
+            double mu_fs = 0.0;
+            read_optional_mu("mu_ff", mu_ff);
+            read_optional_mu("mu_fs", mu_fs);
 
             const std::size_t uid = static_cast<std::size_t>(id);
             if (uid >= materials.size())
@@ -151,7 +159,7 @@ void load_fiber_file(const std::string& filename, Model& model)
                 materials.resize(uid + 1);
                 material_defined.resize(uid + 1, 0);
             }
-            materials[uid] = FiberMaterial{E, nu, d, rho, eps_break, mu_ff};
+            materials[uid] = FiberMaterial{E, nu, d, rho, eps_break, mu_ff, mu_fs};
             material_defined[uid] = 1;
         }
         else if (kw == "FIBER")

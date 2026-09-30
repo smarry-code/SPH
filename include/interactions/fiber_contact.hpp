@@ -112,20 +112,16 @@
 //    topology.bonds расчёта (fiber_contact_search_radius получает state и
 //    exec именно для этого — считает максимум через exec.parallel_reduce).
 //
-// 4. Трение. Модель — динамическое сухое трение Кулона БЕЗ памяти контакта
-//    (fiber/fiber_friction_implementation.md, целиком) — САМ ЗАКОН в этой
-//    задаче не меняется, меняется только геометрия, на которой он считается.
-//    Скорость точки контакта на стороне A — v_c=(1-s)*v_{a0}+s*v_{a1}
-//    (точечный сегмент: v_c=v_{a0}), теми же весами (1-s,s), что и
-//    нормальная сила Герца — никакой отдельной геометрии для трения не
-//    вводится (fiber_contact_point_velocity ниже). Симметрично для стороны
-//    B с весами (1-t,t). Итоговая сила F=N*n+F_t распределяется по бусинам
-//    ОДНИМИ И ТЕМИ ЖЕ весами, что и N*n. Правило смешения mu для разных
-//    материалов — в отдельной функции fiber_friction_coefficient (менять
-//    только её). dt_limit трением не затрагивается (у закона Кулона нет
-//    собственной жёсткости). mu_ff=0 (значение по умолчанию в
-//    FiberMaterial) обязан давать ПОБИТОВО прежнее поведение — единственный
-//    жёсткий инвариант регрессии (test_friction_zero_mu_regression).
+// 4. Трение. Kernel этого файла считает ТОЛЬКО нормальную силу Герца.
+//    Трение нить-нить -- отдельная стадия шага между вычислением dt и
+//    ODESolver::advance (проекция на уровне скоростей, ограничение импульса
+//    трения; interactions/fiber_friction.hpp, fiber/fiber_friction_projection.md).
+//    Kernel лишь заполняет по одному слоту FiberFrictionContact на primitive
+//    (геометрия принятого контакта, N=geom.F, mu из fiber_friction_coefficient
+//    -- правило смешения mu для разных материалов живёт здесь, менять только
+//    его). Слот active только при contact && mu>0, поэтому при mu_ff=0 у всех
+//    материалов стадия трения не выполняется и результат побитово прежний.
+//    dt_limit трением не затрагивается.
 // ============================================================================
 #include <algorithm>
 #include <array>
@@ -168,13 +164,6 @@ constexpr double kFiberContactParallelEps = 1e-3;
 // сегментов вырожден в точку (|e|~0) -- в этом случае направление e_A x e_B
 // не определяет ось однозначно, см. kFiberContactParallelEps выше.
 constexpr double kFiberContactMinD = 1e-12;
-
-// Порог |v_t| в м/с для закона трения Кулона (fiber/fiber_friction_implementation.md,
-// §4/§10): нужен ТОЛЬКО как защита от деления на ноль при нормировке v_t и
-// от численного шума около v_t=0 -- не физический параметр модели. Выбран
-// малым по сравнению с характерными скоростями задач проекта (десятые доли
-// -- сотни м/с).
-constexpr double kFiberContactFrictionMinVt = 1e-8;
 
 // Относительный порог вырожденности отрезка в fiber_segment_closest_params
 // (§2 спецификации): |d|^2 <= eps*L_ref^2, L_ref^2 = max(|d1|^2,|d2|^2) --
@@ -605,7 +594,7 @@ inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberSta
 // fiber_contact_side_inv_mass -- 1/m эффективной массы точки контакта на
 // ОДНОЙ стороне (§5 спецификации): (1-s)^2/m0 + s^2/m1 при наличии соседа,
 // точечный сегмент (k1==-1) -> 1/m0. Общая функция для dt_limit (пункт 6 в
-// шапке файла) и распределения силы/трения ниже.
+// шапке файла) и стадии трения (fiber_friction.hpp).
 // ----------------------------------------------------------------------
 inline double fiber_contact_side_inv_mass(const fiber::FiberState& st, rhs::index_t k0, long long k1, double s)
 {
@@ -630,123 +619,91 @@ inline double fiber_friction_coefficient(const fiber::FiberMaterial& a, const fi
 }
 
 // ----------------------------------------------------------------------
-// coulomb_friction_force -- чистый (без обращения к FiberState/geometry)
-// закон динамического трения Кулона без памяти контакта
-// (fiber/fiber_friction_implementation.md, §4): v_t -- тангенциальная
-// (перпендикулярная n) составляющая относительной скорости точек контакта;
-// при mu*N>0 и |v_t|>eps_v сила Ft = -mu*N*v_t/|v_t| (направлена против
-// скольжения, |Ft|=mu*N, Ft.n=0 по построению -- v_t уже ортогональна n);
-// иначе Ft=0 (нет скольжения либо нет нормальной силы/трения). dim --
-// compile-time константа проекта (param.hpp); функция компилируется при
-// любом SPH_DIM -- циклы по d<dim корректны для любого dim (тот же паттерн,
-// что и в остальном файле).
+// FiberFrictionContact -- слот принятого контакта для стадии трения
+// (interactions/fiber_friction.hpp; fiber/fiber_friction_projection.md, §3).
+// ПО ОДНОМУ слоту на primitive, запись по индексу k -- без гонок и без
+// аллокаций внутри kernel. POD без указателей и std::vector: переносится в
+// device-память как есть. Объявлен здесь (а не в fiber_friction.hpp), потому
+// что его заполняет kernel нормального контакта, а fiber_friction.hpp
+// включает этот файл (fiber_contact_side_inv_mass) -- иначе цикл include.
+// active = контакт принят && mu>0; неактивный слот остаётся value-initialized.
 // ----------------------------------------------------------------------
-inline void coulomb_friction_force(const double n[dim], double N, double mu, const double v_rel[dim], double eps_v,
-                                    double Ft[dim])
+struct FiberFrictionContact
 {
-    double vn = 0.0;
-    for (std::size_t d = 0; d < dim; ++d) vn += v_rel[d] * n[d];
-
-    double vt[dim];
-    double vt_norm2 = 0.0;
-    for (std::size_t d = 0; d < dim; ++d)
-    {
-        vt[d] = v_rel[d] - vn * n[d];
-        vt_norm2 += vt[d] * vt[d];
-    }
-    const double vt_norm = std::sqrt(vt_norm2);
-
-    if (mu * N > 0.0 && vt_norm > eps_v)
-    {
-        const double scale = -mu * N / vt_norm;
-        for (std::size_t d = 0; d < dim; ++d) Ft[d] = scale * vt[d];
-    }
-    else
-    {
-        for (std::size_t d = 0; d < dim; ++d) Ft[d] = 0.0;
-    }
-}
-
-// ----------------------------------------------------------------------
-// fiber_contact_point_velocity -- скорость точки контакта на ОДНОЙ стороне
-// (fiber/fiber_friction_implementation.md, §2; fiber/fiber_contact_segment_
-// pairs.md, §5): v = (1-s)*v_{k0} + s*v_{k1} при k1!=-1, иначе v = v_{k0}
-// (точечный сегмент). Те же веса, что распределение нормальной силы Герца
-// -- никакой независимой геометрии для трения не вводится.
-// ----------------------------------------------------------------------
-inline void fiber_contact_point_velocity(const fiber::FiberState& state, rhs::index_t k0, long long k1, double s,
-                                          double v[dim])
-{
-    if (k1 == -1)
-    {
-        for (std::size_t d = 0; d < dim; ++d) v[d] = state.vx[d][k0];
-        return;
-    }
-    const rhs::index_t k1i = static_cast<rhs::index_t>(k1);
-    for (std::size_t d = 0; d < dim; ++d) v[d] = (1.0 - s) * state.vx[d][k0] + s * state.vx[d][k1i];
-}
+    bool active = false;
+    rhs::index_t a0 = 0;
+    long long a1 = -1; // -1 -- точечный сегмент
+    rhs::index_t b0 = 0;
+    long long b1 = -1;
+    double s = 0.0;
+    double t = 0.0;
+    double n[dim] = {}; // нормаль от B к A
+    double N = 0.0;     // нормальная сила Герца (geom.F), >=0
+    double mu = 0.0;
+};
 
 // ----------------------------------------------------------------------
 // compute_fiber_contact_contributions -- kernel: для каждого primitive с
-// принятым контактом (geom.contact) эмитирует вклады FiberDelta на a0,
-// (a1, если существует и вес не нулевой), b0, (b1 -- симметрично). Слоты
-// ContributionMeta: 0=a0, 1=a1, 2=b0, 3=b1 (§5 спецификации). Момент
-// сохраняется точно: итоговая сила F = F_n + F_t (F_n = geom.F*n -- закон
-// Герца, не изменён; F_t -- трение Кулона, fiber/fiber_friction_
-// implementation.md) прикладывается на стороне A весами (1-s,s), -F на
-// стороне B весами (1-t,t) -- та же пара весов у нормальной части и у
-// трения. Вклад с нулевым весом (s==0 -> a1, s==1 -> a0, симметрично для
-// b0/b1) НЕ эмитируется -- сравнение с границей делается через строгое
-// неравенство (geom.s/geom.t гарантированно в [0,1] после clamp в
-// fiber_segment_closest_params, поэтому "< 1.0"/"> 0.0" эквивалентны
-// "!= 1.0"/"!= 0.0", но не порождают НОВОГО -Wfloat-equal предупреждения --
-// единственное намеренное такое предупреждение в этом файле остаётся в
-// fiber_friction_coefficient). При mu_ff=0 (или mu=0 после смешения) блок
-// трения не выполняется вообще -- выражения для нормальной части остаются
-// побитово теми же, что до внедрения трения (test_friction_zero_mu_regression).
+// принятым контактом (geom.contact) эмитирует вклады FiberDelta НОРМАЛЬНОЙ
+// силы Герца на a0, (a1, если существует и вес не нулевой), b0, (b1 --
+// симметрично). Слоты ContributionMeta: 0=a0, 1=a1, 2=b0, 3=b1 (§5
+// спецификации). Сила F_n = geom.F*n прикладывается на стороне A весами
+// (1-s,s), -F_n на стороне B весами (1-t,t) -- момент сохраняется точно.
+// Вклад с нулевым весом (s==0 -> a1, s==1 -> a0, симметрично для b0/b1) НЕ
+// эмитируется -- сравнение с границей делается через строгое неравенство
+// (geom.s/geom.t гарантированно в [0,1] после clamp в
+// fiber_segment_closest_params).
+//
+// Трения здесь нет (fiber/fiber_friction_projection.md, §1, §3): kernel
+// ДОПОЛНИТЕЛЬНО заполняет friction_contacts[k] для каждого primitive.
+// friction_contacts.resize(primitives.size()) выполняется в начале, ДО
+// parallel_for (внутри kernel аллокаций нет; память только растёт, если
+// вызывающая сторона переиспользует вектор). Возвращает true, если есть хотя
+// бы один активный слот (contact && mu>0); флаг считается отдельным
+// parallel_reduce по слотам (целочисленная сумма -- детерминированно).
 // ----------------------------------------------------------------------
-inline void compute_fiber_contact_contributions(
+inline bool compute_fiber_contact_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
     const std::vector<FiberContactPrimitive>& primitives,
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers,
+    std::vector<FiberFrictionContact>& friction_contacts)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
     const std::size_t n = primitives.size();
-    if (n == 0) return;
+    friction_contacts.resize(n);
+    if (n == 0) return false;
 
     exec.parallel_for(n, [&](std::size_t k) {
+        friction_contacts[k] = FiberFrictionContact{};
         const FiberContactPrimitive& prim = primitives[k];
         const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Слот для стадии трения --------------------------------------------
+        const double mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
+                                                       materials[static_cast<std::size_t>(state.material_id[prim.b0])]);
+        if (mu > 0.0)
+        {
+            FiberFrictionContact& slot = friction_contacts[k];
+            slot.active = true;
+            slot.a0 = prim.a0;
+            slot.a1 = prim.a1;
+            slot.b0 = prim.b0;
+            slot.b1 = prim.b1;
+            slot.s = geom.s;
+            slot.t = geom.t;
+            for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
+            slot.N = geom.F;
+            slot.mu = mu;
+        }
 
         int w = rhs::CpuExecutor::worker_id();
         if (w < 0 || static_cast<std::size_t>(w) >= thread_buffers.size()) w = 0;
         rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[static_cast<std::size_t>(w)],
                                                             kFiberFiberContactInteractionType);
-
-        // --- Трение (fiber/fiber_friction_implementation.md, §2-§5) ---------
-        // Вычисляется ПОСЛЕ геометрии/нормальной силы Герца (geom.F, geom.n),
-        // ДО распределения итоговой силы по бусинам. При mu==0 has_ft
-        // остаётся false, и блок ниже не добавляет НИЧЕГО к вкладам --
-        // нормальная часть остаётся побитово такой же, как до внедрения
-        // трения.
-        const double mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
-                                                       materials[static_cast<std::size_t>(state.material_id[prim.b0])]);
-        double Ft[dim] = {};
-        bool has_ft = false;
-        if (mu > 0.0)
-        {
-            double v_cA[dim], v_cB[dim];
-            fiber_contact_point_velocity(state, prim.a0, prim.a1, geom.s, v_cA);
-            fiber_contact_point_velocity(state, prim.b0, prim.b1, geom.t, v_cB);
-            double v_rel[dim];
-            for (std::size_t d = 0; d < dim; ++d) v_rel[d] = v_cA[d] - v_cB[d];
-            coulomb_friction_force(geom.n, geom.F, mu, v_rel, kFiberContactFrictionMinVt, Ft);
-            has_ft = true;
-        }
 
         // --- Сторона A: +F, веса (1-s, s) -------------------------------------
         if (geom.s < 1.0)
@@ -755,8 +712,6 @@ inline void compute_fiber_contact_contributions(
             const double wA = 1.0 - geom.s;
             fiber::FiberDelta d{};
             for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * geom.F * geom.n[dd] / m;
-            if (has_ft)
-                for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] += wA * Ft[dd] / m;
             writer.emit(prim.a0, d, static_cast<std::uint64_t>(k), 0);
         }
         if (prim.a1 != -1 && geom.s > 0.0)
@@ -766,8 +721,6 @@ inline void compute_fiber_contact_contributions(
             const double wA = geom.s;
             fiber::FiberDelta d{};
             for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * geom.F * geom.n[dd] / m;
-            if (has_ft)
-                for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] += wA * Ft[dd] / m;
             writer.emit(a1, d, static_cast<std::uint64_t>(k), 1);
         }
 
@@ -778,8 +731,6 @@ inline void compute_fiber_contact_contributions(
             const double wB = 1.0 - geom.t;
             fiber::FiberDelta d{};
             for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * geom.F * geom.n[dd] / m;
-            if (has_ft)
-                for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] -= wB * Ft[dd] / m;
             writer.emit(prim.b0, d, static_cast<std::uint64_t>(k), 2);
         }
         if (prim.b1 != -1 && geom.t > 0.0)
@@ -789,14 +740,29 @@ inline void compute_fiber_contact_contributions(
             const double wB = geom.t;
             fiber::FiberDelta d{};
             for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * geom.F * geom.n[dd] / m;
-            if (has_ft)
-                for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] -= wB * Ft[dd] / m;
             writer.emit(b1, d, static_cast<std::uint64_t>(k), 3);
         }
     });
+
+    const std::size_t active_count = exec.parallel_reduce(
+        n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
+        [](std::size_t a, std::size_t b) { return a + b; });
+    return active_count > 0;
 }
 
-// compute_fiber_contact -- удобная обёртка: search + contributions + reduce.
+// Перегрузка без слотов трения (тесты нормального контакта): слоты во
+// временном векторе, флаг активности отбрасывается.
+inline void compute_fiber_contact_contributions(
+    const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
+    const std::vector<FiberContactPrimitive>& primitives,
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+{
+    std::vector<FiberFrictionContact> unused_slots;
+    (void)compute_fiber_contact_contributions(exec, state, materials, primitives, thread_buffers, unused_slots);
+}
+
+// compute_fiber_contact -- удобная обёртка: search + contributions + reduce
+// (только нормальная сила, без трения).
 inline std::vector<fiber::FiberDelta> compute_fiber_contact(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,

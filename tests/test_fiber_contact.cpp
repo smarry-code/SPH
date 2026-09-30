@@ -17,7 +17,8 @@
 //          номинальной, длине);
 //   8.6 -- почти параллельные и совпадающие оси (нет NaN, импульс ноль);
 //   8.7 -- compute_fiber_contact_dt_limit совпадает с ручной формулой (§6);
-//   8.8 -- трение Кулона на новой геометрии (веса (1-s,s)/(1-t,t)).
+//   8.8 -- смешение mu_ff и нормальная часть при mu_ff=0 (само трение --
+//          отдельная стадия, interactions/fiber_friction.hpp, tests/test_fiber_friction.cpp).
 //
 // Стиль -- по образцу старого test_fiber_contact.cpp / test_fiber_bond.cpp
 // (тот же check()/near_rel()/near_abs(), тот же CpuExecutor/ContributionBuffer
@@ -883,78 +884,6 @@ void test_8_7_dt_limit()
 // 8.8. Трение на новой геометрии.
 // =========================================================================
 
-// --- coulomb_friction_force -- чистая функция, закон не менялся (§8.8:
-// "адаптировать... вероятно, почти без изменений") -- перенесена как есть.
-void test_8_8_coulomb_friction_law()
-{
-    std::printf("test_8_8_coulomb_friction_law:\n");
-    const double eps_v = interactions::kFiberContactFrictionMinVt;
-
-    auto run_case = [&](const std::string& label, const double n[3], double N, double mu, const double v_rel[3]) {
-        double Ft[3];
-        interactions::coulomb_friction_force(n, N, mu, v_rel, eps_v, Ft);
-
-        const double vn = v_rel[0] * n[0] + v_rel[1] * n[1] + v_rel[2] * n[2];
-        const double vt[3] = {v_rel[0] - vn * n[0], v_rel[1] - vn * n[1], v_rel[2] - vn * n[2]};
-        const double vt_norm = std::sqrt(vt[0] * vt[0] + vt[1] * vt[1] + vt[2] * vt[2]);
-
-        const double Ft_norm = std::sqrt(Ft[0] * Ft[0] + Ft[1] * Ft[1] + Ft[2] * Ft[2]);
-        const double Ft_dot_n = Ft[0] * n[0] + Ft[1] * n[1] + Ft[2] * n[2];
-        const double Ft_dot_vt = Ft[0] * vt[0] + Ft[1] * vt[1] + Ft[2] * vt[2];
-        const double Ft_dot_vrel = Ft[0] * v_rel[0] + Ft[1] * v_rel[1] + Ft[2] * v_rel[2];
-
-        check(near_rel(Ft_norm, mu * N, 1e-12), label + ": |Ft| == mu*N");
-        check(std::fabs(Ft_dot_n) < 1e-12 * std::max(1.0, mu * N), label + ": |Ft.n| < eps (касательность)");
-        check(Ft_dot_vt < 0.0, label + ": Ft.v_t < 0 (против скольжения)");
-        check(near_rel(Ft_dot_vrel, -mu * N * vt_norm, 1e-9), label + ": Ft.v_rel == -mu*N*|v_t|");
-    };
-
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 0.0, 5.0};
-        run_case("n=z, v_rel с нормальной компонентой", n, 10.0, 0.3, v_rel);
-    }
-    {
-        const double s = 1.0 / std::sqrt(3.0);
-        const double n[3] = {s, s, s};
-        const double v_rel[3] = {1.0, -2.0, 0.5};
-        run_case("n наклонная нормированная", n, 4.0, 0.5, v_rel);
-    }
-    {
-        const double n[3] = {1.0, 0.0, 0.0};
-        const double v_rel[3] = {0.3, -0.7, 1.2};
-        run_case("n=x, другие N/mu", n, 2.5, 0.8, v_rel);
-    }
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {0.0, 0.0, 3.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при v_rel строго вдоль n");
-    }
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {1.0e-10, 0.0, 3.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при |v_t| <= eps_v");
-    }
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 1.0, 0.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 0.0, 0.3, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при N == 0");
-    }
-    {
-        const double n[3] = {0.0, 0.0, 1.0};
-        const double v_rel[3] = {2.0, 1.0, 0.0};
-        double Ft[3];
-        interactions::coulomb_friction_force(n, 10.0, 0.0, v_rel, eps_v, Ft);
-        check(Ft[0] == 0.0 && Ft[1] == 0.0 && Ft[2] == 0.0, "Ft == 0 при mu == 0");
-    }
-}
-
 void test_8_8_friction_coefficient_mixing()
 {
     std::printf("test_8_8_friction_coefficient_mixing:\n");
@@ -1011,8 +940,8 @@ void set_distinct_velocities(fiber::FiberState& state)
 // --- test_friction_zero_mu_regression: при mu_ff=0 dv СОВПАДАЕТ ПОБИТОВО
 // (==) с формулой ЧИСТО нормального контакта, посчитанной в тесте ИЗ geom
 // (§8.8: "сравнивается ПОБИТОВО с формулой нового нормального контакта").
-// Формула -- буквально как в compute_fiber_contact_contributions ДО блока
-// трения: d.dv[dd] = w*geom.F*geom.n[dd]/m, тот же порядок операций.
+// Формула -- буквально как в compute_fiber_contact_contributions:
+// d.dv[dd] = w*geom.F*geom.n[dd]/m, тот же порядок операций.
 void test_8_8_friction_zero_mu_regression()
 {
     std::printf("test_8_8_friction_zero_mu_regression:\n");
@@ -1048,109 +977,6 @@ void test_8_8_friction_zero_mu_regression()
     }
 }
 
-// --- test_friction_momentum_conservation: сумма m*dv == 0 при mu>0 со
-// скольжением (трение распределяется теми же весами (1-s,s)/(1-t,t), что и
-// нормальная сила -- третий закон Ньютона сохраняется).
-void test_8_8_friction_momentum_conservation()
-{
-    std::printf("test_8_8_friction_momentum_conservation:\n");
-    rhs::CpuExecutor exec(2);
-
-    for (auto& scene : build_friction_scenes())
-    {
-        scene.fx.materials[0].mu_ff = 0.4;
-        set_distinct_velocities(scene.fx.state);
-
-        ContactRunResult run = run_contact(scene.fx);
-        check_momentum_zero(std::string(scene.label) + " (mu=0.4, скольжение)", scene.fx.state, run.out);
-
-        // Трение действительно ненулевое: dv(mu=0.4) отличается от dv(mu=0).
-        std::vector<fiber::FiberMaterial> materials0 = scene.fx.materials;
-        materials0[0].mu_ff = 0.0;
-        rhs::CpuExecutor exec0(2);
-        interactions::FiberContactSearchResult search0;
-        interactions::build_fiber_contact_search(exec0, scene.fx.state, scene.fx.topology, materials0, search0);
-        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buf0;
-        interactions::compute_fiber_contact_contributions(exec0, scene.fx.state, materials0, search0.primitives,
-                                                            buf0);
-        std::vector<fiber::FiberDelta> out0 = rhs::reduce_contributions(exec0, buf0, scene.fx.state.size());
-
-        double max_diff = 0.0;
-        for (std::size_t i = 0; i < scene.fx.state.size(); ++i)
-            for (std::size_t d = 0; d < dim; ++d)
-                max_diff = std::max(max_diff, std::fabs(run.out[i].dv[d] - out0[i].dv[d]));
-        check(max_diff > 0.0,
-              std::string(scene.label) + ": трение действительно ненулевое (dv(mu=0.4) != dv(mu=0))");
-    }
-}
-
-// --- test_friction_distribution: m*(dv(mu)-dv(0)) на бусинах == веса
-// (1-s,s)/(1-t,t)*Ft (для стороны B -- со знаком минус, как нормальная сила).
-void test_8_8_friction_distribution()
-{
-    std::printf("test_8_8_friction_distribution:\n");
-    rhs::CpuExecutor exec(2);
-    const double mu = 0.4;
-
-    for (auto& scene : build_friction_scenes())
-    {
-        scene.fx.materials[0].mu_ff = mu;
-        set_distinct_velocities(scene.fx.state);
-
-        std::vector<FoundContact> contacts =
-            find_all_contacts(exec, scene.fx.state, scene.fx.topology, scene.fx.materials);
-        check(contacts.size() == 1, std::string(scene.label) + ": ровно один контакт (предпосылка распределения)");
-        if (contacts.size() != 1) continue;
-        const auto& c = contacts[0];
-
-        double v_cA[dim], v_cB[dim];
-        interactions::fiber_contact_point_velocity(scene.fx.state, c.prim.a0, c.prim.a1, c.geom.s, v_cA);
-        interactions::fiber_contact_point_velocity(scene.fx.state, c.prim.b0, c.prim.b1, c.geom.t, v_cB);
-        double v_rel[dim];
-        for (std::size_t d = 0; d < dim; ++d) v_rel[d] = v_cA[d] - v_cB[d];
-        double Ft[dim];
-        interactions::coulomb_friction_force(c.geom.n, c.geom.F, mu, v_rel, interactions::kFiberContactFrictionMinVt,
-                                              Ft);
-
-        double Ft_norm2 = 0.0;
-        for (std::size_t d = 0; d < dim; ++d) Ft_norm2 += Ft[d] * Ft[d];
-        std::printf("    %-24s |Ft|=%.4e N\n", scene.label, std::sqrt(Ft_norm2));
-
-        double power = 0.0;
-        for (std::size_t d = 0; d < dim; ++d) power += Ft[d] * v_rel[d];
-        check(power <= 1e-12 * std::max(1.0, mu * c.geom.F),
-              std::string(scene.label) + ": Ft.v_rel <= 0 (мощность трения не положительна)");
-
-        ContactRunResult run_mu = run_contact(scene.fx);
-        std::vector<fiber::FiberMaterial> materials0 = scene.fx.materials;
-        materials0[0].mu_ff = 0.0;
-        interactions::FiberContactSearchResult search0;
-        interactions::build_fiber_contact_search(exec, scene.fx.state, scene.fx.topology, materials0, search0);
-        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buf0;
-        interactions::compute_fiber_contact_contributions(exec, scene.fx.state, materials0, search0.primitives,
-                                                            buf0);
-        std::vector<fiber::FiberDelta> out0 = rhs::reduce_contributions(exec, buf0, scene.fx.state.size());
-
-        const double muN = mu * c.geom.F;
-        auto check_bead = [&](rhs::index_t idx, double w_expected) {
-            const double m = scene.fx.state.mass[idx];
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const double diff_dv = run_mu.out[idx].dv[d] - out0[idx].dv[d];
-                const double expected_dF = w_expected * Ft[d];
-                check(near_abs(m * diff_dv, expected_dF, 1e-9 * std::max(1.0, muN)),
-                      std::string(scene.label) + ": вклад трения на бусину " + std::to_string(idx) +
-                          ", компонента " + std::to_string(d));
-            }
-        };
-
-        if (c.geom.s < 1.0) check_bead(c.prim.a0, 1.0 - c.geom.s);
-        if (c.prim.a1 != -1 && c.geom.s > 0.0) check_bead(static_cast<rhs::index_t>(c.prim.a1), c.geom.s);
-        if (c.geom.t < 1.0) check_bead(c.prim.b0, -(1.0 - c.geom.t));
-        if (c.prim.b1 != -1 && c.geom.t > 0.0) check_bead(static_cast<rhs::index_t>(c.prim.b1), -c.geom.t);
-    }
-}
-
 } // namespace
 
 int main()
@@ -1162,11 +988,8 @@ int main()
     test_8_5_stretched_bonds_search_completeness();
     test_8_6_near_parallel_and_parallel();
     test_8_7_dt_limit();
-    test_8_8_coulomb_friction_law();
     test_8_8_friction_coefficient_mixing();
     test_8_8_friction_zero_mu_regression();
-    test_8_8_friction_momentum_conservation();
-    test_8_8_friction_distribution();
 
     if (failures == 0)
         std::printf("test_fiber_contact: OK\n");

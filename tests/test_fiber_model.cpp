@@ -311,6 +311,99 @@ void test_material_mu_ff()
     }
 }
 
+// --- MATERIAL: необязательное восьмое поле mu_fs --------------------------
+// fiber/fiber_solid_friction_implementation.md, §2: коэффициент трения
+// нить-Solid; ТОЛЬКО после mu_ff. Проверяем: 8 полей -> оба значения читаются
+// точно; 7 полей -> mu_fs = 0 (а mu_ff читается как раньше); 6 полей -> оба 0;
+// отрицательный / нечисловой mu_fs -- исключение; нули явно допустимы.
+void test_material_mu_fs()
+{
+    std::printf("test_material_mu_fs:\n");
+
+    // 6 полей (kFixturePath): mu_fs по умолчанию 0.
+    {
+        fiber::Model model;
+        fiber::load_fiber_file(kFixturePath, model);
+        check(model.materials.size() == 2, "6-полевая MATERIAL: 2 материала в таблице");
+        if (model.materials.size() == 2)
+        {
+            check(model.materials[0].mu_fs == 0.0, "6-полевая MATERIAL 0: mu_fs по умолчанию == 0");
+            check(model.materials[1].mu_fs == 0.0, "6-полевая MATERIAL 1: mu_fs по умолчанию == 0");
+        }
+    }
+
+    // 7 полей: mu_ff = 0.3 читается, mu_fs остаётся 0.
+    {
+        const char* path = "__fiber_material_mu_fs_seven.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        fiber::load_fiber_file(path, model);
+        check(model.materials.size() == 1, "7-полевая MATERIAL: 1 материал в таблице");
+        if (model.materials.size() == 1)
+        {
+            check(model.materials[0].mu_ff == 0.3, "7-полевая MATERIAL: mu_ff == 0.3 прочитан точно");
+            check(model.materials[0].mu_fs == 0.0, "7-полевая MATERIAL: mu_fs == 0 по умолчанию");
+        }
+    }
+
+    // 8 полей: mu_ff = 0.3, mu_fs = 0.45 (порядок: mu_ff, потом mu_fs).
+    {
+        const char* path = "__fiber_material_mu_fs_ok.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3 0.45\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        fiber::load_fiber_file(path, model);
+        check(model.materials.size() == 1, "8-полевая MATERIAL: 1 материал в таблице");
+        if (model.materials.size() == 1)
+        {
+            check(model.materials[0].mu_ff == 0.3, "8-полевая MATERIAL: mu_ff == 0.3 (седьмое поле)");
+            check(model.materials[0].mu_fs == 0.45, "8-полевая MATERIAL: mu_fs == 0.45 (восьмое поле) прочитан точно");
+        }
+    }
+
+    // 8 полей с нулевыми значениями и комментарием в хвосте строки.
+    {
+        const char* path = "__fiber_material_mu_fs_zero.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0 0.0 # без трения\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        fiber::load_fiber_file(path, model);
+        check(model.materials.size() == 1 && model.materials[0].mu_ff == 0.0 && model.materials[0].mu_fs == 0.0,
+              "8-полевая MATERIAL с нулями и хвостовым комментарием: mu_ff == mu_fs == 0");
+    }
+
+    // Отрицательный mu_fs -- исключение.
+    {
+        const char* path = "__fiber_material_mu_fs_negative.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3 -0.1\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        bool threw = false;
+        try { fiber::load_fiber_file(path, model); }
+        catch (const std::runtime_error&) { threw = true; }
+        check(threw, "отрицательный mu_fs в MATERIAL бросает исключение");
+    }
+
+    // Нечисловой 8-й токен -- исключение.
+    {
+        const char* path = "__fiber_material_mu_fs_not_number.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3 abc\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        bool threw = false;
+        try { fiber::load_fiber_file(path, model); }
+        catch (const std::runtime_error&) { threw = true; }
+        check(threw, "нечисловой mu_fs в MATERIAL бросает исключение");
+    }
+
+    // Мусор вплотную к числу (0.4x) -- исключение.
+    {
+        const char* path = "__fiber_material_mu_fs_garbage.fib";
+        write_file(path, "MATERIAL 0 2.0e9 0.35 1.0e-3 1200.0 0.05 0.3 0.4x\nFIBER 0 2\n0 0 0\n1 0 0\n");
+        fiber::Model model;
+        bool threw = false;
+        try { fiber::load_fiber_file(path, model); }
+        catch (const std::runtime_error&) { threw = true; }
+        check(threw, "mu_fs с хвостовым мусором (0.4x) бросает исключение");
+    }
+}
+
 // --- body[] --------------------------------------------------------------
 void test_body_from_k_file()
 {
@@ -369,6 +462,7 @@ int main()
     test_dim3_guard_does_not_throw();
     test_malformed_files_throw();
     test_material_mu_ff();
+    test_material_mu_fs();
     test_body_from_k_file();
     test_body_from_shock_tube();
 
