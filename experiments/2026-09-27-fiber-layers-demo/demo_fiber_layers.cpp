@@ -342,6 +342,13 @@ int main(int argc, char** argv)
     cfg.t_total = t_total;
     cfg.save_t = save_t;
     cfg.contact_force_type = 0; // единственное Solid-тело -- Solid-Solid-Contact не нужен
+    // SPH_DEMO_CFL -- число Куранта вместо значения по умолчанию (проверка
+    // сходимости баланса энергии по шагу по времени).
+    if (const char* cfl_env = std::getenv("SPH_DEMO_CFL"))
+    {
+        cfg.CFL = std::stod(cfl_env);
+        std::printf("demo_fiber_layers: CFL=%.4f\n", cfg.CFL);
+    }
     cfg.moni_particle = 0;
     cfg.print_step = 2000; // много шагов ожидается -- реже пишем прогресс
 
