@@ -30,6 +30,7 @@
 #include "e2e_harness.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -65,6 +66,11 @@ struct Options
     bool keep_workdir = false;
     double time_limit = 600; // бюджет на ОДИН прогон time_integration, с
     std::string monitor_csv; // --monitor=ФАЙЛ: записать монитор §1.2 в CSV
+    // --frames-dir=DIR: сохранить кадры для визуализации (tools/clamp_animate.py):
+    // sph_output_*.txt, fiber_output_*.txt, clamp_mask.txt, reaction.csv --
+    // в DIR/<тег прогона>. --frames=N -- число кадров на прогон (по t_end).
+    std::string frames_dir;
+    std::size_t frames = 80;
 };
 
 inline const char* solver_name(int s) { return s == 0 ? "pc" : "euler"; }
@@ -356,6 +362,55 @@ private:
 };
 
 // ===========================================================================
+// Кадры для визуализации (--frames-dir)
+// ===========================================================================
+// clamp_mask.txt: строки "solid <i> <mask>" и "fiber <k> <mask>" только для
+// зажатых частиц (маска -- биты компонент, bit d = компонента d).
+inline void write_clamp_masks(const fiber::Model& m, std::size_t ntotal, const std::string& path)
+{
+    std::ofstream f(path);
+    f << "# kind index mask (bit d = компонента d зажата)\n";
+    for (std::size_t i = 0; i < std::min(ntotal, m.clamps.solid_mask.size()); ++i)
+        if (m.clamps.solid_mask[i] != 0) f << "solid " << i << ' ' << int(m.clamps.solid_mask[i]) << '\n';
+    for (std::size_t k = 0; k < m.clamps.fiber_mask.size(); ++k)
+        if (m.clamps.fiber_mask[k] != 0) f << "fiber " << k << ' ' << int(m.clamps.fiber_mask[k]) << '\n';
+}
+
+// Копирует кадры и маски из рабочего каталога прогона в frames_dir/<tag>
+// (при повторе тега -- <tag>_2, _3, ...) и пишет reaction.csv.
+inline void save_run_frames(const Options& opt, const std::string& tag, const std::filesystem::path& workdir,
+                            const std::vector<std::array<double, 8>>& reaction)
+{
+    namespace fs = std::filesystem;
+    const fs::path base = fs::path(opt.frames_dir) / (opt.case_name + "_" + solver_name(opt.solver) +
+                                                      (opt.variant.empty() ? "" : "_" + opt.variant) + "_" + tag);
+    fs::path dst = base;
+    for (int k = 2; fs::exists(dst); ++k) dst = base.string() + "_" + std::to_string(k);
+    fs::create_directories(dst);
+    std::size_t nframes = 0;
+    for (const auto& e : fs::directory_iterator(workdir))
+    {
+        const std::string n = e.path().filename().string();
+        const bool frame = n.rfind("sph_output_", 0) == 0 || n.rfind("fiber_output_", 0) == 0;
+        if (frame || n == "clamp_mask.txt")
+        {
+            fs::copy_file(e.path(), dst / n, fs::copy_options::overwrite_existing);
+            if (n.rfind("sph_output_", 0) == 0) ++nframes;
+        }
+    }
+    std::ofstream f(dst / "reaction.csv");
+    f << "step,t,Rs_x,Rs_y,Rs_z,Rf_x,Rf_y,Rf_z\n";
+    f.precision(17);
+    for (const auto& r : reaction)
+    {
+        f << static_cast<long long>(r[0]);
+        for (std::size_t c = 1; c < r.size(); ++c) f << ',' << r[c];
+        f << '\n';
+    }
+    note("кадры для визуализации (" + std::to_string(nframes) + "): " + dst.string());
+}
+
+// ===========================================================================
 // Прогон через боевой цикл
 // ===========================================================================
 struct RunOutcome
@@ -380,6 +435,23 @@ inline RunOutcome run_case(SimulationConfig cfg, fiber::Model& m, std::size_t nt
     RunOutcome out;
     out.t_end = t_end;
     cfg.t_total = t_end > 0.0 ? t_end : 1.0e30;
+    const bool save_frames = !opt.frames_dir.empty();
+    // Реакция по шагам для визуализации: снимается своим наблюдателем поверх
+    // переданного (сцена про него не знает).
+    std::vector<std::array<double, 8>> reaction; // step, t, Rs[3], Rf[3]
+    if (save_frames)
+    {
+        if (t_end > 0.0 && opt.frames > 0) cfg.save_t = t_end / static_cast<double>(opt.frames);
+        else if (max_steps > 0 && opt.frames > 0 && dt > 0.0)
+            cfg.save_t = dt * static_cast<double>(std::max<std::size_t>(max_steps / opt.frames, 1));
+        observer = [inner = std::move(observer), &reaction, &m](double step_dt, double t)
+        {
+            if (inner) inner(step_dt, t);
+            const auto& r = m.clamp_report;
+            reaction.push_back({static_cast<double>(reaction.size() + 1), t, r.solid_force[0], r.solid_force[1],
+                                r.solid_force[2], r.fiber_force[0], r.fiber_force[1], r.fiber_force[2]});
+        };
+    }
     RunGuard guard(opt.time_limit, 0.0, 0);
     if (max_steps > 0) guard.set_step_limit(max_steps);
     guard.set_step_observer(std::move(observer));
@@ -389,6 +461,7 @@ inline RunOutcome run_case(SimulationConfig cfg, fiber::Model& m, std::size_t nt
         wd.keep();
         note("рабочий каталог сохранён: " + wd.dir().string());
     }
+    if (save_frames) write_clamp_masks(m, ntotal, "clamp_mask.txt");
     const auto t0 = std::chrono::steady_clock::now();
     {
         e2e::ScopedSilence silence(true);
@@ -408,6 +481,7 @@ inline RunOutcome run_case(SimulationConfig cfg, fiber::Model& m, std::size_t nt
     out.dt_first = guard.dt_first();
     out.dt_min = guard.dt_min();
     out.time = time;
+    if (save_frames) save_run_frames(opt, tag, wd.dir(), reaction);
     return out;
 }
 

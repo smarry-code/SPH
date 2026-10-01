@@ -13,6 +13,7 @@
 // Один запуск -- один вариант:
 //   test_e2e_clamp --case=ES1 [--solver=pc|euler] [--full] [--variant=...]
 //                  [--time-limit=СЕК] [--keep-workdir] [--monitor=ФАЙЛ.csv]
+//                  [--frames-dir=DIR [--frames=N]]   (кадры для tools/clamp_animate.py)
 // Режим по умолчанию -- smoke (ctest, метка e2e); --full -- полный (метка slow).
 // Код возврата: 0 -- все проверки прошли, 1 -- есть провалы, 2 -- ошибка ключей.
 
@@ -22,6 +23,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <string>
 
@@ -55,7 +57,9 @@ void usage()
         "  --variant=ИМЯ     вариант сцены (см. шапку кейса)\n"
         "  --time-limit=СЕК  бюджет на один прогон (по умолчанию 600)\n"
         "  --keep-workdir    не удалять временный каталог прогона\n"
-        "  --monitor=ФАЙЛ    записать монитор §1.2 в CSV\n");
+        "  --monitor=ФАЙЛ    записать монитор §1.2 в CSV\n"
+        "  --frames-dir=DIR  сохранить кадры для tools/clamp_animate.py в DIR/<прогон>\n"
+        "  --frames=N        число кадров на прогон (по умолчанию 80)\n");
 }
 
 } // namespace
@@ -74,6 +78,14 @@ int main(int argc, char** argv)
         else if (a.rfind("--variant=", 0) == 0) opt.variant = val("--variant=");
         else if (a == "--keep-workdir") opt.keep_workdir = true;
         else if (a.rfind("--monitor=", 0) == 0) opt.monitor_csv = val("--monitor=");
+        else if (a.rfind("--frames-dir=", 0) == 0)
+            // Абсолютный путь: run_case копирует кадры, находясь во временном каталоге.
+            opt.frames_dir = std::filesystem::absolute(val("--frames-dir=")).string();
+        else if (a.rfind("--frames=", 0) == 0)
+        {
+            try { opt.frames = static_cast<std::size_t>(std::stoul(val("--frames="))); }
+            catch (...) { std::fprintf(stderr, "Неверное значение %s\n", a.c_str()); return 2; }
+        }
         else if (a.rfind("--time-limit=", 0) == 0)
         {
             try { opt.time_limit = std::stod(val("--time-limit=")); }
