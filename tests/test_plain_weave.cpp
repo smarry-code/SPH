@@ -11,13 +11,25 @@
 //   8 test_arcs_on_ellipses -- профиль arcs: точки на полуэллипсах;
 //   9 test_param_errors     -- ошибки параметров;
 //   + test_clamp_counts     -- число зажатых бусин в нечётном варианте.
-// Проверки 5, 6, 7 (круговой путь через load_fiber_file, плотность, диагностика
-// контакта) добавляет следующий этап: новые раздел-функции и вызовы в main.
+//   5 test_roundtrip        -- запись .fib, load_fiber_file, сравнение с построенным;
+//   6 test_density          -- поверхностная плотность (сводка = формула; Twaron);
+//   7 test_contact          -- диагностика контакта на исходной геометрии;
+//   7б test_contact_twaron  -- то же на геометрии Twaron, 12x12, k = 2/4, A = d/2, 0.6d.
+#include "fiber/fiber_input.hpp"
+#include "fiber/model.hpp"
 #include "fiber/plain_weave.hpp"
+#include "interactions/clamp.hpp"
+#include "interactions/fiber_contact.hpp"
+#include "rhs/cpu_executor.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -516,6 +528,347 @@ static void test_clamp_counts(const Case& c)
     check(W.warnings.empty(), "нет WARN о бусинах на границе c_e");
 }
 
+static void warn(const std::string& what)
+{
+    std::printf("  WARN : %s\n", what.c_str());
+}
+
+// Временный каталог (образец: e2e::ScopedWorkDir, но без смены cwd).
+struct TempDir
+{
+    std::filesystem::path dir;
+    TempDir()
+    {
+        static int counter = 0;
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        dir = std::filesystem::temp_directory_path() /
+              ("plain_weave_test_" + std::to_string(static_cast<long long>(stamp)) + "_" + std::to_string(counter++));
+        std::filesystem::create_directories(dir);
+    }
+    ~TempDir()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+    TempDir(const TempDir&) = delete;
+    TempDir& operator=(const TempDir&) = delete;
+};
+
+struct LayoutRow
+{
+    int object_id = 0;
+    char direction = 'x';
+    int index = 0;
+    int clamped = 0;
+    std::size_t first = 0, last = 0;
+    int n_lo = 0, n_hi = 0;
+};
+
+// Записать .fib и раскладку, загрузить fib в Model; раскладка читается обратно из текста.
+static std::vector<LayoutRow> write_and_load(const PlainWeave& W, fiber::Model& model)
+{
+    TempDir tmp;
+    const auto fib = tmp.dir / "weave.fib";
+    {
+        std::ofstream os(fib);
+        fiber::write_plain_weave_fib(os, W, "test_plain_weave");
+    }
+    std::ostringstream lay;
+    fiber::write_plain_weave_layout(lay, W);
+    fiber::load_fiber_file(fib.string(), model);
+    std::vector<LayoutRow> rows;
+    std::istringstream is(lay.str());
+    std::string line;
+    while (std::getline(is, line))
+    {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ls(line);
+        LayoutRow r;
+        double offset;
+        ls >> r.object_id >> r.direction >> r.index >> offset >> r.clamped >> r.first >> r.last >> r.n_lo >> r.n_hi;
+        rows.push_back(r);
+    }
+    return rows;
+}
+
+static bool within_ulp(double a, double b)
+{
+    return a == b || a == std::nextafter(b, a) || b == std::nextafter(a, b);
+}
+
+// --- 5. Круговой путь через парсер -------------------------------------------
+static void test_roundtrip(const std::string& name, const PlainWeaveParams& q)
+{
+    std::printf("-- 5. круговой путь через парсер (%s)\n", name.c_str());
+    const PlainWeave W = fiber::build_plain_weave(q);
+    fiber::Model model;
+    const auto rows = write_and_load(W, model);
+    const auto& fb = model.fiber;
+    const std::size_t nf = W.fibers.size();
+    std::size_t nbeads = 0;
+    for (const auto& F : W.fibers) nbeads += F.pts.size();
+    check(rows.size() == nf, "раскладка: строка на каждую нить");
+    check(fb.size() == nbeads, "число бусин в модели совпадает с построенным");
+
+    // Координаты, object_id, масса.
+    bool ok_x = true, ok_id = true, ok_layout = true;
+    std::size_t first = 0;
+    double sum_l0 = 0.0;
+    for (std::size_t f = 0; f < nf && f < rows.size(); ++f)
+    {
+        const auto& F = W.fibers[f];
+        const auto& R = rows[f];
+        if (R.first != first || R.last != first + F.pts.size() - 1) ok_layout = false;
+        for (std::size_t b = 0; b < F.pts.size(); ++b)
+        {
+            const std::size_t g = R.first + b;
+            if (g >= fb.size()) { ok_x = false; continue; }
+            for (std::size_t dd = 0; dd < 3; ++dd)
+                if (!within_ulp(fb.x[dd][g], F.pts[b][dd]))
+                {
+                    if (ok_x)
+                        std::printf("    %s бусина %zu: координата %zu: файл %.17g, построено %.17g\n",
+                                    fiber_name(F).c_str(), b, dd, fb.x[dd][g], F.pts[b][dd]);
+                    ok_x = false;
+                }
+            if (fb.object_id[g] != R.object_id) ok_id = false;
+            if (b + 1 < F.pts.size()) sum_l0 += seg_len(F.pts[b], F.pts[b + 1]);
+        }
+        first += F.pts.size();
+    }
+    check(ok_layout, "раскладка: first_bead..last_bead подряд по нитям");
+    check(ok_x, "координаты бусин совпадают (до 1 ulp)");
+    check(ok_id, "object_id бусин = object_id нити из раскладки");
+
+    std::size_t expect_bonds = 0;
+    for (const auto& F : W.fibers) expect_bonds += F.pts.size() - 1;
+    check(model.topology.bonds.size() == expect_bonds, "число связей = сумма (бусин - 1)");
+
+    double msum = 0.0;
+    for (double m : fb.mass) msum += m;
+    const double pi = std::acos(-1.0);
+    const double mexp = q.rho * pi * q.d * q.d / 4.0 * sum_l0;
+    check(std::fabs(msum - mexp) <= 1e-12 * mexp, "сумма масс = rho*pi*d^2/4*sum(l0) (отн. 1e-12)");
+    std::printf("    sum m = %.12g кг, формула %.12g кг, отн. разница %.3g\n", msum, mexp,
+                std::fabs(msum - mexp) / mexp);
+
+    check(model.materials.size() >= 1, "материал 0 загружен");
+    if (!model.materials.empty())
+    {
+        check(model.materials[0].mu_ff == q.mu_ff && model.materials[0].mu_fs == q.mu_fs,
+              "mu_ff, mu_fs материала равны заданным (" + std::to_string(q.mu_ff) + ", " + std::to_string(q.mu_fs) +
+                  ")");
+    }
+
+    // Зажим.
+    const auto& mask = model.clamps.fiber_mask;
+    if (q.clamp == fiber::PlainWeaveClamp::None)
+    {
+        check(mask.empty(), "clamp=None: fiber_mask пуст (empty)");
+        return;
+    }
+    check(mask.size() == fb.size(), "clamp: размер fiber_mask == nfiber");
+    if (mask.size() != fb.size()) return;
+    const bool cy_on = q.clamp == fiber::PlainWeaveClamp::Y || q.clamp == fiber::PlainWeaveClamp::XY;
+    const bool cx_on = q.clamp == fiber::PlainWeaveClamp::X || q.clamp == fiber::PlainWeaveClamp::XY;
+    std::vector<std::uint8_t> expect(fb.size(), 0);
+    std::size_t layout_total = 0, nonzero = 0;
+    bool ok_ends = true, ok_none_x = true, ok_value = true, ok_mask = true;
+    first = 0;
+    for (std::size_t f = 0; f < nf; ++f)
+    {
+        const auto& F = W.fibers[f];
+        const bool yfib = F.direction == 'y';
+        const bool on = (yfib && cy_on) || (!yfib && cx_on);
+        const int axis = yfib ? 1 : 0;
+        const double c = yfib ? q.cy : q.cx;
+        int lo = 0, hi = 0;
+        for (std::size_t b = 0; b < F.pts.size(); ++b)
+        {
+            const double v = F.pts[b][axis];
+            if (on && (v <= c - q.clamp_edge || v >= c + q.clamp_edge))
+            {
+                expect[first + b] = interactions::kClampAll;
+                (v <= c - q.clamp_edge ? lo : hi)++;
+            }
+        }
+        if (on && (lo < 1 || hi < 1)) ok_ends = false;
+        if (!on && (rows[f].n_lo != 0 || rows[f].n_hi != 0)) ok_none_x = false;
+        layout_total += static_cast<std::size_t>(rows[f].n_lo + rows[f].n_hi);
+        first += F.pts.size();
+    }
+    for (std::size_t g = 0; g < mask.size(); ++g)
+    {
+        if (mask[g] != 0) ++nonzero;
+        if (mask[g] != 0 && mask[g] != interactions::kClampAll) ok_value = false;
+        if (mask[g] != expect[g]) ok_mask = false;
+    }
+    // Нити, не зажимаемые вовсе, не содержат зажатых бусин.
+    first = 0;
+    for (const auto& F : W.fibers)
+    {
+        const bool yfib = F.direction == 'y';
+        if (!((yfib && cy_on) || (!yfib && cx_on)))
+            for (std::size_t b = 0; b < F.pts.size(); ++b)
+                if (mask[first + b] != 0) ok_none_x = false;
+        first += F.pts.size();
+    }
+    check(ok_mask, "маска == ожидаемая (строится из PlainWeave независимо от парсера)");
+    check(ok_value, "ненулевые значения маски == kClampAll");
+    check(nonzero == layout_total, "число зажатых бусин = sum(n_clamp_lo + n_clamp_hi) раскладки");
+    check(ok_ends, "у каждой зажимаемой нити >= 1 зажатая бусина на каждом конце");
+    check(ok_none_x, "у незажимаемых нитей зажатых бусин нет");
+    std::printf("    зажатых бусин %zu\n", nonzero);
+}
+
+// --- 6. Плотность -------------------------------------------------------------
+static void test_density(const std::string& name, const PlainWeaveParams& q)
+{
+    std::printf("-- 6. плотность (%s)\n", name.c_str());
+    const PlainWeave W = fiber::build_plain_weave(q);
+    fiber::Model model;
+    write_and_load(W, model);
+    const auto S = fiber::plain_weave_summary(W);
+    double msum = 0.0;
+    for (double m : model.fiber.mass) msum += m;
+    const double Lx = (q.ny - 1) * q.pitch, Ly = (q.nx - 1) * q.pitch;
+    const double rho_model = msum / (Lx * Ly);
+    check(std::fabs(S.areal_density - rho_model) <= 1e-12 * rho_model, "areal_density сводки = sum m (модель) / (Lx*Ly)");
+    std::printf("    areal_density = %.9g кг/м^2, из модели %.9g\n", S.areal_density, rho_model);
+}
+
+static void test_density_twaron()
+{
+    std::printf("-- 6. плотность (twaron_ct717, только генерация)\n");
+    PlainWeaveParams q;
+    fiber::apply_plain_weave_preset("twaron_ct717", q);
+    const PlainWeave W = fiber::build_plain_weave(q);
+    const auto S = fiber::plain_weave_summary(W);
+    check(std::isfinite(S.areal_density) && S.areal_density > 0.0, "плотность конечна и положительна");
+    const double pi = std::acos(-1.0);
+    const double Aw = pi * q.d * q.d / 4.0;
+    // Номинал: две системы нитей, по одной нити на шаг p в каждой.
+    const double nominal = 2.0 * q.rho * Aw / q.pitch;
+    // Длина нити на полуволну (хорды) и коэффициент удлинения l_полуволны / p.
+    const auto& F = W.fibers[0];
+    double half_len = 0.0;
+    for (int s = 0; s < q.seg; ++s)
+        half_len += seg_len(F.pts[F.vertex_bead[1] - s], F.pts[F.vertex_bead[1] - s - 1]);
+    const double crimp = half_len / q.pitch;
+    std::printf("    бусин %zu, нитей %zu, плотность %.6g кг/м^2 (ожидание ТЗ 0.29 +- 0.03)\n", S.beads, S.fibers,
+                S.areal_density);
+    std::printf("    разложение: номинал 2*rho*(pi d^2/4)/p = %.6g кг/м^2\n", nominal);
+    std::printf("    коэффициент удлинения на полуволну (хорды) = %.6g (l0 ~ %.4g м, k = %d)\n", crimp, half_len / q.seg,
+                q.seg);
+    std::printf("    номинал * удлинение = %.6g кг/м^2\n", nominal * crimp);
+    // Вклад выступов: длина нитей между крайними пересечениями (окно) и за ними.
+    const double Lx = (q.ny - 1) * q.pitch, Ly = (q.nx - 1) * q.pitch;
+    double l_win = 0.0, l_over = 0.0;
+    for (const auto& Fi : W.fibers)
+        for (std::size_t b = 0; b + 1 < Fi.pts.size(); ++b)
+        {
+            const double l = seg_len(Fi.pts[b], Fi.pts[b + 1]);
+            (b >= Fi.vertex_bead.front() && b < Fi.vertex_bead.back() ? l_win : l_over) += l;
+        }
+    std::printf("    e_x = %.4g м (основа, %d нитей), e_y = %.4g м (уток, %d нитей); окно %.4g x %.4g м\n",
+                fiber::plain_weave_overhang_x(q), q.nx, fiber::plain_weave_overhang_y(q), q.ny, Lx, Ly);
+    std::printf("    длина нитей: в окне %.5g м, в выступах %.5g м; плотность окна %.6g, вклад выступов %.6g кг/м^2\n",
+                l_win, l_over, q.rho * Aw * l_win / (Lx * Ly), q.rho * Aw * l_over / (Lx * Ly));
+    const double diff = S.areal_density - 0.29;
+    if (std::fabs(diff) > 0.03)
+        warn("плотность Twaron " + std::to_string(S.areal_density) + " вне 0.29 +- 0.03 (находка, не FAIL)");
+}
+
+// --- 7. Контакт на исходной геометрии -----------------------------------------
+struct ContactMeasure
+{
+    std::size_t pair_count = 0, segment_pairs = 0, contacts = 0;
+    double max_pen = 0.0;
+    double per_crossing = 0.0;
+    bool finite = true;
+    std::size_t crossing_contacts = 0; // оценка: контакты сегментов нитей разных направлений
+    std::size_t parallel_contacts = 0; // оценка: контакты между параллельными нитями
+};
+
+static ContactMeasure measure_contact(const PlainWeaveParams& q)
+{
+    const PlainWeave W = fiber::build_plain_weave(q);
+    fiber::Model model;
+    write_and_load(W, model);
+    rhs::CpuExecutor exec(2);
+    interactions::FiberContactSearchResult search;
+    interactions::build_fiber_contact_search(exec, model.fiber, model.topology, model.materials, search);
+    const auto diag = interactions::compute_fiber_contact_diagnostics(exec, model.fiber, model.materials, search);
+    ContactMeasure m;
+    m.pair_count = diag.pair_count;
+    m.segment_pairs = diag.segment_pair_count;
+    m.contacts = diag.contact_count;
+    m.max_pen = diag.max_penetration;
+    m.per_crossing = static_cast<double>(diag.contact_count) / (static_cast<double>(q.nx) * q.ny);
+    // Характеристика: контакты между нитями одного направления (соседние параллельные)
+    // и разных (пересечения). object_id < nx -- основа.
+    for (const auto& prim : search.primitives)
+    {
+        const auto g = interactions::compute_fiber_contact_geometry(model.fiber, model.materials, prim);
+        if (!g.contact || g.rejected_by_ownership || g.degenerate) continue;
+        const bool wa = model.fiber.object_id[prim.a0] < q.nx, wb = model.fiber.object_id[prim.b0] < q.nx;
+        (wa == wb ? m.parallel_contacts : m.crossing_contacts)++;
+    }
+    m.finite = std::isfinite(m.max_pen) && std::isfinite(m.per_crossing) && std::isfinite(diag.min_dt > 0 ? 1.0 : 0.0);
+    return m;
+}
+
+static void report_contact(const char* tag, const PlainWeaveParams& q, const std::string& label)
+{
+    const ContactMeasure m = measure_contact(q);
+    std::printf("    %s %s: pair_count=%zu segment_pair_count=%zu contact_count=%zu max_pen=%.6g м (%.4g d) "
+                "контактов на пересечение=%.4g\n",
+                tag, label.c_str(), m.pair_count, m.segment_pairs, m.contacts, m.max_pen, m.max_pen / q.d,
+                m.per_crossing);
+    std::printf("      из них: разные направления (пересечения) %zu, параллельные нити %zu\n", m.crossing_contacts,
+                m.parallel_contacts);
+    check(m.finite, std::string(tag) + " " + label + ": диагностика конечна (нет NaN/Inf)");
+    if (m.per_crossing > 1.0)
+        warn(std::string(tag) + " " + label + ": " + std::to_string(m.per_crossing) +
+             " контактов на пересечение > 1 (седло, ТЗ §2)");
+}
+
+static void test_contact()
+{
+    std::printf("-- 7. контакт на исходной геометрии (пресет test)\n");
+    for (double fa : {0.5, 0.6})
+    {
+        PlainWeaveParams q = make_test_params();
+        q.amp = fa * q.d;
+        report_contact("7:", q, "A=" + std::to_string(fa) + "d");
+    }
+}
+
+static void test_contact_twaron()
+{
+    std::printf("-- 7б. контакт на геометрии twaron_ct717 (12x12, clamp=None)\n");
+    for (int k : {2, 4})
+        for (double fa : {0.5, 0.6})
+        {
+            PlainWeaveParams q;
+            fiber::apply_plain_weave_preset("twaron_ct717", q);
+            q.nx = q.ny = 12;
+            q.clamp = fiber::PlainWeaveClamp::None;
+            q.clamp_edge_set = false;
+            q.seg = k;
+            q.amp = fa * q.d;
+            const ContactMeasure m = measure_contact(q);
+            std::printf("7б: k=%d A=%.1fd contacts=%zu per_crossing=%.4g max_pen/d=%.4g (pair_count=%zu "
+                        "segment_pairs=%zu; пересечения %zu, параллельные %zu)\n",
+                        k, fa, m.contacts, m.per_crossing, m.max_pen / q.d, m.pair_count, m.segment_pairs,
+                        m.crossing_contacts, m.parallel_contacts);
+            check(m.finite, "7б: k=" + std::to_string(k) + " A=" + std::to_string(fa) + "d: конечно (нет NaN/Inf)");
+            if (m.per_crossing > 1.0)
+                warn("7б: k=" + std::to_string(k) + " A=" + std::to_string(fa) + "d: " +
+                     std::to_string(m.per_crossing) + " контактов на пересечение > 1 (седло)");
+        }
+}
+
 static void run_case(const Case& c)
 {
     std::printf("=== вариант %s ===\n", c.name.c_str());
@@ -548,6 +901,34 @@ int main()
 
     for (const auto& c : cases) run_case(c);
     test_param_errors();
+
+    // 5, 6: прогоны на test и нечётном варианте, варианты трения, clamp=XY.
+    {
+        PlainWeaveParams q = make_test_params();
+        q.mu_ff = 0.3;
+        q.mu_fs = 0.2;
+        q.mu_fs_set = true;
+        test_roundtrip("test, mu_ff=0.3 mu_fs=0.2", q);
+        q.mu_ff = 0.0;
+        test_roundtrip("test, только mu_fs=0.2 (mu_ff=0 явно)", q);
+        test_roundtrip("test, без трения", make_test_params());
+        PlainWeaveParams o = make_odd_params(PlainWeaveProfile::Cos);
+        o.mu_ff = 0.3;
+        o.mu_fs = 0.2;
+        test_roundtrip("нечётный cos, clamp=Y", o);
+        test_roundtrip("нечётный arcs, clamp=Y", make_odd_params(PlainWeaveProfile::Arcs));
+        PlainWeaveParams xy = make_test_params();
+        xy.clamp = fiber::PlainWeaveClamp::XY;
+        // Диапазон c_e для 4x4, e = p/2: [1.5p + d/2, 1.5p + p/2] = [1.75, 2.0] мм; середина.
+        xy.clamp_edge = 1.5 * xy.pitch + 0.375 * xy.pitch;
+        xy.clamp_edge_set = true;
+        test_roundtrip("test, clamp=XY", xy);
+        test_density("test", make_test_params());
+        test_density("нечётный cos, clamp=Y", make_odd_params(PlainWeaveProfile::Cos));
+    }
+    test_density_twaron();
+    test_contact();
+    test_contact_twaron();
 
     std::printf("\n%s (failures = %d)\n", failures == 0 ? "ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ" : "ЕСТЬ ОШИБКИ", failures);
     return failures == 0 ? 0 : 1;
