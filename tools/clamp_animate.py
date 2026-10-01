@@ -191,16 +191,14 @@ def render_run(run_dir: str, out: str, args) -> None:
     smask, fmask = read_masks(run_dir)
     react = read_reaction(run_dir)
 
-    # Время кадра: из заголовка fiber_output, иначе по reaction.csv. Кадр с
-    # номером шага k пишется ДО прибавления dt, т. е. в момент t после шага k-1.
+    # Время кадра. Цикл (src/time_integration.cpp) пишет кадр с номером шага k ПОСЛЕ advance,
+    # но ДО time += dt, поэтому в нём состояние после шага k, а TIME в заголовке fiber_output --
+    # время до шага. Настоящее время состояния -- t после шага k = reaction.csv[k-1].t.
     def frame_time(k: int) -> float:
-        if fib[k] is not None:
-            return fib[k].time
         step = int(ids[k])
-        if react is not None and step >= 2:
-            j = min(step - 2, len(react["t"]) - 1)
-            return float(react["t"][j])
-        return 0.0
+        if react is not None and 1 <= step <= len(react["t"]):
+            return float(react["t"][step - 1])
+        return fib[k].time if fib[k] is not None else 0.0
 
     times = [frame_time(k) for k in range(len(ids))]
     t_max = max(max(times), float(react["t"][-1]) if react is not None else 0.0, 1e-30)

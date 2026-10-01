@@ -269,6 +269,9 @@ public:
             if (!(x == c.x0) || !(v == 0.0)) ++stillness_violations_;
             r.clamp_dx_max = std::max(r.clamp_dx_max, std::fabs(x - c.x0));
             r.clamp_v_max = std::max(r.clamp_v_max, std::fabs(v));
+            // §1.3 п. 4: sum m v a по зажатым. Сама постановка отмечает, что это следствие
+            // неподвижности (v == 0): столбец не независим от проверки выше и ловит только
+            // нарушение v == 0.0, а не работу сброса «после шага».
             r.W_clamp += mass(c) * v * (v - v_prev_[k]) / dt;
             v_prev_[k] = v;
         }

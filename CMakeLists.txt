@@ -667,6 +667,11 @@ foreach(_case EF3 EF4 EF5 EF6 EK1)
     set_tests_properties(e2e_clamp_${_case}_pc_smoke PROPERTIES
                          LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
 endforeach()
+# EF1-b: разрыв у кромки зажима (вариант EF1 с v0 = 1.5 eps_break c), только PC.
+add_test(NAME e2e_clamp_EF1b_pc_smoke
+         COMMAND test_e2e_clamp --case=EF1 --variant=b --solver=pc --time-limit=240)
+set_tests_properties(e2e_clamp_EF1b_pc_smoke PROPERTIES
+                     LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
 foreach(_case ES1 EF1)
     add_test(NAME e2e_clamp_${_case}_pc_smoke_t4
              COMMAND test_e2e_clamp --case=${_case} --solver=pc --time-limit=240)
@@ -674,7 +679,7 @@ foreach(_case ES1 EF1)
                          LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=4")
 endforeach()
 if(SPH_E2E_SLOW_TESTS)
-    foreach(_case ES1 ES2 ES3 EF1 EF2)
+    foreach(_case ES1 ES2 ES3 EF1 EF2 EF3)
         add_test(NAME e2e_clamp_${_case}_pc_full
                  COMMAND test_e2e_clamp --case=${_case} --solver=pc --full --time-limit=3000)
         set_tests_properties(e2e_clamp_${_case}_pc_full PROPERTIES
