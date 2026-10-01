@@ -160,7 +160,7 @@ inline void apply_plain_weave_preset(const std::string& name, PlainWeaveParams& 
         q.eps_break = 0.03; // оценка: eps_b ~ 2 U_T / sigma_T
         q.mu_ff = 0.0;
         q.mu_fs = 0.0;
-        q.overhang_x = 0.5 * q.pitch;
+        q.overhang_x = -1.0; // p/2 (с учётом --pitch, если задан)
         q.overhang_y = 5.0e-3; // оценка: ширина зажима в статье не задана
         q.clamp = PlainWeaveClamp::Y;
         q.clamp_edge = 60.0e-3; // оценка: кромка окна статьи

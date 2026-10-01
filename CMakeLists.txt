@@ -378,6 +378,21 @@ endif()
 add_test(NAME plain_weave_test COMMAND test_plain_weave)
 set_tests_properties(plain_weave_test PROPERTIES LABELS "3d" TIMEOUT 120)
 
+# --- CLI генератор полотняного переплетения (weave/TZ_PLAIN_WEAVE_GENERATOR.md, §4.2):
+#     инструмент для создания геометрии с командной строки.
+add_executable(plain_weave_gen tools/plain_weave/plain_weave_gen.cpp)
+target_include_directories(plain_weave_gen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(plain_weave_gen PRIVATE -fexceptions)
+endif()
+
+# Создать каталог для тестовых выходов генератора
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/plain_weave_cli_test)
+
+add_test(NAME plain_weave_gen_cli_test
+         COMMAND plain_weave_gen --preset=test --out=${CMAKE_CURRENT_BINARY_DIR}/plain_weave_cli_test/test.fib)
+set_tests_properties(plain_weave_gen_cli_test PROPERTIES LABELS "3d" TIMEOUT 60)
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый
