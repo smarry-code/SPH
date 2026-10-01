@@ -34,7 +34,7 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection
 # Frame discovery / parsing
 # ---------------------------------------------------------------------------
 
-FRAME_RE = re.compile(r"sph_output_(\d{5})\.txt$")
+FRAME_RE = re.compile(r"sph_output_(\d+)\.txt$")
 
 
 def discover_frame_ids(run_dir: str) -> list[str]:
@@ -44,7 +44,7 @@ def discover_frame_ids(run_dir: str) -> list[str]:
         m = FRAME_RE.search(os.path.basename(f))
         if m:
             ids.append(m.group(1))
-    ids.sort()
+    ids.sort(key=int)
     return ids
 
 

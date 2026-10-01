@@ -9,3 +9,8 @@ data/v2_*/fiber_output_*.txt
 data/v2_*/sph_gp.csv
 data/v2_*/log.txt
 data/v2_*/*.csv
+data/v3_*/sph_output_*.txt
+data/v3_*/fiber_output_*.txt
+data/v3_*/sph_gp.csv
+data/v3_*/log.txt
+data/v3_*/*.csv

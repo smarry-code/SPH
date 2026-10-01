@@ -83,7 +83,7 @@ import sys
 
 import numpy as np
 
-FRAME_RE = re.compile(r"sph_output_(\d{5})\.txt$")
+FRAME_RE = re.compile(r"sph_output_(\d+)\.txt$")
 
 
 # ---------------------------------------------------------------------
@@ -97,7 +97,7 @@ def discover_frame_ids(run_dir: str) -> list[str]:
             fid = m.group(1)
             if os.path.exists(os.path.join(run_dir, f"fiber_output_{fid}.txt")):
                 ids.append(fid)
-    ids.sort()
+    ids.sort(key=int)  # номера шагов бывают 6-значными: строковая сортировка ломает порядок
     return ids
 
 
