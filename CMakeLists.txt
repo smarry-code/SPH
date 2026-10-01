@@ -628,6 +628,60 @@ if(SPH_E2E_SLOW_TESTS)
     endforeach()
 endif()
 
+# --- E2E-тесты закрепления Solid и Fiber (tests/test_e2e_clamp.cpp) ---------
+# Постановка -- Clamp/CLAMP_TESTS.md: сцены с аналитическим ответом (реакция
+# опоры, отражение волны, частота), только через боевой time_integration.
+# Один запуск -- один вариант (--case, --solver). Прогоны при OMP_NUM_THREADS=1
+# (остальной цикл не обязан быть побитово независим от числа потоков); ES1 и
+# EF1 -- дополнительно при 4 потоках с теми же допусками (§1.1).
+# ES4 (жёсткая стенка с контактом Solid-Solid) не регистрируется: SPH-суммы
+# Solid не изолируют тела по body[], постановка откладывает ES4 до изоляции.
+add_executable(test_e2e_clamp tests/test_e2e_clamp.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_clamp PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_clamp PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_clamp PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_clamp PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_clamp PRIVATE -fopenmp)
+    target_link_options(test_e2e_clamp PRIVATE -fopenmp)
+endif()
+
+# Оба решателя: Solid-сцены, EF1, EF2 (§1.1). Только PC: EF3-EF6, EK1.
+foreach(_case ES1 ES2 ES3 EF1 EF2)
+    foreach(_solver pc euler)
+        add_test(NAME e2e_clamp_${_case}_${_solver}_smoke
+                 COMMAND test_e2e_clamp --case=${_case} --solver=${_solver} --time-limit=240)
+        set_tests_properties(e2e_clamp_${_case}_${_solver}_smoke PROPERTIES
+                             LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
+    endforeach()
+endforeach()
+foreach(_case EF3 EF4 EF5 EF6 EK1)
+    add_test(NAME e2e_clamp_${_case}_pc_smoke
+             COMMAND test_e2e_clamp --case=${_case} --solver=pc --time-limit=240)
+    set_tests_properties(e2e_clamp_${_case}_pc_smoke PROPERTIES
+                         LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
+endforeach()
+foreach(_case ES1 EF1)
+    add_test(NAME e2e_clamp_${_case}_pc_smoke_t4
+             COMMAND test_e2e_clamp --case=${_case} --solver=pc --time-limit=240)
+    set_tests_properties(e2e_clamp_${_case}_pc_smoke_t4 PROPERTIES
+                         LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=4")
+endforeach()
+if(SPH_E2E_SLOW_TESTS)
+    foreach(_case ES1 ES2 ES3 EF1 EF2)
+        add_test(NAME e2e_clamp_${_case}_pc_full
+                 COMMAND test_e2e_clamp --case=${_case} --solver=pc --full --time-limit=3000)
+        set_tests_properties(e2e_clamp_${_case}_pc_full PROPERTIES
+                             LABELS "slow;e2e;3d" TIMEOUT 3600 ENVIRONMENT "OMP_NUM_THREADS=1")
+    endforeach()
+endif()
+
 # --- Регрессионный тест на кейсах BC2 и BC6 (tests/test_regression.cpp) ----
 # Сквозные тесты выше сверяют расчёт с ПРИБОРНЫМ эталоном в грубых воротах и
 # ловят только кратную поломку. Регрессия сверяет все поля каждой частицы после

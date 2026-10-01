@@ -24,8 +24,10 @@
 // настройки не меняется, main.cpp сторож не передаёт.
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <sstream>
 #include <string>
+#include <utility>
 
 class RunGuard
 {
@@ -55,10 +57,23 @@ public:
     // Останов после ровно max_steps шагов; 0 — без предела.
     void set_step_limit(size_t max_steps) { max_steps_ = max_steps; }
 
+    // Наблюдатель шага: вызывается в should_stop() ПЕРВЫМ, после завершения
+    // шага (advance, постобработка, time += dt), с тем dt, на который шагнули,
+    // и новым time. Нужен e2e-тестам, которые снимают монитор на каждом шаге
+    // одного непрерывного прогона (tests/test_e2e_clamp.cpp): перезапуск
+    // time_integration по одному шагу сбросил бы предиктор PC (первый шаг --
+    // полушаг). Состояние частиц наблюдатель читает через захваченные ссылки
+    // и менять его не должен. Пустой (по умолчанию) -- поведение прежнее.
+    void set_step_observer(std::function<void(double dt, double time)> observer)
+    {
+        observer_ = std::move(observer);
+    }
+
     // Вызывается ровно один раз за шаг, после обновления time.
     // Возвращает true, если цикл нужно прервать.
     bool should_stop(double dt, double time, double t_total)
     {
+        if (observer_) observer_(dt, time);
         ++steps_;
         if (dt_first_ <= 0.0 && dt > 0.0)
         {
@@ -209,6 +224,7 @@ private:
     double max_projected_steps_ = 0.0;
     size_t patience_            = 1;
     size_t max_steps_           = 0;
+    std::function<void(double, double)> observer_;
 
     std::chrono::steady_clock::time_point started_ = std::chrono::steady_clock::now();
     Reason reason_   = Reason::None;
