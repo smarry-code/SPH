@@ -1,0 +1,11 @@
+# kind index mask (bit d = компонента d зажата)
+solid 2 4
+solid 7 4
+solid 12 4
+solid 17 4
+solid 22 4
+solid 1227 4
+solid 1232 4
+solid 1237 4
+solid 1242 4
+solid 1247 4
