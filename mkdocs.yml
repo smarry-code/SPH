@@ -93,6 +93,7 @@ nav:
       - Быстрый старт: 01-tutorials/01-quick-start.md
   - Практика:
       - Запуск тестов и бенчмарков: 02-how-to/01-run-tests.md
+      - Генератор полотняного переплетения: 02-how-to/02-plain-weave-generator.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
       - Конфигурация:
