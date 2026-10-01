@@ -15,6 +15,7 @@
 
 #include <fiber/plain_weave.hpp>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <limits>
 #include <cstdio>
@@ -24,6 +25,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace
 {
@@ -33,9 +35,13 @@ bool parse_double(const char* str, double& out)
 {
     if (!str || *str == '\0') return false;
     char* endptr = nullptr;
-    out = std::strtod(str, &endptr);
-    // Если endptr не указывает на конец строки, значит был мусор
-    return endptr != nullptr && *endptr == '\0';
+    errno = 0;
+    const double v = std::strtod(str, &endptr);
+    // Мусор в конце, переполнение/потеря точности (ERANGE), inf и nan -- ошибка.
+    if (endptr == nullptr || *endptr != '\0' || endptr == str || errno == ERANGE || !std::isfinite(v))
+        return false;
+    out = v;
+    return true;
 }
 
 // Строгий парсинг int
@@ -43,9 +49,12 @@ bool parse_int(const char* str, int& out)
 {
     if (!str || *str == '\0') return false;
     char* endptr = nullptr;
-    long val = std::strtol(str, &endptr, 10);
+    errno = 0;
+    const long val = std::strtol(str, &endptr, 10);
+    if (endptr == nullptr || *endptr != '\0' || endptr == str || errno == ERANGE) return false;
+    if (val < std::numeric_limits<int>::min() || val > std::numeric_limits<int>::max()) return false;
     out = static_cast<int>(val);
-    return endptr != nullptr && *endptr == '\0';
+    return true;
 }
 
 // Парсинг center=cx,cy,cz
@@ -123,8 +132,8 @@ int main(int argc, char** argv)
 
     // --overhang= задаёт оба выступа, --overhang-x/-y сильнее него при любом
     // порядке аргументов: общий выступ применяется после разбора.
-    const double unset = std::numeric_limits<double>::quiet_NaN();
-    double overhang_both = unset, overhang_x = unset, overhang_y = unset;
+    double overhang_both = 0.0, overhang_x = 0.0, overhang_y = 0.0;
+    bool overhang_both_set = false, overhang_x_set = false, overhang_y_set = false;
 
     // Таблица числовых ключей: имя -> куда писать.
     struct DoubleKey { const char* name; double* dst; };
@@ -171,6 +180,9 @@ int main(int argc, char** argv)
                     fprintf(stderr, "Ошибка: не число в %s\n", arg.c_str());
                     ++failures;
                 }
+                if (k.dst == &overhang_both) overhang_both_set = true;
+                if (k.dst == &overhang_x) overhang_x_set = true;
+                if (k.dst == &overhang_y) overhang_y_set = true;
                 if (k.dst == &q.clamp_edge) q.clamp_edge_set = true;
                 if (k.dst == &q.mu_fs) q.mu_fs_set = true;
                 break;
@@ -236,8 +248,10 @@ int main(int argc, char** argv)
     }
     // Отрицательный выступ в PlainWeaveParams означает «по умолчанию p/2»,
     // поэтому явный отрицательный ввод отсекается здесь.
-    for (double e : {overhang_both, overhang_x, overhang_y})
-        if (e < 0.0) // NaN (не задан) сюда не проходит
+    for (const auto& oh : {std::make_pair(overhang_both_set, overhang_both),
+                           std::make_pair(overhang_x_set, overhang_x),
+                           std::make_pair(overhang_y_set, overhang_y)})
+        if (oh.first && oh.second < 0.0)
         {
             fprintf(stderr, "Ошибка: выступ должен быть >= 0\n");
             ++failures;
@@ -248,9 +262,9 @@ int main(int argc, char** argv)
         print_help();
         return 2;
     }
-    if (!std::isnan(overhang_both)) q.overhang_x = q.overhang_y = overhang_both;
-    if (!std::isnan(overhang_x)) q.overhang_x = overhang_x;
-    if (!std::isnan(overhang_y)) q.overhang_y = overhang_y;
+    if (overhang_both_set) q.overhang_x = q.overhang_y = overhang_both;
+    if (overhang_x_set) q.overhang_x = overhang_x;
+    if (overhang_y_set) q.overhang_y = overhang_y;
 
     // Построить полотно
     fiber::PlainWeave W;

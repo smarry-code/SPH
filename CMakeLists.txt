@@ -386,11 +386,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(plain_weave_gen PRIVATE -fexceptions)
 endif()
 
-# Создать каталог для тестовых выходов генератора
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/plain_weave_cli_test)
-
+# CLI-тест: cmake -P скрипт создаёт уникальный каталог в системном temp и удаляет его.
 add_test(NAME plain_weave_gen_cli_test
-         COMMAND plain_weave_gen --preset=test --out=${CMAKE_CURRENT_BINARY_DIR}/plain_weave_cli_test/test.fib)
+         COMMAND ${CMAKE_COMMAND} -DGEN=$<TARGET_FILE:plain_weave_gen>
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plain_weave_cli_test.cmake)
 set_tests_properties(plain_weave_gen_cli_test PROPERTIES LABELS "3d" TIMEOUT 60)
 
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration

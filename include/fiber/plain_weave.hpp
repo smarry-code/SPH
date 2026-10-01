@@ -24,7 +24,8 @@
 // параметру), L подгоняется бисекцией так, чтобы расстояние от последней точки
 // до конечной вершины тоже было L. Профиль полуволны считается один раз и
 // переиспользуется со сдвигом и знаком. Выступ e делится на
-// max(1, round(e/(p/k))) равных хорд от крайней вершины до точки кривой с
+// ne = round(e/(p/k)) (при e > 0 не меньше 1; при e == 0 выступа нет, ne = 0:
+// ни точек выступа, ни дубля крайней бусины) равных хорд от крайней вершины до точки кривой с
 // координатой вдоль нити ровно x_0 - e (x_end + e); выступ симметричен
 // относительно вершины, поэтому считается один раз на направление.
 //
@@ -180,8 +181,8 @@ struct PlainWeaveFiber
     int index = 0;
     double offset = 0.0; // y_j для основы, x_i для утка
     bool clamped = false;
-    int n_clamp_lo = 0; // зажатых бусин у начала нити
-    int n_clamp_hi = 0; // зажатых бусин у конца нити
+    std::size_t n_clamp_lo = 0; // зажатых бусин у начала нити
+    std::size_t n_clamp_hi = 0; // зажатых бусин у конца нити
     std::vector<std::array<double, 3>> pts;
     std::vector<std::size_t> vertex_bead; // индексы бусин в пересечениях по порядку вдоль нити
 };
@@ -202,6 +203,12 @@ struct PlainWeave
 
 namespace plain_weave_detail
 {
+
+// Предохранители: общее число бусин (оценка до построения), сегментов на
+// полуволну и хорд одного выступа.
+constexpr double plain_weave_max_beads = 5.0e7;
+constexpr int plain_weave_max_seg = 10000;
+constexpr double plain_weave_max_overhang_chords = 1.0e7;
 
 // Кривая полуволны с локальным параметром T (вершины в целых T).
 // Локально: вершина T=0 на z=+A, T=1 на z=-A; на следующей полуволне знак меняется.
@@ -344,6 +351,10 @@ inline std::vector<double> equal_chords(const Curve& C, double Ta, double Tb, in
     std::vector<double> Ts;
     walk(0.5 * (lo + hi), &Ts);
     Ts.push_back(Tb);
+    // Стрельба обязана дать ровно n хорд (n + 1 точек); иначе -- сбой алгоритма.
+    if (Ts.size() != static_cast<std::size_t>(n) + 1)
+        throw std::runtime_error("plain_weave: не удалось построить равные хорды (стрельба дала " +
+                                 std::to_string(Ts.size()) + " точек вместо " + std::to_string(n + 1) + ")");
     return Ts;
 }
 
@@ -354,9 +365,25 @@ struct Overhang
     std::vector<double> u, z;
 };
 
+// Число хорд выступа e: 0 при e == 0 (выступа нет), иначе max(1, round(e/(p/k))).
+// Вызывающий гарантирует e/(p/k) <= plain_weave_max_overhang_chords.
+inline long long overhang_chords(double e, double p, int k)
+{
+    if (e == 0.0) return 0;
+    return std::max<long long>(1, std::llround(e / (p / k)));
+}
+
 inline Overhang make_overhang(const Curve& C, double e, int k)
 {
-    const int ne = std::max(1, static_cast<int>(std::lround(e / (C.p / k))));
+    if (e == 0.0)
+    {
+        // Нулевой выступ: единственная «точка» -- сама вершина, новых бусин нет.
+        Overhang o0;
+        o0.u.push_back(0.0);
+        o0.z.push_back(C.A);
+        return o0;
+    }
+    const int ne = static_cast<int>(overhang_chords(e, C.p, k));
     // T_end: along(T_end) = e (along монотонно растёт по T).
     double lo = 0.0, hi = e / C.p + 2.0;
     for (int it = 0; it < 200; ++it)
@@ -395,13 +422,60 @@ inline PlainWeave build_plain_weave(const PlainWeaveParams& q)
     const double p = q.pitch, d = q.d, A = q.amp;
     const int k = q.seg;
 
+    // Конечность и допустимость всех вещественных параметров (генератор не
+    // должен писать файл, который парсер или физика отвергнут).
+    {
+        auto fin = [](double v, const char* name) {
+            if (!std::isfinite(v))
+                throw std::invalid_argument(std::string("plain_weave: параметр ") + name + " должен быть конечным числом");
+        };
+        fin(q.d, "d");
+        fin(q.pitch, "pitch");
+        fin(q.amp, "amp");
+        fin(q.overhang_x, "overhang_x");
+        fin(q.overhang_y, "overhang_y");
+        fin(q.cx, "cx");
+        fin(q.cy, "cy");
+        fin(q.cz, "cz");
+        if (q.clamp_edge_set) fin(q.clamp_edge, "clamp_edge");
+        fin(q.E, "E");
+        fin(q.nu, "nu");
+        fin(q.rho, "rho");
+        fin(q.eps_break, "eps_break");
+        fin(q.mu_ff, "mu_ff");
+        fin(q.mu_fs, "mu_fs");
+        if (!(q.E > 0.0)) throw std::invalid_argument("plain_weave: модуль E должен быть > 0");
+        if (!(q.rho > 0.0)) throw std::invalid_argument("plain_weave: плотность rho должна быть > 0");
+        if (!(q.eps_break > 0.0)) throw std::invalid_argument("plain_weave: eps_break должен быть > 0");
+        if (q.mu_ff < 0.0) throw std::invalid_argument("plain_weave: mu_ff должен быть >= 0");
+        if (q.mu_fs < 0.0) throw std::invalid_argument("plain_weave: mu_fs должен быть >= 0");
+    }
+
     if (!(d > 0.0)) throw std::invalid_argument("plain_weave: диаметр d должен быть > 0");
     if (!(p > 0.0)) throw std::invalid_argument("plain_weave: шаг p должен быть > 0");
     if (!(A > 0.0)) throw std::invalid_argument("plain_weave: амплитуда A должна быть > 0");
     if (k < 2) throw std::invalid_argument("plain_weave: число сегментов на полуволну k должно быть >= 2");
+    if (k > plain_weave_max_seg)
+        throw std::invalid_argument("plain_weave: seg слишком велико (максимум " + std::to_string(plain_weave_max_seg) + ")");
     if (q.nx < 1 || q.ny < 1) throw std::invalid_argument("plain_weave: nx, ny должны быть >= 1");
     const double ex = plain_weave_overhang_x(q), ey = plain_weave_overhang_y(q);
     if (ex < 0.0 || ey < 0.0) throw std::invalid_argument("plain_weave: выступы должны быть >= 0");
+    // Размер: диапазон перед приведением к целым и оценка числа бусин ДО построения.
+    {
+        const double chx = ex / (p / k), chy = ey / (p / k);
+        if (!(chx <= plain_weave_max_overhang_chords) || !(chy <= plain_weave_max_overhang_chords))
+            throw std::invalid_argument("plain_weave: выступ слишком велик относительно шага (больше 1e7 хорд)");
+        const double nex = static_cast<double>(overhang_chords(ex, p, k));
+        const double ney = static_cast<double>(overhang_chords(ey, p, k));
+        const double bx = static_cast<double>(q.nx) * (static_cast<double>(q.ny - 1) * k + 1.0 + 2.0 * nex);
+        const double by = static_cast<double>(q.ny) * (static_cast<double>(q.nx - 1) * k + 1.0 + 2.0 * ney);
+        if (!(bx + by <= plain_weave_max_beads))
+        {
+            std::ostringstream s;
+            s << "plain_weave: оценка числа бусин " << bx + by << " превышает предел " << plain_weave_max_beads;
+            throw std::invalid_argument(s.str());
+        }
+    }
 
     auto penalty = [&](bool bad, const std::string& msg) {
         if (!bad) return;
@@ -486,7 +560,7 @@ inline PlainWeave build_plain_weave(const PlainWeaveParams& q)
                 F.pts.push_back({offset, along, z});
         };
         const double v0 = coord(c_al, 0, n_al);
-        const int ne = static_cast<int>(ov.u.size()) - 1;
+        const int ne = static_cast<int>(ov.u.size()) - 1; // 0 при нулевом выступе
         for (int m = ne; m >= 1; --m) push(v0 - ov.u[m], q.cz + sigma0 * ov.z[m]);
         const int Nhalf = nv - 1;
         for (int w = 0; w < Nhalf; ++w)
@@ -592,6 +666,15 @@ inline PlainWeave build_plain_weave(const PlainWeaveParams& q)
     return W;
 }
 
+// Окно полотна для плотности: Lx = x_{ny-1} - x_0 = (ny-1)p, Ly = (nx-1)p --
+// между крайними нитями. При n = 1 по направлению окно между нитями вырождено
+// (0), поэтому берётся ширина одной ячейки p.
+inline void plain_weave_window(const PlainWeaveParams& q, double& Lx, double& Ly)
+{
+    Lx = q.ny > 1 ? (static_cast<double>(q.ny) - 1.0) * q.pitch : q.pitch;
+    Ly = q.nx > 1 ? (static_cast<double>(q.nx) - 1.0) * q.pitch : q.pitch;
+}
+
 struct PlainWeaveSummary
 {
     std::size_t fibers = 0, beads = 0, bonds = 0, clamped_beads = 0;
@@ -615,7 +698,7 @@ inline PlainWeaveSummary plain_weave_summary(const PlainWeave& W)
     for (const auto& F : W.fibers)
     {
         S.beads += F.pts.size();
-        S.clamped_beads += static_cast<std::size_t>(F.n_clamp_lo + F.n_clamp_hi);
+        S.clamped_beads += F.n_clamp_lo + F.n_clamp_hi;
         for (std::size_t b = 0; b + 1 < F.pts.size(); ++b)
         {
             const auto &a = F.pts[b], &c = F.pts[b + 1];
@@ -631,8 +714,8 @@ inline PlainWeaveSummary plain_weave_summary(const PlainWeave& W)
     S.thickness = 2.0 * q.amp + q.d;
     const double pi = std::acos(-1.0);
     const double mass = q.rho * pi * q.d * q.d / 4.0 * sum_l0;
-    const double Lx = q.ny > 1 ? (q.ny - 1) * q.pitch : q.pitch;
-    const double Ly = q.nx > 1 ? (q.nx - 1) * q.pitch : q.pitch;
+    double Lx = 0.0, Ly = 0.0;
+    plain_weave_window(q, Lx, Ly);
     S.areal_density = mass / (Lx * Ly);
     S.cost_ratio = static_cast<double>(S.beads) / 340.0;
     return S;
