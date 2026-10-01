@@ -279,6 +279,28 @@ endif()
 add_test(NAME fiber_friction_test COMMAND test_fiber_friction)
 set_tests_properties(fiber_friction_test PROPERTIES LABELS "3d")
 
+# --- Кинематическое закрепление Solid/Fiber (include/interactions/clamp.hpp,
+#     fiber/TZ_CLAMP_SOLID_FIBER.md, §10). Регистрируется при 1, 2 и 4 потоках.
+add_executable(test_clamp tests/test_clamp.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_clamp PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_clamp PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_clamp PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_clamp PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_clamp PRIVATE -fopenmp)
+    target_link_options(test_clamp PRIVATE -fopenmp)
+endif()
+add_test(NAME clamp_test_t1 COMMAND test_clamp)
+set_tests_properties(clamp_test_t1 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=1")
+add_test(NAME clamp_test_t2 COMMAND test_clamp)
+set_tests_properties(clamp_test_t2 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=2")
+add_test(NAME clamp_test_t4 COMMAND test_clamp)
+set_tests_properties(clamp_test_t4 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=4")
+
 # --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
 #     крест-накрест, отскакивают без взаимного проникания»).
 add_executable(test_e2e_fiber_contact tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
@@ -603,6 +625,65 @@ if(SPH_E2E_SLOW_TESTS)
                  COMMAND test_e2e_3d --full --contact-type=${_type} --time-limit=1800)
         set_tests_properties(e2e_3d_full_contact${_type}
                              PROPERTIES LABELS "slow;e2e;3d" TIMEOUT 3600)
+    endforeach()
+endif()
+
+# --- E2E-тесты закрепления Solid и Fiber (tests/test_e2e_clamp.cpp) ---------
+# Постановка -- Clamp/CLAMP_TESTS.md: сцены с аналитическим ответом (реакция
+# опоры, отражение волны, частота), только через боевой time_integration.
+# Один запуск -- один вариант (--case, --solver). Прогоны при OMP_NUM_THREADS=1
+# (остальной цикл не обязан быть побитово независим от числа потоков); ES1 и
+# EF1 -- дополнительно при 4 потоках с теми же допусками (§1.1).
+# ES4 (жёсткая стенка с контактом Solid-Solid) не регистрируется: SPH-суммы
+# Solid не изолируют тела по body[], постановка откладывает ES4 до изоляции.
+add_executable(test_e2e_clamp tests/test_e2e_clamp.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_clamp PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_clamp PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_clamp PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_clamp PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_clamp PRIVATE -fopenmp)
+    target_link_options(test_e2e_clamp PRIVATE -fopenmp)
+endif()
+
+# Оба решателя: Solid-сцены, EF1, EF2 (§1.1). Только PC: EF3-EF6, EK1.
+foreach(_case ES1 ES2 ES3 EF1 EF2)
+    foreach(_solver pc euler)
+        add_test(NAME e2e_clamp_${_case}_${_solver}_smoke
+                 COMMAND test_e2e_clamp --case=${_case} --solver=${_solver} --time-limit=240)
+        set_tests_properties(e2e_clamp_${_case}_${_solver}_smoke PROPERTIES
+                             LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
+    endforeach()
+endforeach()
+foreach(_case EF3 EF4 EF5 EF6 EK1)
+    add_test(NAME e2e_clamp_${_case}_pc_smoke
+             COMMAND test_e2e_clamp --case=${_case} --solver=pc --time-limit=240)
+    set_tests_properties(e2e_clamp_${_case}_pc_smoke PROPERTIES
+                         LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
+endforeach()
+# EF1-b: разрыв у кромки зажима (вариант EF1 с v0 = 1.5 eps_break c), только PC.
+add_test(NAME e2e_clamp_EF1b_pc_smoke
+         COMMAND test_e2e_clamp --case=EF1 --variant=b --solver=pc --time-limit=240)
+set_tests_properties(e2e_clamp_EF1b_pc_smoke PROPERTIES
+                     LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=1")
+foreach(_case ES1 EF1)
+    add_test(NAME e2e_clamp_${_case}_pc_smoke_t4
+             COMMAND test_e2e_clamp --case=${_case} --solver=pc --time-limit=240)
+    set_tests_properties(e2e_clamp_${_case}_pc_smoke_t4 PROPERTIES
+                         LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=4")
+endforeach()
+if(SPH_E2E_SLOW_TESTS)
+    foreach(_case ES1 ES2 ES3 EF1 EF2 EF3)
+        add_test(NAME e2e_clamp_${_case}_pc_full
+                 COMMAND test_e2e_clamp --case=${_case} --solver=pc --full --time-limit=3000)
+        set_tests_properties(e2e_clamp_${_case}_pc_full PROPERTIES
+                             LABELS "slow;e2e;3d" TIMEOUT 3600 ENVIRONMENT "OMP_NUM_THREADS=1")
     endforeach()
 endif()
 

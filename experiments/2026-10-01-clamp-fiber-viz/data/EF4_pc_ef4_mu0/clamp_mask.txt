@@ -1,0 +1,22 @@
+# kind index mask (bit d = компонента d зажата)
+fiber 12 7
+fiber 13 7
+fiber 14 7
+fiber 15 7
+fiber 16 7
+fiber 17 7
+fiber 18 7
+fiber 19 7
+fiber 20 7
+fiber 21 7
+fiber 22 7
+fiber 23 7
+fiber 24 7
+fiber 25 7
+fiber 26 7
+fiber 27 7
+fiber 28 7
+fiber 29 7
+fiber 30 7
+fiber 31 7
+fiber 32 7

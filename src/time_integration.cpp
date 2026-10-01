@@ -4,6 +4,7 @@
 #include "time_integration.hpp"
 #include "output.hpp"
 #include "fiber/fiber_output.hpp"
+#include "interactions/clamp.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/fiber_friction.hpp"
@@ -62,18 +63,25 @@ namespace detail
 // Порядок одного шага (fiber/SPH.md, «Описание алгоритмов и структур
 // данных» / PLAN.md §3.9): solver.predict() -> RHS (single_step + Fiber-Bond/
 // Fiber-Fiber-Contact/Fiber-Solid-Contact, ОДНО вычисление на шаг) -> новый
-// dt -> единая стадия трения нить-нить и Fiber-Solid (fiber/fiber_friction_projection.md,
-// fiber/fiber_solid_friction_implementation.md) ->
-// solver.advance() -> Postprocessing (apply_material_strength, разрыв
+// [1] проекция закрепления -> dt -> единая стадия трения нить-нить и Fiber-Solid
+// (fiber/fiber_friction_projection.md, fiber/fiber_solid_friction_implementation.md;
+// внутри неё [2] c_k = c_s = 0 у полностью зажатых и [3] повторная проекция
+// после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, разрыв
 // связей Fiber-Bond) -> вывод. update_smoothing_length -- ИСКЛЮЧЕНИЕ, см.
 // большой комментарий в include/interactions/postprocessing.hpp (шапка
 // файла) -- почему он остаётся МЕЖДУ RHS и вычислением нового dt, а не после
 // advance().
+//
+// Точки [1]-[3] -- стадия constraint кинематического закрепления
+// (interactions/clamp.hpp; fiber/SPH.md, «Clamp (кинематическое
+// закрепление)»): выполняются ТОЛЬКО при непустом clamps, иначе цикл
+// побитово прежний.
 // ----------------------------------------------------------------------
 template <class Solver>
 void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fiber::FiberState& fb,
                            fiber::FiberTopology& topology, std::vector<fiber::FiberMaterial>& materials,
-                           size_t ntotal, double& dt, double& time, double /*delta_x*/, RunGuard* guard)
+                           size_t ntotal, double& dt, double& time, double /*delta_x*/, RunGuard* guard,
+                           const interactions::ClampSet& clamps, interactions::ClampReport* clamp_report)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
@@ -126,6 +134,17 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
     std::vector<std::vector<interactions::FiberBreakEvent>> fiber_break_thread_buffers;
+
+    // Кинематическое закрепление (interactions/clamp.hpp): проверки, списки
+    // зажатых и рабочая память -- ОДИН раз до цикла (в шаге -- без аллокаций).
+    const bool has_clamps = !clamps.empty();
+    interactions::ClampWorkspace clamp_ws;
+    if (has_clamps)
+    {
+        interactions::validate_clamps(clamps, sys, ntotal, fb);
+        interactions::prepare_clamp_workspace(clamps, ntotal, nfiber, clamp_ws);
+        if (clamp_report != nullptr) interactions::clamp_report_counts(clamp_ws, sys, *clamp_report);
+    }
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -228,6 +247,21 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
         }
 
+        // [1] Закрепление: RHS шага полностью сведён (все Reduce и сложения
+        // выше завершены) -- проекция a_{i,d} <- 0 (у Solid ещё и XSPH av)
+        // для зажатых компонент; реакция -- до обнуления. Стоит ДО dt и ДО
+        // стадии трения: пробная скорость зажатой частицы в трении = 0.
+        double clamp_solid_force[dim] = {};
+        double clamp_fiber_force[dim] = {};
+        if (has_clamps)
+        {
+            interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, solver.solid_rhs.dvx,
+                                                 &solver.solid_rhs.av, clamp_ws, clamp_solid_force);
+            interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
+                                                 static_cast<std::vector<std::vector<double>>*>(nullptr), clamp_ws,
+                                                 clamp_fiber_force);
+        }
+
         // Общий шаг (fiber/SPH.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;
@@ -250,6 +284,10 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                                    friction_solid_contacts, fiber_friction_count_buffers,
                                                    solid_friction_count_buffers, fiber_friction_bead_count,
                                                    solid_friction_count);
+            // [2] Бесконечная масса полностью зажатых в mass splitting: c = 0.
+            if (has_clamps)
+                interactions::apply_clamp_friction_counts(fiber_exec, clamp_ws, fiber_friction_bead_count,
+                                                          solid_friction_count);
             interactions::compute_friction_contributions(
                 fiber_exec, fb, fupd, solver.fiber_rhs.dv, friction_contacts, sys, supd, solver.solid_rhs.dvx,
                 friction_solid_contacts, fiber_friction_bead_count, solid_friction_count, /*solid_kinematic=*/false,
@@ -266,6 +304,28 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 for (size_t d = 0; d < dim; ++d)
                     for (size_t i = 0; i < ntotal; ++i)
                         solver.solid_rhs.dvx[d][i] += friction_solid_delta[i].dv[d];
+            }
+            // [3] Вклад трения в зажатую частицу -- часть реакции: повторная
+            // проекция (без XSPH). Вклад трения в свободные частицы от
+            // зажатых не трогается.
+            if (has_clamps)
+            {
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, solver.solid_rhs.dvx,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, clamp_solid_force);
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, clamp_fiber_force);
+            }
+        }
+
+        // Реакция опоры шага ([1] + [3], в этом порядке) -- в отчёт сцене.
+        if (has_clamps && clamp_report != nullptr)
+        {
+            for (size_t d = 0; d < dim; ++d)
+            {
+                clamp_report->solid_force[d] = clamp_solid_force[d];
+                clamp_report->fiber_force[d] = clamp_fiber_force[d];
             }
         }
 
@@ -338,12 +398,14 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
     fiber::FiberState empty_fb;
     fiber::FiberTopology empty_topology;
     std::vector<fiber::FiberMaterial> empty_materials;
+    static const interactions::ClampSet kNoClamps; // Solid-only: зажимов нет
     if (cfg.ode_solver == 1)
         detail::run_time_integration<ode::EulerSolver>(cfg, sys, empty_fb, empty_topology, empty_materials, ntotal, dt,
-                                                        time, delta_x, guard);
+                                                        time, delta_x, guard, kNoClamps, nullptr);
     else
         detail::run_time_integration<ode::PredictorCorrectorSolver>(cfg, sys, empty_fb, empty_topology,
-                                                                     empty_materials, ntotal, dt, time, delta_x, guard);
+                                                                     empty_materials, ntotal, dt, time, delta_x, guard,
+                                                                     kNoClamps, nullptr);
 }
 
 // Перегрузка для fiber::Model (этап Ф2: fiber/PLAN.md пункт 7 — сигнатура;
@@ -356,8 +418,10 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
 {
     if (cfg.ode_solver == 1)
         detail::run_time_integration<ode::EulerSolver>(cfg, model.solid, model.fiber, model.topology, model.materials,
-                                                        ntotal, dt, time, delta_x, guard);
+                                                        ntotal, dt, time, delta_x, guard, model.clamps,
+                                                        &model.clamp_report);
     else
         detail::run_time_integration<ode::PredictorCorrectorSolver>(cfg, model.solid, model.fiber, model.topology,
-                                                                     model.materials, ntotal, dt, time, delta_x, guard);
+                                                                     model.materials, ntotal, dt, time, delta_x, guard,
+                                                                     model.clamps, &model.clamp_report);
 }
