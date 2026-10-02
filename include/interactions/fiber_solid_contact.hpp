@@ -287,6 +287,13 @@ inline void warn_fiber_solid_contact_undefined_itype_once(int itype)
 struct FiberSolidContactSearchResult
 {
     std::vector<FiberSolidContactPrimitive> primitives;
+    // Постоянная рабочая память поиска: результат живёт между шагами, поэтому
+    // список eligible, копии координат Solid, индекс и вектор пар не создаются
+    // заново на каждом вызове (память только растёт).
+    std::vector<rhs::index_t> eligible;
+    std::vector<double> sx[dim];
+    rhs::SpatialIndex<dim> index;
+    std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
 };
 
 // ----------------------------------------------------------------------
@@ -314,7 +321,8 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
     }
     else
     {
-        std::vector<rhs::index_t> eligible;
+        std::vector<rhs::index_t>& eligible = out.eligible;
+        eligible.clear();
         eligible.reserve(ntotal);
         double r_s_max = 0.0;
         for (std::size_t i = 0; i < ntotal; ++i)
@@ -332,23 +340,24 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
 
         const double radius = fiber_solid_contact_search_radius(exec, state, topology, materials, r_s_max);
 
-        std::vector<double> sx[dim];
+        std::vector<double>(&sx)[dim] = out.sx;
         for (std::size_t d = 0; d < dim; ++d) sx[d].resize(eligible.size());
         for (std::size_t k = 0; k < eligible.size(); ++k)
             for (std::size_t d = 0; d < dim; ++d) sx[d][k] = sys.x[d][eligible[k]];
 
-        rhs::SpatialIndex<dim> index;
         std::array<const double*, dim> scoords{};
         for (std::size_t d = 0; d < dim; ++d) scoords[d] = sx[d].data();
-        index.build(scoords, eligible.size(), radius > 0.0 ? radius : 1.0);
+        out.index.build(scoords, eligible.size(), radius > 0.0 ? radius : 1.0);
 
         std::array<const double*, dim> fcoords{};
         for (std::size_t d = 0; d < dim; ++d) fcoords[d] = state.x[d].data();
 
-        const auto pairs = index.find_pairs_cross_parallel(exec, fcoords, nfiber, radius);
+        // Принимает все пары (accept обязателен у параллельной версии с out).
+        out.index.find_pairs_cross_parallel(exec, fcoords, nfiber, radius,
+                                             [](rhs::index_t, rhs::index_t) { return true; }, out.pairs);
 
-        out.primitives.reserve(pairs.size());
-        for (const auto& pr : pairs)
+        out.primitives.reserve(out.pairs.size());
+        for (const auto& pr : out.pairs)
         {
             const rhs::index_t f = pr.first;        // бусина Fiber ("other")
             const rhs::index_t local_s = pr.second;  // локальный индекс в eligible
@@ -667,6 +676,33 @@ struct FiberSolidContactResult
     bool has_active_friction = false; // есть активный слот трения (только при переданных friction_contacts)
 };
 
+// Вариант с постоянной рабочей памятью (цикл по времени): search (primitives
+// остаются в нём для dt_limit/диагностики), fiber_delta/solid_delta и scratch
+// -- переменные вызывающей стороны; ничего не возвращается по значению.
+// Возвращает has_active_friction.
+inline bool compute_fiber_solid_contact(
+    const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, std::size_t ntotal,
+    const fiber::FiberState& state, const fiber::FiberTopology& topology,
+    const std::vector<fiber::FiberMaterial>& materials,
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers, FiberSolidContactSearchResult& search,
+    std::vector<fiber::FiberDelta>& fiber_delta, std::vector<SolidDelta>& solid_delta, rhs::ReduceScratch& scratch,
+    std::vector<FiberSolidFrictionContact>* friction_contacts)
+{
+    build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
+    bool has_active_friction = false;
+    if (friction_contacts)
+        has_active_friction = compute_fiber_solid_contact_contributions(
+            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts);
+    else
+        compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
+                                                   solid_buffers);
+    rhs::reduce_contributions_into(exec, fiber_buffers, state.size(), fiber_delta, scratch);
+    rhs::reduce_contributions_into(exec, solid_buffers, ntotal, solid_delta, scratch);
+    return has_active_friction;
+}
+
+// Обёртка со старой сигнатурой: локальные search/scratch, результат по значению.
 inline FiberSolidContactResult compute_fiber_solid_contact(
     const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, std::size_t ntotal,
     const fiber::FiberState& state, const fiber::FiberTopology& topology,
@@ -676,17 +712,12 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
     std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr)
 {
     FiberSolidContactSearchResult search;
-    build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
+    rhs::ReduceScratch scratch;
     FiberSolidContactResult out;
-    if (friction_contacts)
-        out.has_active_friction = compute_fiber_solid_contact_contributions(
-            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts);
-    else
-        compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
-                                                   solid_buffers);
-    out.fiber_delta = rhs::reduce_contributions(exec, fiber_buffers, state.size());
-    out.solid_delta = rhs::reduce_contributions(exec, solid_buffers, ntotal);
-    out.primitives = search.primitives;
+    out.has_active_friction = compute_fiber_solid_contact(exec, mats, sys, ntotal, state, topology, materials,
+                                                           fiber_buffers, solid_buffers, search, out.fiber_delta,
+                                                           out.solid_delta, scratch, friction_contacts);
+    out.primitives = std::move(search.primitives);
     return out;
 }
 

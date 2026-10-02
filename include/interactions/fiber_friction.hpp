@@ -425,14 +425,18 @@ inline void compute_fiber_friction_bead_counts(const rhs::CpuExecutor& exec, std
 // спецификации задачи 4): c_k -- число активных слотов нить-нить и Fiber-Solid,
 // в которых бусина k имеет ненулевой вес; c_s -- число активных слотов
 // Fiber-Solid с частицей s. bead_count размера nfiber, solid_count размера
-// nsolid (реальные частицы [0, ntotal)); буферы переиспользуются.
+// nsolid (реальные частицы [0, ntotal)); буферы переиспользуются. Результаты
+// reduce (fiber_counts, solid_counts) и рабочая память reduce (scratch) --
+// тоже переменные вызывающей стороны (память только растёт).
 // ----------------------------------------------------------------------
 inline void compute_friction_counts(const rhs::CpuExecutor& exec, std::size_t nfiber, std::size_t nsolid,
                                      const std::vector<FiberFrictionContact>& fiber_contacts,
                                      const std::vector<FiberSolidFrictionContact>& solid_contacts,
                                      std::vector<rhs::ContributionBuffer<FiberCountDelta>>& fiber_count_buffers,
                                      std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_count_buffers,
-                                     std::vector<double>& bead_count, std::vector<double>& solid_count)
+                                     std::vector<double>& bead_count, std::vector<double>& solid_count,
+                                     std::vector<FiberCountDelta>& fiber_counts,
+                                     std::vector<SolidCountDelta>& solid_counts, rhs::ReduceScratch& scratch)
 {
     detail_friction::prepare(exec, fiber_count_buffers);
     detail_friction::prepare(exec, solid_count_buffers);
@@ -444,14 +448,29 @@ inline void compute_friction_counts(const rhs::CpuExecutor& exec, std::size_t nf
 
     if (!fiber_contacts.empty() || !solid_contacts.empty())
     {
-        const std::vector<FiberCountDelta> counts = rhs::reduce_contributions(exec, fiber_count_buffers, nfiber);
-        for (std::size_t i = 0; i < nfiber; ++i) bead_count[i] = counts[i].c;
+        rhs::reduce_contributions_into(exec, fiber_count_buffers, nfiber, fiber_counts, scratch);
+        for (std::size_t i = 0; i < nfiber; ++i) bead_count[i] = fiber_counts[i].c;
     }
     if (!solid_contacts.empty())
     {
-        const std::vector<SolidCountDelta> counts = rhs::reduce_contributions(exec, solid_count_buffers, nsolid);
-        for (std::size_t i = 0; i < nsolid; ++i) solid_count[i] = counts[i].c;
+        rhs::reduce_contributions_into(exec, solid_count_buffers, nsolid, solid_counts, scratch);
+        for (std::size_t i = 0; i < nsolid; ++i) solid_count[i] = solid_counts[i].c;
     }
+}
+
+// Обёртка со старой сигнатурой: локальные результаты reduce и рабочая память.
+inline void compute_friction_counts(const rhs::CpuExecutor& exec, std::size_t nfiber, std::size_t nsolid,
+                                     const std::vector<FiberFrictionContact>& fiber_contacts,
+                                     const std::vector<FiberSolidFrictionContact>& solid_contacts,
+                                     std::vector<rhs::ContributionBuffer<FiberCountDelta>>& fiber_count_buffers,
+                                     std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_count_buffers,
+                                     std::vector<double>& bead_count, std::vector<double>& solid_count)
+{
+    std::vector<FiberCountDelta> fiber_counts;
+    std::vector<SolidCountDelta> solid_counts;
+    rhs::ReduceScratch scratch;
+    compute_friction_counts(exec, nfiber, nsolid, fiber_contacts, solid_contacts, fiber_count_buffers,
+                            solid_count_buffers, bead_count, solid_count, fiber_counts, solid_counts, scratch);
 }
 
 // ----------------------------------------------------------------------
