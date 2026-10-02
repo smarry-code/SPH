@@ -17,7 +17,12 @@
 //           -- x, v, rho, p, u совпадают с A ПОБИТНО: флаг сам по себе не
 //           вносит численных побочных эффектов;
 //        C  флаг включён, тела 1 и 2 -- значения конечны, результат
-//           отличается от A (печатается max |dv|).
+//           отличается от A (печатается max |dv|);
+//   4  список межтельных пар search.contact_pairs: это подпоследовательность
+//      real_pairs с body[i] != body[j] (тот же порядок, k -- индекс в
+//      real_pairs); compute_solid_contact_diagnostics по нему при
+//      CpuExecutor(1), (2), (7) даёт ровно те же pair_count, max_delta, min_dt,
+//      что последовательный эталон по ВСЕМ real_pairs (кубы с проникновением).
 //
 // ПОБИТОВАЯ идентичность режима «флаг выключен» с кодом ДО изменения здесь
 // не проверяется: её обеспечивают эталоны `ctest -L regression`.
@@ -26,6 +31,7 @@
 // равным 1 (параллельная редукция с ULP-расхождениями иначе даёт шум).
 #include "input.hpp"
 #include "int_force.hpp"
+#include "interactions/solid_contact.hpp"
 #include "interactions/solid_sph.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
@@ -212,6 +218,80 @@ void test_search()
     check(cs_on == cs_off, "множества real_pairs с флагом и без него совпадают");
 }
 
+// Список контактных пар и диагностика контакта по нему (parallel_reduce с
+// порцией n/(8*nthreads)): сцена с проникновением -- второй куб сдвинут
+// навстречу первому на 0.3 dx (радиус контакта R = dx/2, зазор на решётке 0).
+void test_contact_pairs()
+{
+    std::printf("test_contact_pairs:\n");
+    SimulationConfig cfg = make_config(true, 1);
+    ParticleSystem sys = make_system(cfg, 1, 2, kApproachSpeed);
+    for (std::size_t k = kCubeN; k < kN; ++k)
+    {
+        sys.x[0][k] -= 0.3 * kDx;
+        // неоднородность скоростей: разные pdot, а значит и разные dt_limit пар
+        sys.vx[1][k] += 0.5 * std::sin(static_cast<double>(k));
+    }
+
+    rhs::CpuExecutor exec1;
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec1, cfg.mats, sys, kN, derived);
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, kN, ghosts);
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, kN, derived, ghosts, ext);
+    interactions::SolidSphSearchResult search;
+    interactions::build_solid_sph_search(exec1, cfg, ext, search);
+
+    // contact_pairs == подпоследовательность real_pairs с body[i] != body[j]
+    std::vector<interactions::SolidContactPair> expected;
+    for (std::size_t k = 0; k < search.real_pairs.size(); ++k)
+    {
+        const rhs::index_t i = search.real_pairs[k].first, j = search.real_pairs[k].second;
+        if (sys.body[i] != sys.body[j])
+            expected.push_back({i, j, static_cast<std::uint64_t>(k)});
+    }
+    note("real_pairs: " + std::to_string(search.real_pairs.size()) + ", contact_pairs: " +
+         std::to_string(search.contact_pairs.size()));
+    check(!search.contact_pairs.empty(), "межтельные пары найдены");
+    bool same_list = search.contact_pairs.size() == expected.size();
+    for (std::size_t q = 0; same_list && q < expected.size(); ++q)
+    {
+        const auto& a = search.contact_pairs[q];
+        const auto& b = expected[q];
+        same_list = a.i == b.i && a.j == b.j && a.k == b.k;
+    }
+    check(same_list, "contact_pairs == подпоследовательность real_pairs с body[i] != body[j], k -- индекс в real_pairs");
+    bool k_ok = true;
+    for (const auto& cp : search.contact_pairs)
+        k_ok = k_ok && cp.k < search.real_pairs.size() && search.real_pairs[cp.k].first == cp.i &&
+               search.real_pairs[cp.k].second == cp.j;
+    check(k_ok, "k каждой контактной пары указывает на ту же пару в real_pairs");
+
+    // Эталон: последовательный проход по ВСЕМ real_pairs (диагностика сама
+    // отфильтрует пары одного тела по body), CpuExecutor(1) -- без OpenMP-порций.
+    std::vector<interactions::SolidContactPair> all;
+    all.reserve(search.real_pairs.size());
+    for (std::size_t k = 0; k < search.real_pairs.size(); ++k)
+        all.push_back({search.real_pairs[k].first, search.real_pairs[k].second, static_cast<std::uint64_t>(k)});
+    const double dt = 1.0e-7;
+    const interactions::SolidContactDiagnostics ref = interactions::compute_solid_contact_diagnostics(
+        rhs::CpuExecutor(1), cfg, cfg.mats, sys, derived.c, dt, all);
+    note("эталон: pair_count = " + std::to_string(ref.pair_count) + ", max_delta = " +
+         std::to_string(ref.max_delta) + ", min_dt = " + std::to_string(ref.min_dt));
+    check(ref.pair_count > 0, "в сцене есть контактные пары с проникновением (pair_count > 0)");
+    check(ref.max_delta > 0.0, "max_delta > 0");
+
+    for (int nt : {1, 2, 7})
+    {
+        const interactions::SolidContactDiagnostics got = interactions::compute_solid_contact_diagnostics(
+            rhs::CpuExecutor(nt), cfg, cfg.mats, sys, derived.c, dt, search.contact_pairs);
+        check(got.pair_count == ref.pair_count && got.max_delta == ref.max_delta && got.min_dt == ref.min_dt,
+              "диагностика по contact_pairs при CpuExecutor(" + std::to_string(nt) +
+                  ") == эталон по всем real_pairs (pair_count, max_delta, min_dt)");
+    }
+}
+
 void test_exception()
 {
     std::printf("test_exception:\n");
@@ -341,6 +421,7 @@ int main()
 {
     std::printf("test_sph_body_isolation (sph_same_body_only)\n");
     test_search();
+    test_contact_pairs();
     test_exception();
     test_integration();
 

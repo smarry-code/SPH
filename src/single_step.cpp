@@ -136,7 +136,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // --- Compute interaction kernels -> contributions -----------------------
     interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, ws.sph_buffers);
     interactions::compute_solid_contact_contributions(exec, cfg, cfg.mats, sys, derived.c, dt,
-                                                        search.real_pairs, ws.contact_buffers);
+                                                        search.contact_pairs, ws.contact_buffers);
 
     // --- Reduce (owner-computes по шардам, fiber/PLAN.md §3.5) -------------
     // Наборы буферов склеиваются логически (без копирования), порядок прежний:
@@ -160,7 +160,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     if (cfg.contact_force_type != contact::Off)
     {
         const interactions::SolidContactDiagnostics diag = interactions::compute_solid_contact_diagnostics(
-            exec, cfg, cfg.mats, sys, derived.c, dt, search.real_pairs);
+            exec, cfg, cfg.mats, sys, derived.c, dt, search.contact_pairs);
         wb.contact_pair_count = diag.pair_count;
         wb.contact_max_delta = diag.max_delta;
         wb.min_dt_contact = diag.min_dt;

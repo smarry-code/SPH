@@ -363,10 +363,24 @@ struct SolidSphPrimitive
     double dwdx[dim] = {};
 };
 
+// Межтельная пара real-real из real_pairs (body[i] != body[j]) -- список для
+// Solid-Solid-Contact. k -- исходный индекс пары в real_pairs: он передаётся
+// как primitive_id в meta вкладов, чтобы meta (и детерминированный порядок
+// reduce) не зависели от того, что контакт идёт по сокращённому списку.
+struct SolidContactPair
+{
+    rhs::index_t i, j;
+    std::uint64_t k;
+};
+
 struct SolidSphSearchResult
 {
     std::vector<SolidSphPrimitive> primitives;                          // (real, real|ghost)
     std::vector<std::pair<rhs::index_t, rhs::index_t>> real_pairs;      // подмножество (real, real)
+    // Подмножество real_pairs с body[i] != body[j], порядок real_pairs сохранён.
+    // По нему идут контактное ядро и диагностика контакта: межтельных пар на
+    // порядки меньше, чем всех real_pairs.
+    std::vector<SolidContactPair> contact_pairs;
 
     // Рабочая память поиска. Лежит здесь, а не в локальных переменных
     // build_solid_sph_search, чтобы при постоянном SolidSphSearchResult
@@ -399,6 +413,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
 
     out.primitives.clear();
     out.real_pairs.clear();
+    out.contact_pairs.clear();
     if (ext.next == 0) return;
 
     double max_h = 0.0;
@@ -430,6 +445,13 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
 
     out.primitives.reserve(pairs.size());
     out.real_pairs.reserve(pairs.size());
+    // Добавление пары real-real в real_pairs; межтельная пара попадает и в
+    // contact_pairs (k -- её индекс в real_pairs).
+    auto add_real_pair = [&](rhs::index_t i, rhs::index_t j) {
+        if (ext.body[i] != ext.body[j])
+            out.contact_pairs.push_back({i, j, static_cast<std::uint64_t>(out.real_pairs.size())});
+        out.real_pairs.emplace_back(i, j);
+    };
     for (const auto& pr : pairs)
     {
         const rhs::index_t i = pr.first, j = pr.second;
@@ -439,7 +461,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
         // Пары с ghost (j >= nreal) не затрагиваются.
         if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
         {
-            out.real_pairs.emplace_back(i, j);
+            add_real_pair(i, j);
             continue;
         }
         double dx[dim];
@@ -456,7 +478,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
         prim.w = w;
         for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
         out.primitives.push_back(prim);
-        if (j < nreal) out.real_pairs.emplace_back(i, j);
+        if (j < nreal) add_real_pair(i, j);
     }
 }
 
