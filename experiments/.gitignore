@@ -1,0 +1,11 @@
+# Вычисляемые артефакты, снятые с учёта git по правилу объёма (README.md §3):
+# файлы остаются на диске, в репозиторий не попадают; пересчёт — scripts/rebuild_artifacts.sh
+# соответствующего каталога.
+2026-10-01-clamp-fiber-viz/*.gif
+2026-10-01-clamp-fiber-viz/*.png
+2026-10-01-clamp-fiber-viz/*.svg
+2026-10-01-clamp-solid-viz/*.gif
+2026-10-01-clamp-solid-viz/*.png
+2026-10-01-clamp-solid-viz/*.svg
+2026-10-01-guo2019-1t-scaled/anim_1t.gif
+2026-10-02-guo2019-1t-base/anim_1t_base.gif
