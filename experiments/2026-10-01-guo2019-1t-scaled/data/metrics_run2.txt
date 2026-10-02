@@ -1,0 +1,13 @@
+# метрики из C:/Users/Maria/AppData/Local/Temp/claude/c--dip-sph-SPH/a8a1f3a8-2d58-49e6-a919-fec4ab90b716/scratchpad/run2/out/1T_scaled_v76.0_r0\monitor.csv
+строк монитора            : 13058
+t_конец, мкс              : 167.562
+max w_f, мм               : 8.8287 (при t = 145.112 мкс)
+первый разрыв нити, мкс   : 103.614 (шаг 8081)
+порвано нитей верт./гориз. (кон.): 4/0
+v_z в конце, м/с          : -59.131
+min v_z, м/с              : -76.000
+max v_z, м/с              : -59.131
+E_tot(0), Дж              : 5.054
+E_tot_max / E_tot_0       : 1.000000
+E_tot_end / E_tot_0       : 0.659883
+max |Ff_z|, Н             : 1203
