@@ -49,6 +49,12 @@ struct SimulationConfig
     // меньше — оставлять паре (1-gamma)*pdot. Рабочий диапазон (0; 1.6].
     double contact_impulse_gamma = 1.0;
 
+    // --- Изоляция SPH-сумм Solid по телам ---
+    // При true SPH-пары реальных частиц разных тел (sys.body) отвергаются;
+    // тела взаимодействуют только через Solid-Solid-Contact
+    // (contact_force_type != 0). По умолчанию false (прежнее поведение).
+    bool sph_same_body_only = false;
+
     // --- Шаг по времени / вывод ---
     double CFL       = 0.1;             // Число Куранта
     double t_total   = 3e-6;            // Полное время расчёта
@@ -94,6 +100,7 @@ inline void SimulationConfig::apply_defaults()
     pa_sph = 2;  nnps = 1;  sle = 1;  skf = 1;
     density_method = 1;  coloring_niac_threshold = 0;
     ode_solver = 0;
+    sph_same_body_only = false;
     contact_force_type = 0;  contact_penalty_scale = 1.0;  contact_impulse_gamma = 1.0;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;

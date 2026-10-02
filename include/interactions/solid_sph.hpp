@@ -295,6 +295,7 @@ struct SolidExtended
     std::vector<double> mass, rho, p, c;
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
     std::vector<double> hsml;
+    std::vector<int> body; // номер тела (sys.body); ghost наследует body источника
     std::size_t nreal = 0;
     std::size_t next = 0; // nreal + nghost
 };
@@ -316,6 +317,7 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
     ext.sxx.resize(ext.next);  ext.syy.resize(ext.next);  ext.szz.resize(ext.next);
     ext.sxy.resize(ext.next);  ext.syz.resize(ext.next);  ext.sxz.resize(ext.next);
     ext.hsml.resize(ext.next);
+    ext.body.resize(ext.next);
 
     for (std::size_t i = 0; i < nreal; ++i)
     {
@@ -325,6 +327,7 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxx[i] = sys.sxx[i];   ext.syy[i] = sys.syy[i];   ext.szz[i] = sys.szz[i];
         ext.sxy[i] = sys.sxy[i];   ext.syz[i] = sys.syz[i];   ext.sxz[i] = sys.sxz[i];
         ext.hsml[i] = sys.hsml[i];
+        ext.body[i] = sys.body[i];
     }
     for (std::size_t g = 0; g < nghost; ++g)
     {
@@ -343,6 +346,7 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxx[dst] = sys.sxx[src];   ext.syy[dst] = sys.syy[src];   ext.szz[dst] = sys.szz[src];
         ext.sxy[dst] = -sys.sxy[src];  ext.syz[dst] = sys.syz[src];   ext.sxz[dst] = sys.sxz[src];
         ext.hsml[dst] = sys.hsml[src];
+        ext.body[dst] = sys.body[src]; // как inzializ_2d_symm_index
     }
 }
 
@@ -378,6 +382,14 @@ struct SolidSphSearchResult
 inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const SimulationConfig& cfg,
                                     const SolidExtended& ext, SolidSphSearchResult& out)
 {
+    // Изоляция SPH-сумм по телам (ТЗ эксперименты Guo 2019, §4.2): без
+    // Solid-Solid-Contact разные тела не взаимодействовали бы вовсе.
+    if (cfg.sph_same_body_only && cfg.contact_force_type == 0)
+    {
+        throw std::runtime_error(
+            "sph_same_body_only = 1 требует contact_force_type != 0: иначе разные тела не взаимодействуют вовсе");
+    }
+
     out.primitives.clear();
     out.real_pairs.clear();
     if (ext.next == 0) return;
@@ -393,6 +405,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     index.build(coords, ext.next, radius > 0.0 ? radius : 1.0);
 
     const std::size_t nreal = ext.nreal;
+    const bool same_body_only = cfg.sph_same_body_only;
     auto accept = [&](rhs::index_t i, rhs::index_t j) -> bool {
         if (i >= nreal) return false;
         double r2 = 0.0;
@@ -411,6 +424,15 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     for (const auto& pr : pairs)
     {
         const rhs::index_t i = pr.first, j = pr.second;
+        // Изоляция по телам (ТЗ эксперименты Guo 2019, §4.2): пара real-real
+        // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по
+        // этому же списку работает Solid-Solid-Contact (solid_contact.hpp).
+        // Пары с ghost (j >= nreal) не затрагиваются.
+        if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+        {
+            out.real_pairs.emplace_back(i, j);
+            continue;
+        }
         double dx[dim];
         double r2 = 0.0;
         for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }

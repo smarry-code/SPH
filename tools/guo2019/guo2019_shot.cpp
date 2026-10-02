@@ -1,0 +1,810 @@
+// guo2019_shot.cpp
+// Серийные выстрелы Guo 2019 (ТЗ Guo 2019 §8): один или несколько выстрелов стального
+// шара по мишени A / 1T / 1T_A / A_1T, сводка shots.csv, ballistic limit V_BL (vbl.txt)
+// и замер стоимости (ТЗ Guo 2019 §7). Не тест: add_test() не добавлен.
+//
+// Использование:
+//   guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled
+//                (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)
+//                --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]
+//                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--repeat=N]
+//                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
+//                [--probe-frame] [--plate-nz=N]
+//
+// Каждый выстрел -- свежая сцена (build_guo_scene) в своём подкаталоге
+// <out>/<config>_<level>[_nz<N>]_v<V0>_r<i>/; файлы конвейера (log.txt, кадры) пишутся в CWD,
+// поэтому на время выстрела делается chdir туда. Код сцены и монитора -- tests/guo2019_*.hpp.
+
+#include "guo2019_monitor.hpp"
+#include "guo2019_scene.hpp"
+
+#include "e2e_harness.hpp"
+
+#include "fiber/fiber_output.hpp"
+#include "output.hpp"
+#include "run_guard.hpp"
+#include "time_integration.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+namespace fs = std::filesystem;
+using namespace guo2019;
+
+namespace
+{
+
+using KV = std::vector<std::pair<std::string, std::string>>;
+
+const char* reason_name(RunGuard::Reason r)
+{
+    switch (r)
+    {
+    case RunGuard::Reason::None: return "None";
+    case RunGuard::Reason::WallClock: return "WallClock";
+    case RunGuard::Reason::Stalled: return "Stalled";
+    case RunGuard::Reason::StepLimit: return "StepLimit";
+    }
+    return "?";
+}
+
+std::string fmtg(double v, int prec = 9)
+{
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.*g", prec, v);
+    return buf;
+}
+
+std::string fmt_v0(double v)
+{
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.1f", v);
+    return buf;
+}
+
+// ---------------------------------------------------------------------------
+// Параметры командной строки
+// ---------------------------------------------------------------------------
+struct Options
+{
+    Config config = Config::A;
+    Level level = Level::Base;
+    bool have_config = false, have_level = false;
+    bool have_v0 = false, paper_shots = false, have_list = false;
+    std::vector<double> v0_list; // --v0 или --v0-list
+    fs::path out;
+    bool frames_camera = false;
+    double save_t = -1.0; // > 0 -- интервал кадров (--save-t, для анимации); иначе по --frames
+    double t_max = -1.0; // < 0 -- default_t_max(config)
+    double time_limit = 0.0;
+    std::size_t max_steps = 0;
+    bool body_isolation = true;
+    double mu = kMuDefault;
+    int repeat = 1;
+    bool repeat_set = false;
+    int bracket = -1; // -1 -- по умолчанию (включён с --paper-shots), 0 -- выкл., 1 -- вкл.
+    std::size_t n_mon = 1, n_diag = 10;
+    int threads = 0; // 0 -- как в cfg по умолчанию
+    int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
+    int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
+};
+
+bool parse_double(const std::string& s, double& out)
+{
+    try
+    {
+        std::size_t pos = 0;
+        out = std::stod(s, &pos);
+        return pos == s.size() && std::isfinite(out);
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+bool parse_ll(const std::string& s, long long& out)
+{
+    try
+    {
+        std::size_t pos = 0;
+        out = std::stoll(s, &pos);
+        return pos == s.size();
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void print_usage()
+{
+    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled\n"
+                "                   (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)\n"
+                "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
+                "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--repeat=N]\n"
+                "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
+                "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n");
+}
+
+// 0 -- разобрано, 1 -- справка, 2 -- ошибка
+int parse_args(int argc, char** argv, Options& o)
+{
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string a = argv[i];
+        auto val = [&](const char* key) -> std::string { return a.substr(std::strlen(key)); };
+        auto bad = [&](const char* what) {
+            std::fprintf(stderr, "Неверное значение %s: %s\n", what, a.c_str());
+            return 2;
+        };
+        double d = 0.0;
+        long long n = 0;
+        if (a == "-h" || a == "--help") return 1;
+        else if (a.rfind("--config=", 0) == 0)
+        {
+            if (!parse_config(val("--config="), o.config)) return bad("--config");
+            o.have_config = true;
+        }
+        else if (a.rfind("--level=", 0) == 0)
+        {
+            if (!parse_level(val("--level="), o.level)) return bad("--level");
+            o.have_level = true;
+        }
+        else if (a.rfind("--v0-list=", 0) == 0)
+        {
+            std::stringstream ss(val("--v0-list="));
+            std::string tok;
+            while (std::getline(ss, tok, ','))
+            {
+                if (!parse_double(tok, d) || !(d > 0.0)) return bad("--v0-list");
+                o.v0_list.push_back(d);
+            }
+            if (o.v0_list.empty()) return bad("--v0-list");
+            o.have_list = true;
+        }
+        else if (a.rfind("--v0=", 0) == 0)
+        {
+            if (!parse_double(val("--v0="), d) || !(d > 0.0)) return bad("--v0");
+            o.v0_list.push_back(d);
+            o.have_v0 = true;
+        }
+        else if (a == "--paper-shots") o.paper_shots = true;
+        else if (a.rfind("--out=", 0) == 0) o.out = val("--out=");
+        else if (a.rfind("--frames=", 0) == 0)
+        {
+            const std::string f = val("--frames=");
+            if (f == "off") o.frames_camera = false;
+            else if (f == "camera") o.frames_camera = true;
+            else return bad("--frames");
+        }
+        else if (a.rfind("--save-t=", 0) == 0)
+        {
+            if (!parse_double(val("--save-t="), d) || !(d > 0.0)) return bad("--save-t");
+            o.save_t = d;
+        }
+        else if (a.rfind("--t-max=", 0) == 0)
+        {
+            if (!parse_double(val("--t-max="), d) || !(d > 0.0)) return bad("--t-max");
+            o.t_max = d;
+        }
+        else if (a.rfind("--time-limit=", 0) == 0)
+        {
+            if (!parse_double(val("--time-limit="), d) || d < 0.0) return bad("--time-limit");
+            o.time_limit = d;
+        }
+        else if (a.rfind("--max-steps=", 0) == 0)
+        {
+            if (!parse_ll(val("--max-steps="), n) || n < 1) return bad("--max-steps");
+            o.max_steps = static_cast<std::size_t>(n);
+        }
+        else if (a == "--no-body-isolation") o.body_isolation = false;
+        else if (a.rfind("--mu=", 0) == 0)
+        {
+            if (!parse_double(val("--mu="), d) || d < 0.0) return bad("--mu");
+            o.mu = d;
+        }
+        else if (a.rfind("--repeat=", 0) == 0)
+        {
+            if (!parse_ll(val("--repeat="), n) || n < 1 || n > 100) return bad("--repeat");
+            o.repeat = static_cast<int>(n);
+            o.repeat_set = true;
+        }
+        else if (a == "--bracket") o.bracket = 1;
+        else if (a == "--no-bracket") o.bracket = 0;
+        else if (a.rfind("--n-mon=", 0) == 0)
+        {
+            if (!parse_ll(val("--n-mon="), n) || n < 1) return bad("--n-mon");
+            o.n_mon = static_cast<std::size_t>(n);
+        }
+        else if (a.rfind("--n-diag=", 0) == 0)
+        {
+            if (!parse_ll(val("--n-diag="), n) || n < 1) return bad("--n-diag");
+            o.n_diag = static_cast<std::size_t>(n);
+        }
+        else if (a.rfind("--threads=", 0) == 0)
+        {
+            if (!parse_ll(val("--threads="), n) || n < 1 || n > 4096) return bad("--threads");
+            o.threads = static_cast<int>(n);
+        }
+        else if (a.rfind("--plate-nz=", 0) == 0)
+        {
+            if (!parse_ll(val("--plate-nz="), n) || n < 1 || n > 64) return bad("--plate-nz");
+            o.plate_nz = static_cast<int>(n);
+        }
+        else if (a == "--probe-frame") o.probe_frame = 1;
+        else if (a == "--no-probe-frame") o.probe_frame = 0;
+        else
+        {
+            std::fprintf(stderr, "Неизвестный аргумент: %s\n", a.c_str());
+            return 2;
+        }
+    }
+    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T\n"); return 2; }
+    if (!o.have_level) { std::fprintf(stderr, "Нужен --level=base|fine|smoke|scaled\n"); return 2; }
+    if (o.out.empty()) { std::fprintf(stderr, "Нужен --out=<каталог>\n"); return 2; }
+    const int modes = (o.have_v0 ? 1 : 0) + (o.paper_shots ? 1 : 0) + (o.have_list ? 1 : 0);
+    if (modes != 1)
+    {
+        std::fprintf(stderr, "Нужно ровно одно из --v0=, --paper-shots, --v0-list=\n");
+        return 2;
+    }
+    if (o.bracket < 0) o.bracket = o.paper_shots ? 1 : 0;
+    if (!o.repeat_set) o.repeat = o.paper_shots ? 2 : 1; // ТЗ Guo 2019 §8.3: --repeat=2 для выстрелов статьи
+    if (o.probe_frame < 0) o.probe_frame = o.max_steps > 0 ? 1 : 0;
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Запись одного выстрела
+// ---------------------------------------------------------------------------
+struct ShotRecord
+{
+    double V0 = 0.0;
+    int rep = 0;
+    bool ok = false; // выстрел отработал и записал shot.txt
+    std::string error;
+    Outcome outcome = Outcome::Undetermined;
+    double V_R = 0.0, e = 0.0, m_s = 0.0;
+    fs::path dir;
+    KV kv; // содержимое shot.txt (в порядке записи)
+};
+
+struct CwdGuard
+{
+    fs::path old;
+    explicit CwdGuard(const fs::path& to) : old(fs::current_path()) { fs::current_path(to); }
+    ~CwdGuard()
+    {
+        std::error_code ec;
+        fs::current_path(old, ec);
+    }
+};
+
+struct FrameSizes
+{
+    std::size_t n_sph = 0, n_fiber = 0;
+    std::uintmax_t bytes_sph = 0, bytes_fiber = 0;
+};
+
+FrameSizes scan_frame_sizes(const fs::path& dir)
+{
+    FrameSizes fz;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(dir, ec))
+    {
+        const std::string n = e.path().filename().string();
+        std::error_code ec2;
+        if (n.rfind("sph_output_", 0) == 0)
+        {
+            ++fz.n_sph;
+            fz.bytes_sph += fs::file_size(e.path(), ec2);
+        }
+        else if (n.rfind("fiber_output_", 0) == 0)
+        {
+            ++fz.n_fiber;
+            fz.bytes_fiber += fs::file_size(e.path(), ec2);
+        }
+    }
+    return fz;
+}
+
+KV parse_kv_line(const std::string& line)
+{
+    KV out;
+    std::stringstream ss(line);
+    std::string tok;
+    while (ss >> tok)
+    {
+        const std::size_t eq = tok.find('=');
+        if (eq == std::string::npos) continue;
+        out.emplace_back(tok.substr(0, eq), tok.substr(eq + 1));
+    }
+    return out;
+}
+
+std::string kv_get(const KV& kv, const std::string& key)
+{
+    for (const auto& p : kv)
+        if (p.first == key) return p.second;
+    return std::string();
+}
+
+bool g_first_scene_printed = false;
+
+ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& note)
+{
+    ShotRecord rec;
+    rec.V0 = V0;
+    rec.rep = rep;
+    const std::string cname = config_name(opt.config);
+    const std::string lname = level_name(opt.level);
+    const std::string nz_tag = opt.plate_nz > 0 ? "_nz" + std::to_string(opt.plate_nz) : std::string();
+    const fs::path sub =
+        fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
+    rec.dir = sub;
+    try
+    {
+        fs::create_directories(sub);
+        CwdGuard cwd(sub);
+
+        // ---- сцена
+        const auto tb0 = std::chrono::steady_clock::now();
+        GuoScene sc;
+        {
+            e2e::ScopedSilence silence(true);
+            sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz);
+        }
+        const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
+        rec.m_s = sc.ball_mass;
+        if (!g_first_scene_printed)
+        {
+            g_first_scene_printed = true;
+            print_scene_summary(stdout, sc);
+        }
+
+        const double t_max = opt.t_max > 0.0 ? opt.t_max : default_t_max(opt.config, opt.level);
+        sc.cfg.t_total = t_max;
+        // Кадр на шаге 0 пишется всегда (next_output_time стартует с 0), поэтому при frames=off
+        // save_t огромен: после него кадров больше не будет.
+        sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);
+        sc.cfg.print_step = 1000000000;
+        // cfg.num_threads конвейер не читает (его применяет только main.cpp), поэтому
+        // число потоков задаётся напрямую: CpuExecutor берёт omp_get_max_threads().
+        if (opt.threads > 0)
+        {
+            sc.cfg.num_threads = opt.threads;
+#ifdef _OPENMP
+            omp_set_num_threads(opt.threads);
+#endif
+        }
+
+        double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal), time = 0.0;
+        RunGuard guard(opt.time_limit, 2.0e6, 200); // time_limit <= 0 -- без лимита по стенному времени
+        if (opt.max_steps > 0) guard.set_step_limit(opt.max_steps);
+        MonitorOptions mo;
+        mo.n_mon = opt.n_mon;
+        mo.n_diag = opt.n_diag;
+        mo.t_max = t_max;
+        mo.csv_path = (sub / "monitor.csv").string();
+        mo.guard = &guard;
+        GuoShotMonitor monitor(sc, mo);
+        guard.set_step_observer([&](double d, double t) { monitor.on_step(d, t); });
+
+        // ---- прогон
+        const auto w0 = std::chrono::steady_clock::now();
+        {
+            e2e::ScopedSilence silence(true);
+            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard);
+        }
+        const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
+        monitor.finalize();
+        const MonitorStats& st = monitor.stats();
+
+        // ---- кадры: кадр шага 0 есть всегда; --probe-frame добавляет кадр конечного состояния
+        FrameSizes fz0 = scan_frame_sizes(sub);
+        FrameSizes probe;
+        if (opt.probe_frame == 1)
+        {
+            e2e::ScopedSilence silence(true);
+            output(sc.model.solid, sc.ntotal, time, 99999, dt);
+            if (sc.has_fabric) fiber::fiber_output(sc.model, 99999, time);
+            const FrameSizes fz1 = scan_frame_sizes(sub);
+            probe.bytes_sph = fz1.bytes_sph - fz0.bytes_sph;
+            probe.bytes_fiber = fz1.bytes_fiber - fz0.bytes_fiber;
+        }
+        const FrameSizes fz = scan_frame_sizes(sub);
+        // размер одного кадра: из пробного, иначе из средних по записанным кадрам
+        const double frame_sph = opt.probe_frame == 1 ? static_cast<double>(probe.bytes_sph)
+                                 : (fz0.n_sph ? static_cast<double>(fz0.bytes_sph) / fz0.n_sph : 0.0);
+        const double frame_fiber = opt.probe_frame == 1 ? static_cast<double>(probe.bytes_fiber)
+                                   : (fz0.n_fiber ? static_cast<double>(fz0.bytes_fiber) / fz0.n_fiber : 0.0);
+        if (!opt.frames_camera && !(opt.save_t > 0.0) && opt.probe_frame != 1)
+        {
+            // кадры выключены: служебный кадр шага 0 после замера размера удаляем
+            std::error_code ec;
+            for (const auto& e : fs::directory_iterator(sub, ec))
+            {
+                const std::string n = e.path().filename().string();
+                if (n.rfind("sph_output_", 0) == 0 || n.rfind("fiber_output_", 0) == 0) fs::remove(e.path());
+            }
+        }
+
+        // StepLimit от request_stop монитора -- штатный останов по исходу или t_max, не от --max-steps
+        const std::string greason =
+            (st.stopped_by_monitor && guard.reason() == RunGuard::Reason::StepLimit) ? "Monitor" : reason_name(guard.reason());
+        monitor.write_shot_txt((sub / "shot.txt").string(), wall, greason);
+
+        // ---- стоимость: дописываем ключи в shot.txt
+        const double steps = static_cast<double>(st.steps);
+        const double per_step = steps > 0.0 ? wall / steps : 0.0;
+        const double dt_mean = steps > 0.0 ? st.t_end / steps : 0.0;
+        const double steps_fc = dt_mean > 0.0 ? t_max / dt_mean : 0.0;
+        const double wall_fc_h = steps_fc * per_step / 3600.0;
+        const double mon_share = wall > 0.0 ? 100.0 * st.monitor_wall_s / wall : 0.0;
+        std::string line;
+        {
+            std::ifstream in(sub / "shot.txt");
+            std::getline(in, line);
+        }
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        auto add = [&](const std::string& k, const std::string& v) { line += " " + k + "=" + v; };
+        add("rep", std::to_string(rep));
+        add("t_max", fmtg(t_max));
+        add("ntotal", std::to_string(sc.ntotal));
+        add("n_ball", std::to_string(sc.n_ball));
+        add("n_plate", std::to_string(sc.n_plate));
+        add("plate_nz", std::to_string(sc.plate_nz));
+        add("n_beads", std::to_string(sc.actual_beads));
+        add("n_bonds", std::to_string(sc.actual_bonds));
+        add("n_mon", std::to_string(opt.n_mon));
+        add("n_diag", std::to_string(opt.n_diag));
+        add("scene_build_s", fmtg(build_s, 6));
+        add("wall_per_step_s", fmtg(per_step, 6));
+        add("dt_mean", fmtg(dt_mean));
+        add("steps_forecast", fmtg(steps_fc, 8));
+        add("wall_forecast_h", fmtg(wall_fc_h, 6));
+        add("monitor_wall_s", fmtg(st.monitor_wall_s, 6));
+        add("monitor_share_pct", fmtg(mon_share, 4));
+        add("frames_sph_n", std::to_string(fz.n_sph));
+        add("frames_fiber_n", std::to_string(fz.n_fiber));
+        add("frames_bytes_total", std::to_string(fz.bytes_sph + fz.bytes_fiber));
+        add("frame_sph_bytes", fmtg(frame_sph, 10));
+        add("frame_fiber_bytes", fmtg(frame_fiber, 10));
+        {
+            std::ofstream outf(sub / "shot.txt");
+            outf << line << "\n";
+        }
+
+        rec.kv = parse_kv_line(line);
+        rec.outcome = st.outcome;
+        rec.V_R = st.V_R;
+        rec.e = monitor.shot_energy();
+        rec.ok = true;
+
+        // ---- вывод в консоль
+        const bool det = st.outcome == Outcome::Perforated || st.outcome == Outcome::NotPerforated;
+        std::printf("[выстрел] %s %s%s V0=%s r=%d: %s, V_R=%s, e=%s Дж, шагов=%zu, wall=%.2f с (%.4f с/шаг), "
+                    "dt_first=%.3e с, монитор %.2f %%, сторож=%s%s\n",
+                    cname.c_str(), lname.c_str(), nz_tag.c_str(), fmt_v0(V0).c_str(), rep, outcome_name(st.outcome),
+                    det ? fmtg(st.V_R, 6).c_str() : "-", det ? fmtg(rec.e, 6).c_str() : "-", st.steps, wall, per_step,
+                    st.dt_first, mon_share, greason.c_str(), note.c_str());
+        std::printf("          стоимость: ntotal=%zu n_ball=%zu n_plate=%zu бусин=%zu связей=%zu; сцена %.2f с; dt_first=%.3e "
+                    "dt_min=%.3e dt_mean=%.3e; прогноз: %.3g шагов до t_max=%.0f мкс, %.3g ч; кадр: Solid %.3g МБ, нити "
+                    "%.3g МБ; кадров %zu+%zu\n",
+                    sc.ntotal, sc.n_ball, sc.n_plate, sc.actual_beads, sc.actual_bonds, build_s, st.dt_first, st.dt_min,
+                    dt_mean, steps_fc, t_max * 1e6, wall_fc_h, frame_sph / 1048576.0, frame_fiber / 1048576.0, fz.n_sph,
+                    fz.n_fiber);
+        if (det || st.steps > 0) monitor.print_energy_decomposition(stdout);
+    }
+    catch (const std::exception& ex)
+    {
+        rec.ok = false;
+        rec.error = ex.what();
+        std::printf("[выстрел] %s %s V0=%s r=%d: ОШИБКА: %s\n", cname.c_str(), lname.c_str(), fmt_v0(V0).c_str(), rep,
+                    ex.what());
+    }
+    return rec;
+}
+
+// ---------------------------------------------------------------------------
+// V_BL (ТЗ Guo 2019 §8.3)
+// ---------------------------------------------------------------------------
+struct VblResult
+{
+    bool has_n = false, has_p = false;
+    double max_n = 0.0, min_p = 0.0;
+    std::size_t n_det = 0, n_undet = 0, n_used = 0;
+    bool defined = false;
+    double e_bar = 0.0, V_BL = 0.0;
+    double m_s = 0.0;
+};
+
+VblResult compute_vbl(const std::vector<ShotRecord>& recs)
+{
+    VblResult r;
+    for (const auto& s : recs)
+    {
+        if (!s.ok) continue;
+        r.m_s = s.m_s;
+        if (s.outcome == Outcome::NotPerforated)
+        {
+            ++r.n_det;
+            if (!r.has_n || s.V0 > r.max_n) r.max_n = s.V0;
+            r.has_n = true;
+        }
+        else if (s.outcome == Outcome::Perforated)
+        {
+            ++r.n_det;
+            if (!r.has_p || s.V0 < r.min_p) r.min_p = s.V0;
+            r.has_p = true;
+        }
+        else
+            ++r.n_undet;
+    }
+    if (r.has_n && r.has_p && r.m_s > 0.0)
+    {
+        double sum = 0.0;
+        for (const auto& s : recs)
+            if (s.ok && s.outcome == Outcome::Perforated && s.V0 > r.max_n && s.V0 <= r.max_n + 15.0)
+            {
+                sum += s.e;
+                ++r.n_used;
+            }
+        if (r.n_used > 0)
+        {
+            r.e_bar = sum / static_cast<double>(r.n_used);
+            r.V_BL = std::sqrt(2.0 * r.e_bar / r.m_s);
+            r.defined = true;
+        }
+    }
+    return r;
+}
+
+void write_vbl(const Options& opt, const std::vector<ShotRecord>& recs, std::FILE* extra)
+{
+    const VblResult v = compute_vbl(recs);
+    const PaperVBL pv = paper_vbl(opt.config);
+    auto emit = [&](std::FILE* f) {
+        std::fprintf(f, "config=%s level=%s mu=%g body_isolation=%d\n", config_name(opt.config), level_name(opt.level),
+                     opt.mu, opt.body_isolation ? 1 : 0);
+        std::fprintf(f, "выстрелов с определённым исходом: %zu, не определён (исключены): %zu\n", v.n_det, v.n_undet);
+        if (v.has_n) std::fprintf(f, "наибольшая «н» (не пробит): %.1f м/с\n", v.max_n);
+        else std::fprintf(f, "наибольшая «н» (не пробит): нет\n");
+        if (v.has_p) std::fprintf(f, "наименьшая «п» (пробит): %.1f м/с\n", v.min_p);
+        else std::fprintf(f, "наименьшая «п» (пробит): нет\n");
+        if (v.has_n && v.has_p)
+            std::fprintf(f, "интервал [н; п] = [%.1f; %.1f] м/с%s\n", v.max_n, v.min_p,
+                         v.min_p < v.max_n ? " (немонотонный: «п» ниже «н»)" : "");
+        if (v.defined)
+        {
+            std::fprintf(f, "ē = %.6g Дж по %zu пробивным выстрелам в пределах 15 м/с над %.1f, m_s = %.6g кг\n", v.e_bar,
+                         v.n_used, v.max_n, v.m_s);
+            std::fprintf(f, "V_BL = %.2f м/с (статья: %.0f +%.0f/-%.0f)\n", v.V_BL, pv.value, pv.plus, pv.minus);
+        }
+        else
+            std::fprintf(f, "V_BL не определён (%s)\n",
+                         !v.has_p ? "нет пробитых выстрелов"
+                         : !v.has_n ? "нет непробитых выстрелов"
+                                    : "нет пробитых выстрелов в пределах 15 м/с над наибольшей «н»");
+    };
+    std::FILE* f = std::fopen((fs::absolute(opt.out) / "vbl.txt").string().c_str(), "w");
+    if (f)
+    {
+        emit(f);
+        std::fclose(f);
+    }
+    if (extra) emit(extra);
+}
+
+void write_shots_csv(const Options& opt, const std::vector<ShotRecord>& recs)
+{
+    const ShotRecord* first = nullptr;
+    for (const auto& s : recs)
+        if (s.ok) { first = &s; break; }
+    if (!first) return;
+    std::FILE* f = std::fopen((fs::absolute(opt.out) / "shots.csv").string().c_str(), "w");
+    if (!f) return;
+    for (std::size_t k = 0; k < first->kv.size(); ++k) std::fprintf(f, "%s%s", k ? "," : "", first->kv[k].first.c_str());
+    std::fprintf(f, "\n");
+    for (const auto& s : recs)
+    {
+        if (!s.ok) continue;
+        for (std::size_t k = 0; k < first->kv.size(); ++k)
+            std::fprintf(f, "%s%s", k ? "," : "", kv_get(s.kv, first->kv[k].first).c_str());
+        std::fprintf(f, "\n");
+    }
+    std::fclose(f);
+}
+
+bool has_tried(const std::vector<ShotRecord>& recs, double v)
+{
+    for (const auto& s : recs)
+        if (std::fabs(s.V0 - v) < 1.0e-6) return true;
+    return false;
+}
+
+std::string paper_note(const std::vector<PaperShot>& ps, const ShotRecord& r)
+{
+    std::string out;
+    bool any = false;
+    for (const auto& p : ps)
+        if (std::fabs(p.V0 - r.V0) < 1.0e-6)
+        {
+            any = true;
+            out += std::string(out.empty() ? "" : "; ") + (p.perforated ? "п" : "н") +
+                   (p.perforated ? " V_R=" + fmtg(p.V_R, 4) : std::string());
+        }
+    if (!any) return std::string();
+    const bool det = r.outcome == Outcome::Perforated || r.outcome == Outcome::NotPerforated;
+    const char* model = !det ? "?" : (r.outcome == Outcome::Perforated ? "п" : "н");
+    // совпадение исхода с хотя бы одним опытом при этой скорости
+    bool match = false;
+    for (const auto& p : ps)
+        if (std::fabs(p.V0 - r.V0) < 1.0e-6 && det && p.perforated == (r.outcome == Outcome::Perforated)) match = true;
+    return std::string(" | опыт: ") + out + " | модель: " + model + (r.outcome == Outcome::Perforated ? " V_R=" + fmtg(r.V_R, 4) : "") +
+           (!det ? " | ИСХОД НЕ ОПРЕДЕЛЁН" : match ? " | ИСХОД СОВПАЛ" : " | ИСХОД НЕ СОВПАЛ");
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    Options opt;
+    const int pr = parse_args(argc, argv, opt);
+    if (pr == 1)
+    {
+        print_usage();
+        return 0;
+    }
+    if (pr != 0)
+    {
+        print_usage();
+        return 2;
+    }
+
+    std::error_code ec;
+    fs::create_directories(opt.out, ec);
+    if (ec)
+    {
+        std::fprintf(stderr, "Не удалось создать каталог %s: %s\n", opt.out.string().c_str(), ec.message().c_str());
+        return 2;
+    }
+
+    const std::vector<PaperShot> paper = paper_shots(opt.config);
+    std::vector<double> v_first;
+    if (opt.paper_shots)
+    {
+        for (const auto& p : paper)
+            if (std::find_if(v_first.begin(), v_first.end(), [&](double v) { return std::fabs(v - p.V0) < 1e-6; }) ==
+                v_first.end())
+                v_first.push_back(p.V0); // дубликаты скоростей статьи (78 и 78) считаются один раз
+    }
+    else
+        v_first = opt.v0_list;
+
+    std::printf("=== guo2019_shot: config=%s level=%s, выстрелов в серии %zu, mu=%g, изоляция тел %s, кадры %s, "
+                "t_max=%.0f мкс, time-limit=%s, n_mon=%zu, n_diag=%zu, repeat=%d, bracket=%s, probe-frame=%s ===\n",
+                config_name(opt.config), level_name(opt.level), v_first.size(), opt.mu,
+                opt.body_isolation ? "вкл." : "ВЫКЛ.", opt.frames_camera ? "camera" : "off",
+                (opt.t_max > 0.0 ? opt.t_max : default_t_max(opt.config, opt.level)) * 1e6,
+                opt.time_limit > 0.0 ? fmtg(opt.time_limit, 6).c_str() : "нет", opt.n_mon, opt.n_diag, opt.repeat,
+                opt.bracket ? "да" : "нет", opt.probe_frame ? "да" : "нет");
+
+    std::vector<ShotRecord> recs;
+    int n_err = 0;
+    auto shoot = [&](double v, int rep, const std::string& tag) {
+        ShotRecord r = run_shot(opt, v, rep, tag);
+        if (!r.ok) ++n_err;
+        const bool is_paper = opt.paper_shots && rep == 0;
+        if (r.ok && is_paper)
+        {
+            const std::string pn = paper_note(paper, r);
+            if (!pn.empty()) std::printf("          сравнение с опытом%s\n", pn.c_str());
+        }
+        recs.push_back(std::move(r));
+        write_shots_csv(opt, recs);
+        write_vbl(opt, recs, nullptr);
+    };
+
+    // ---- 1. основная серия
+    for (double v : v_first) shoot(v, 0, "");
+
+    // ---- 2. расширение бисекцией (ТЗ Guo 2019 §8.2): до 6 выстрелов, пока интервал [н; п] > 5 м/с
+    if (opt.bracket)
+    {
+        std::printf("\n--- bracket: уточнение границы «пробит / не пробит» (до 6 дополнительных выстрелов) ---\n");
+        for (int extra = 0; extra < 6; ++extra)
+        {
+            const VblResult v = compute_vbl(recs);
+            if (v.n_det == 0)
+            {
+                std::printf("bracket: нет выстрелов с определённым исходом, расширять не от чего\n");
+                break;
+            }
+            double next = 0.0;
+            const char* why = "";
+            if (!v.has_n)
+            {
+                next = v.min_p - 20.0; // все «п»: идём вниз
+                why = "все пробиты: вниз на 20 м/с";
+                if (!(next > 0.0)) break;
+            }
+            else
+            {
+                // lo -- наибольшая «н»; hi -- наименьшая «п» выше неё
+                const double lo = v.max_n;
+                double hi = std::numeric_limits<double>::infinity();
+                for (const auto& s : recs)
+                    if (s.ok && s.outcome == Outcome::Perforated && s.V0 > lo) hi = std::min(hi, s.V0);
+                if (!std::isfinite(hi))
+                {
+                    next = lo + 20.0; // все «н»: идём вверх
+                    why = "все не пробиты: вверх на 20 м/с";
+                }
+                else if (hi - lo <= 5.0)
+                {
+                    std::printf("bracket: интервал [%.1f; %.1f] <= 5 м/с, достаточно\n", lo, hi);
+                    break;
+                }
+                else
+                {
+                    next = std::round(0.5 * (lo + hi) * 10.0) / 10.0;
+                    why = "бисекция";
+                }
+            }
+            if (has_tried(recs, next))
+            {
+                std::printf("bracket: V0=%.1f уже считался (исход не определён), останов\n", next);
+                break;
+            }
+            std::printf("bracket %d/6: V0=%.1f (%s)\n", extra + 1, next, why);
+            shoot(next, 0, " [bracket]");
+        }
+    }
+
+    // ---- 3. повторы около V_BL модели (ТЗ Guo 2019 §8.3)
+    if (opt.repeat > 1)
+    {
+        const VblResult v = compute_vbl(recs);
+        if (v.defined)
+        {
+            std::vector<double> near;
+            for (const auto& s : recs)
+                if (s.ok && s.rep == 0 && std::fabs(s.V0 - v.V_BL) <= 5.0 &&
+                    std::find_if(near.begin(), near.end(), [&](double x) { return std::fabs(x - s.V0) < 1e-6; }) == near.end())
+                    near.push_back(s.V0);
+            std::printf("\n--- повторы: %zu скоростей в пределах 5 м/с от V_BL модели %.2f м/с, по %d доп. выстрелу ---\n",
+                        near.size(), v.V_BL, opt.repeat - 1);
+            for (double x : near)
+                for (int r = 1; r < opt.repeat; ++r) shoot(x, r, " [повтор]");
+        }
+        else
+            std::printf("\n--- повторы пропущены: V_BL модели не определён ---\n");
+    }
+
+    std::printf("\n=== Итог: %s %s ===\n", config_name(opt.config), level_name(opt.level));
+    write_shots_csv(opt, recs);
+    write_vbl(opt, recs, stdout);
+    std::printf("shots.csv и vbl.txt: %s\n", fs::absolute(opt.out).string().c_str());
+    if (n_err > 0) std::printf("ВНИМАНИЕ: выстрелов с исключением: %d\n", n_err);
+    return 0;
+}

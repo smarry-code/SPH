@@ -360,6 +360,89 @@ endif()
 add_test(NAME e2e_fiber_solid_test COMMAND test_e2e_fiber_solid)
 set_tests_properties(e2e_fiber_solid_test PROPERTIES LABELS "3d" TIMEOUT 300)
 
+# --- Опция ядра sph_same_body_only: изоляция SPH-пар Solid по телам
+#     (ТЗ эксперименты Guo 2019, §4.2).
+add_executable(test_sph_body_isolation tests/test_sph_body_isolation.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_sph_body_isolation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_sph_body_isolation PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_sph_body_isolation PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_sph_body_isolation PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_sph_body_isolation PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_sph_body_isolation PRIVATE -fopenmp)
+    target_link_options(test_sph_body_isolation PRIVATE -fopenmp)
+endif()
+add_test(NAME sph_body_isolation_test COMMAND test_sph_body_isolation)
+set_tests_properties(sph_body_isolation_test PROPERTIES LABELS "3d" TIMEOUT 120)
+
+# --- Самопроверка читателя кадров нитей (tests/e2e_fiber_frames.hpp).
+add_executable(test_e2e_fiber_frames tests/test_e2e_fiber_frames.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_fiber_frames PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_fiber_frames PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_frames PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_fiber_frames PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_fiber_frames PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_fiber_frames PRIVATE -fopenmp)
+    target_link_options(test_e2e_fiber_frames PRIVATE -fopenmp)
+endif()
+add_test(NAME e2e_fiber_frames_selfcheck COMMAND test_e2e_fiber_frames)
+set_tests_properties(e2e_fiber_frames_selfcheck PROPERTIES LABELS "3d;e2e" TIMEOUT 60)
+
+# --- Smoke-тест сцен Guo 2019 (ТЗ Guo 2019 §9): шар + ткань + Al-пластина,
+#     по одной регистрации на конфигурацию мишени.
+add_executable(test_e2e_guo2019 tests/test_e2e_guo2019.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_guo2019 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_guo2019 PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_guo2019 PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_guo2019 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_guo2019 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_guo2019 PRIVATE -fopenmp)
+    target_link_options(test_e2e_guo2019 PRIVATE -fopenmp)
+endif()
+foreach(_guo_cfg A 1T 1T_A A_1T)
+    add_test(NAME e2e_guo2019_smoke_${_guo_cfg}
+        COMMAND test_e2e_guo2019 --config=${_guo_cfg} --time-limit=100)
+    # 2 потока: при ctest -jN 8 потоков на тест переподписывают ядра, и
+    # smoke упирается в --time-limit (замер: 1T_A 8 с при 8 потоках один,
+    # >100 с вчетвером при -j4; 15 с при 2 потоках).
+    set_tests_properties(e2e_guo2019_smoke_${_guo_cfg} PROPERTIES LABELS "3d;e2e" TIMEOUT 120
+        ENVIRONMENT "OMP_NUM_THREADS=2")
+endforeach()
+
+# --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
+add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(guo2019_shot PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(guo2019_shot PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(guo2019_shot PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(guo2019_shot PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(guo2019_shot PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(guo2019_shot PRIVATE -fopenmp)
+    target_link_options(guo2019_shot PRIVATE -fopenmp)
+endif()
+
 # --- Генератор полотняного переплетения (weave/TZ_PLAIN_WEAVE_GENERATOR.md):
 #     include/fiber/plain_weave.hpp (header-only), проверки геометрии.
 add_executable(test_plain_weave tests/test_plain_weave.cpp ${SPH_PIPELINE_SOURCES})

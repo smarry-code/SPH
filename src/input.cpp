@@ -4,6 +4,7 @@
 // shock_tube, shear_cavity) — внутренние (internal linkage / static) этого TU.
 #include "input.hpp"
 #include "fiber/fiber_system.hpp"
+#include <cctype>
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -394,6 +395,26 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             else
             {
                 cfg.ode_solver = v;
+            }
+        }
+        else if (key == "sph_same_body_only")
+        {
+            // Принимаются 0/1 и true/false (без учёта регистра); иное -- откат к false.
+            std::string low = value;
+            for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (low == "1" || low == "true")
+            {
+                cfg.sph_same_body_only = true;
+            }
+            else if (low == "0" || low == "false")
+            {
+                cfg.sph_same_body_only = false;
+            }
+            else
+            {
+                std::cerr << "sph_same_body_only: недопустимое значение '" << value
+                          << "' (ожидается 0/1/true/false), откат к 0\n";
+                cfg.sph_same_body_only = false;
             }
         }
         else if (key == "fiber_file")
