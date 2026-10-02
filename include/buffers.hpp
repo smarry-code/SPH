@@ -20,9 +20,19 @@
 #include <vector>
 #include <cstddef>
 #include <algorithm>
+#include <memory>
 
 struct WorkBuffers
 {
+    // Постоянная рабочая память шага Solid (interactions::SolidStepWorkspace,
+    // interactions/solid_workspace.hpp). Создаётся лениво в single_step.
+    // Тип стёрт (shared_ptr<void> запоминает деструктор при создании), чтобы
+    // buffers.hpp не тянул тяжёлые заголовки interactions/rhs, а потребители,
+    // не линкующие single_step.cpp (test_contact), не требовали внешнего
+    // определения деструктора. WorkBuffers не копируют; при копировании
+    // рабочая память была бы общей.
+    std::shared_ptr<void> solid_ws;
+
     // Компоненты тензора скоростей сдвига (заполняются в int_force при visc=true,
     // читаются в параллельном цикле расчёта сил). Размер = ntotal.
     std::vector<double> txx;

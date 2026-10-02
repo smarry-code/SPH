@@ -367,6 +367,13 @@ struct SolidSphSearchResult
 {
     std::vector<SolidSphPrimitive> primitives;                          // (real, real|ghost)
     std::vector<std::pair<rhs::index_t, rhs::index_t>> real_pairs;      // подмножество (real, real)
+
+    // Рабочая память поиска. Лежит здесь, а не в локальных переменных
+    // build_solid_sph_search, чтобы при постоянном SolidSphSearchResult
+    // (SolidStepWorkspace) сетка и буферы пар переиспользовались между
+    // шагами, а не выделялись заново на каждом (glibc mmap/munmap).
+    rhs::SpatialIndex<dim> index;
+    std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
 };
 
 // Поиск пар -- та же логика, что был у прежнего прямого поиска соседей
@@ -399,7 +406,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     const double scale_k = (cfg.skf == 1) ? 2.0 : 3.0;
     const double radius = scale_k * max_h;
 
-    rhs::SpatialIndex<dim> index;
+    rhs::SpatialIndex<dim>& index = out.index;
     std::array<const double*, dim> coords{};
     for (std::size_t d = 0; d < dim; ++d) coords[d] = ext.x[d].data();
     index.build(coords, ext.next, radius > 0.0 ? radius : 1.0);
@@ -418,9 +425,11 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
         return std::sqrt(r2) < scale_k * mh;
     };
 
-    const auto pairs = index.find_pairs_parallel(exec, radius, accept);
+    const auto& pairs = out.pairs;
+    index.find_pairs_parallel(exec, radius, accept, out.pairs);
 
     out.primitives.reserve(pairs.size());
+    out.real_pairs.reserve(pairs.size());
     for (const auto& pr : pairs)
     {
         const rhs::index_t i = pr.first, j = pr.second;
