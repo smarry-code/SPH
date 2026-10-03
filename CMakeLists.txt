@@ -197,6 +197,27 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME k_reader_test COMMAND test_k_reader)
 
+# --- Таблица деталей для импорта .k (readk/k-import-plan.md, этап K3, Р2):
+#     include/k_input/k_parts.hpp, src/k_parts.cpp. MATERIAL нитей - код .fib,
+#     поэтому SPH_DIM=3 (нити - только 3D, Р9).
+add_executable(test_k_parts tests/test_k_parts.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_parts PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_parts PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_parts PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_parts PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_parts PRIVATE -fopenmp)
+    target_link_options(test_k_parts PRIVATE -fopenmp)
+endif()
+add_test(NAME k_parts_test COMMAND test_k_parts)
+set_tests_properties(k_parts_test PROPERTIES LABELS "3d")
+
 # --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
 #     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit
 #     связей, предиктор-корректор для fiber::FiberState. Нити — только при
