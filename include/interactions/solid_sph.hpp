@@ -373,6 +373,13 @@ struct SolidContactPair
     std::uint64_t k;
 };
 
+// Счётчики одного блока сборки примитивов (проход 1 -> смещения для прохода 2).
+// alignas(64): запись счётчиков каждым потоком -- в своей кэш-линии (false sharing).
+struct alignas(64) SolidBlockCount
+{
+    std::size_t prim = 0, real = 0, cont = 0;
+};
+
 struct SolidSphSearchResult
 {
     std::vector<SolidSphPrimitive> primitives;                          // (real, real|ghost)
@@ -388,6 +395,7 @@ struct SolidSphSearchResult
     // шагами, а не выделялись заново на каждом (glibc mmap/munmap).
     rhs::SpatialIndex<dim> index;
     std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
+    std::vector<SolidBlockCount> blocks;
 };
 
 // Поиск пар -- та же логика, что был у прежнего прямого поиска соседей
@@ -411,10 +419,18 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
             "sph_same_body_only = 1 требует contact_force_type != 0: иначе разные тела не взаимодействуют вовсе");
     }
 
-    out.primitives.clear();
-    out.real_pairs.clear();
-    out.contact_pairs.clear();
-    if (ext.next == 0) return;
+    // clear() в начале нет намеренно: primitives/real_pairs/contact_pairs
+    // получают размер resize() ниже и целиком перезаписываются по индексам, а
+    // clear()+resize() каждый шаг заново обнуляли бы десятки МБ на главном потоке.
+    // Буферы живут в SolidStepWorkspace и переиспользуются; только на ранних
+    // выходах массивы обнуляются явно.
+    if (ext.next == 0)
+    {
+        out.primitives.resize(0);
+        out.real_pairs.resize(0);
+        out.contact_pairs.resize(0);
+        return;
+    }
 
     double max_h = 0.0;
     for (std::size_t k = 0; k < ext.next; ++k) max_h = std::max(max_h, ext.hsml[k]);
@@ -443,47 +459,97 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     const auto& pairs = out.pairs;
     index.find_pairs_parallel(exec, radius, accept, out.pairs);
 
-    out.primitives.reserve(pairs.size());
-    out.real_pairs.reserve(pairs.size());
-    // Добавление пары real-real в real_pairs; межтельная пара попадает и в
-    // contact_pairs (k -- её индекс в real_pairs).
-    auto add_real_pair = [&](rhs::index_t i, rhs::index_t j) {
-        if (ext.body[i] != ext.body[j])
-            out.contact_pairs.push_back({i, j, static_cast<std::uint64_t>(out.real_pairs.size())});
-        out.real_pairs.emplace_back(i, j);
-    };
-    // Тело цикла сборки; ядро -- параметр (kernel_fn), чтобы skf выбирался один
+    const std::size_t n = pairs.size();
+    if (n == 0)
+    {
+        out.primitives.resize(0);
+        out.real_pairs.resize(0);
+        out.contact_pairs.resize(0);
+        return;
+    }
+
+    // Сборка по индексам: счёт -> префиксная сумма -> запись. Пары делятся на nb
+    // непрерывных блоков; проход 1 считает у каждого блока число примитивов,
+    // real_pairs и contact_pairs, исключающая сумма даёт смещения блоков, проход 2
+    // пишет элементы по своим смещениям. Позиция элемента определяется номером
+    // пары, а не блоком или потоком: массивы совпадают с прежней последовательной
+    // сборкой (push_back в порядке pairs) при любом числе потоков. Блок --
+    // отдельная кэш-линия SolidBlockCount.
+    const std::size_t nb = std::clamp<std::size_t>(n / 2048, 1, 8 * static_cast<std::size_t>(exec.num_workers()));
+    auto block_begin = [&](std::size_t t) { return n * t / nb; };
+    out.blocks.resize(nb + 1);
+    SolidBlockCount* const blocks = out.blocks.data();
+
+    // Пара отсечена изоляцией по телам (ТЗ эксперименты Guo 2019, §4.2): real-real
+    // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по этому же
+    // списку работает Solid-Solid-Contact (solid_contact.hpp). Пары с ghost
+    // (j >= nreal) не затрагиваются.
+    exec.parallel_for(nb, 1, [&](std::size_t t) {
+        std::size_t prim = 0, real = 0, cont = 0;
+        for (std::size_t q = block_begin(t); q < block_begin(t + 1); ++q)
+        {
+            const rhs::index_t i = pairs[q].first, j = pairs[q].second;
+            const bool cross = j < nreal && ext.body[i] != ext.body[j];
+            if (!(same_body_only && cross)) ++prim;
+            if (j < nreal) ++real;
+            if (cross) ++cont;
+        }
+        blocks[t].prim = prim; blocks[t].real = real; blocks[t].cont = cont;
+    });
+    SolidBlockCount run;
+    for (std::size_t t = 0; t < nb; ++t)
+    {
+        const SolidBlockCount c = blocks[t];
+        blocks[t] = run;
+        run.prim += c.prim; run.real += c.real; run.cont += c.cont;
+    }
+    blocks[nb] = run;
+
+    out.primitives.resize(run.prim);
+    out.real_pairs.resize(run.real);
+    out.contact_pairs.resize(run.cont);
+    SolidSphPrimitive* const primitives = out.primitives.data();
+    std::pair<rhs::index_t, rhs::index_t>* const real_pairs = out.real_pairs.data();
+    SolidContactPair* const contact_pairs = out.contact_pairs.data();
+
+    // Тело прохода 2; ядро -- параметр (kernel_fn), чтобы skf выбирался один
     // раз вне цикла, а вызов ядра встраивался (у каждой лямбды свой тип -- своя
     // инстанциация build_loop; указатель на функцию дал бы непрямой вызов).
+    // Межтельная пара попадает и в contact_pairs (k -- её индекс в real_pairs).
     auto build_loop = [&](auto kernel_fn) {
-        for (const auto& pr : pairs)
-        {
-            const rhs::index_t i = pr.first, j = pr.second;
-            // Изоляция по телам (ТЗ эксперименты Guo 2019, §4.2): пара real-real
-            // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по
-            // этому же списку работает Solid-Solid-Contact (solid_contact.hpp).
-            // Пары с ghost (j >= nreal) не затрагиваются.
-            if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+        exec.parallel_for(nb, 1, [&](std::size_t t) {
+            std::size_t p = blocks[t].prim, r = blocks[t].real, c = blocks[t].cont;
+            for (std::size_t q = block_begin(t); q < block_begin(t + 1); ++q)
             {
-                add_real_pair(i, j);
-                continue;
-            }
-            double dx[dim];
-            double r2 = 0.0;
-            for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
-            const double r = std::sqrt(r2);
-            const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+                const rhs::index_t i = pairs[q].first, j = pairs[q].second;
+                if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+                {
+                    contact_pairs[c++] = {i, j, static_cast<std::uint64_t>(r)};
+                    real_pairs[r++] = {i, j};
+                    continue;
+                }
+                double dx[dim];
+                double r2 = 0.0;
+                for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
+                const double rr = std::sqrt(r2);
+                const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
 
-            SolidSphPrimitive prim;
-            prim.i = i; prim.j = j;
-            double w = 0.0;
-            double dwdx_buf[dim];
-            kernel_fn(r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
-            prim.w = w;
-            for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
-            out.primitives.push_back(prim);
-            if (j < nreal) add_real_pair(i, j);
-        }
+                SolidSphPrimitive prim;
+                prim.i = i; prim.j = j;
+                double w = 0.0;
+                double dwdx_buf[dim];
+                kernel_fn(rr, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+                prim.w = w;
+                for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
+                primitives[p++] = prim;
+                if (j < nreal)
+                {
+                    if (ext.body[i] != ext.body[j])
+                        contact_pairs[c++] = {i, j, static_cast<std::uint64_t>(r)};
+                    real_pairs[r++] = {i, j};
+                }
+            }
+        });
     };
     switch (cfg.skf)
     {
