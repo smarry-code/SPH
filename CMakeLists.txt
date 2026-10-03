@@ -177,6 +177,26 @@ endif()
 add_test(NAME fiber_model_test COMMAND test_fiber_model)
 set_tests_properties(fiber_model_test PROPERTIES LABELS "3d")
 
+# --- Чтение LS-DYNA .k (readk/k-import-plan.md, этап K2): KReader + KDeck
+#     (include/k_input/, src/k_reader.cpp - попадает в SPH_SOURCES через GLOB).
+#     Слой формата не зависит от размерности; SPH_DIM=1 - как в плане (разд. 5).
+add_executable(test_k_reader tests/test_k_reader.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_reader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_reader PRIVATE
+    SPH_DIM=1
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_reader PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_reader PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_reader PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_reader PRIVATE -fopenmp)
+    target_link_options(test_k_reader PRIVATE -fopenmp)
+endif()
+add_test(NAME k_reader_test COMMAND test_k_reader)
+
 # --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
 #     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit
 #     связей, предиктор-корректор для fiber::FiberState. Нити — только при
