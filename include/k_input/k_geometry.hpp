@@ -48,6 +48,8 @@ struct KImportSummary
     std::size_t fibers = 0, beads = 0, bonds = 0;
     double seg_min = 0.0, seg_max = 0.0;   // длина сегмента l0, м
     double ld_min = 0.0, ld_max = 0.0;     // l0 / d
+    // Закрепления из *BOUNDARY_SPC_* (K8).
+    std::size_t clamped_particles = 0, clamped_beads = 0;
 };
 
 // Solid-часть: по записи deck.sph на частицу, в порядке файла. table == nullptr -
@@ -61,7 +63,16 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
 // NID. Требует SPH_DIM=3 и FIBER_PART для каждого PID балок. Пишет в
 // model.materials/fiber/topology (model.solid не трогает).
 void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const KImportOptions& opts,
-                            fiber::Model& model, KImportSummary& summary);
+                            fiber::Model& model, KImportSummary& summary,
+                            std::vector<long long>* bead_nids = nullptr);
+
+// Закрепления *BOUNDARY_SPC_NODE/_SET (K8): DOFX/DOFY/DOFZ != 0 -> бит компоненты
+// (только c < dim) в model.clamps.solid_mask (частица i <-> deck.sph[i]) и
+// fiber_mask (бусина k <-> bead_nids[k]). CID != 0 - ошибка; повторы - по OR;
+// без единого бита маска остаётся пустой; непустая fiber_mask объединяется по OR.
+// Компонента >= dim и узлы без роли - предупреждения в summary.
+void apply_spc_clamps(const KDeck& deck, const std::vector<long long>& bead_nids, fiber::Model& model,
+                      KImportSummary& summary);
 
 // Точка входа: читает колоду и таблицу, сверяет их, пишет в model.solid.
 KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats, fiber::Model& model,

@@ -36,8 +36,8 @@ struct KSolid
     SrcLoc src;
 };
 struct KPart  { long long pid = 0; std::string title; SrcLoc src; };
-struct KSpcNode { long long nid = 0;  int dofx = 0, dofy = 0, dofz = 0; SrcLoc src; };
-struct KSpcSet  { long long nsid = 0; int dofx = 0, dofy = 0, dofz = 0; SrcLoc src; };
+struct KSpcNode { long long nid = 0;  int cid = 0, dofx = 0, dofy = 0, dofz = 0; SrcLoc src; };
+struct KSpcSet  { long long nsid = 0; int cid = 0, dofx = 0, dofy = 0, dofz = 0; SrcLoc src; };
 struct KNodeSet { std::vector<long long> nids; SrcLoc src; };  // src - первое появление SID
 
 struct KDeck

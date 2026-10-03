@@ -486,11 +486,11 @@ private:
         }
         case Kind::SpcNode:
             parse_card(line, kSpcNodeCard, blk.is_long, l, vs);
-            d_.spc_nodes.push_back(KSpcNode{I(0), static_cast<int>(I(2)), static_cast<int>(I(3)), static_cast<int>(I(4)), l});
+            d_.spc_nodes.push_back(KSpcNode{I(0), static_cast<int>(I(1)), static_cast<int>(I(2)), static_cast<int>(I(3)), static_cast<int>(I(4)), l});
             return;
         case Kind::SpcSet:
             parse_card(line, kSpcSetCard, blk.is_long, l, vs);
-            d_.spc_sets.push_back(KSpcSet{I(0), static_cast<int>(I(2)), static_cast<int>(I(3)), static_cast<int>(I(4)), l});
+            d_.spc_sets.push_back(KSpcSet{I(0), static_cast<int>(I(1)), static_cast<int>(I(2)), static_cast<int>(I(3)), static_cast<int>(I(4)), l});
             return;
         case Kind::SetList:
         {

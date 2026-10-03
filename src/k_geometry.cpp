@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -162,7 +163,7 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
 }
 
 void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const KImportOptions& opts,
-                            fiber::Model& model, KImportSummary& summary)
+                            fiber::Model& model, KImportSummary& summary, std::vector<long long>* bead_nids)
 {
     fiber::check_fiber_requires_dim3();
     if (deck.beams.empty())
@@ -199,6 +200,7 @@ void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const K
     const double ls = opts.length_scale;
     std::vector<char> seen(nb, 0);
     std::vector<fiber::PolylineSpec> lines;
+    std::vector<long long> nids_order;   // NID бусин в порядке сборки (бусина k <-> nids_order[k])
     for (std::size_t b0 = 0; b0 < nb; ++b0)
     {
         if (seen[b0]) continue;
@@ -249,6 +251,7 @@ void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const K
             const KNode* nd = deck.find_node(cur);
             if (!nd) fail(deck.where(first.src), "узел " + std::to_string(cur) + " не найден");
             ps.points.push_back({nd->x * ls, nd->y * ls, nd->z * ls});
+            nids_order.push_back(cur);
             std::size_t nxt = nb;
             for (std::size_t o : adj[cur])
                 if (o != prev_b) nxt = o;
@@ -260,6 +263,10 @@ void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const K
     }
 
     fiber::build_model_from_polylines(lines, table.materials, {}, model, opts.k_file);
+
+    if (nids_order.size() != model.fiber.size())
+        fail(opts.k_file, "внутренняя ошибка: число бусин не совпало с числом узлов нитей");
+    if (bead_nids) *bead_nids = std::move(nids_order);
 
     summary.fibers = lines.size();
     summary.beads = model.fiber.size();
@@ -285,6 +292,76 @@ void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const K
     }
 }
 
+void apply_spc_clamps(const KDeck& deck, const std::vector<long long>& bead_nids, fiber::Model& model,
+                      KImportSummary& summary)
+{
+    if (deck.spc_nodes.empty() && deck.spc_sets.empty()) return;
+
+    std::unordered_map<long long, std::size_t> solid_of, bead_of;
+    for (std::size_t i = 0; i < deck.sph.size(); ++i) solid_of.emplace(deck.sph[i].nid, i);
+    for (std::size_t k = 0; k < bead_nids.size(); ++k) bead_of.emplace(bead_nids[k], k);
+
+    const std::size_t n_solid = deck.sph.size();
+    const std::size_t n_bead = model.fiber.size();
+    std::vector<std::uint8_t> sm(n_solid, 0), fm(n_bead, 0);
+    if (model.clamps.fiber_mask.size() == n_bead) fm = model.clamps.fiber_mask;   // CLAMP_BOX: OR
+    if (model.clamps.solid_mask.size() == n_solid) sm = model.clamps.solid_mask;
+
+    std::set<long long> no_role;
+    std::set<std::string> high_dof;   // предупреждения о компонентах >= dim (без повторов)
+
+    auto apply = [&](long long nid, int cid, const int (&dof)[3], const SrcLoc& src, const char* kw)
+    {
+        if (cid != 0)
+            fail(deck.where(src), std::string(kw) + ": CID=" + std::to_string(cid)
+                                      + " (локальная система координат) не поддерживается");
+        unsigned bits = 0;
+        for (int c = 0; c < 3; ++c)
+        {
+            if (dof[c] == 0) continue;
+            if (c < static_cast<int>(dim)) bits |= 1u << c;
+            else high_dof.insert(std::string(kw) + ": DOF" + "XYZ"[c] + " закреплён, но dim=" + std::to_string(dim)
+                                 + " - компонента отсутствует в модели, пропущено");
+        }
+        const auto si = solid_of.find(nid);
+        const auto bi = bead_of.find(nid);
+        if (si == solid_of.end() && bi == bead_of.end()) { no_role.insert(nid); return; }
+        if (si != solid_of.end() && si->second < n_solid) sm[si->second] |= static_cast<std::uint8_t>(bits);
+        if (bi != bead_of.end()) fm[bi->second] |= static_cast<std::uint8_t>(bits);
+    };
+
+    for (const KSpcNode& c : deck.spc_nodes)
+    {
+        const int dof[3] = {c.dofx, c.dofy, c.dofz};
+        apply(c.nid, c.cid, dof, c.src, "*BOUNDARY_SPC_NODE");
+    }
+    for (const KSpcSet& c : deck.spc_sets)
+    {
+        const int dof[3] = {c.dofx, c.dofy, c.dofz};
+        const auto it = deck.node_sets.find(c.nsid);
+        if (it == deck.node_sets.end())
+            fail(deck.where(c.src), "*BOUNDARY_SPC_SET: набор узлов " + std::to_string(c.nsid) + " не найден");
+        for (long long nid : it->second.nids) apply(nid, c.cid, dof, c.src, "*BOUNDARY_SPC_SET");
+    }
+
+    for (const std::string& w : high_dof) summary.warnings.push_back(w);
+    if (!no_role.empty())
+        summary.warnings.push_back("*BOUNDARY_SPC_*: " + std::to_string(no_role.size())
+                                   + " узлов не являются ни SPH-частицей, ни бусиной нити - закрепление пропущено");
+
+    auto count = [](const std::vector<std::uint8_t>& m)
+    {
+        std::size_t k = 0;
+        for (std::uint8_t v : m) k += v != 0;
+        return k;
+    };
+    summary.clamped_particles = count(sm);
+    summary.clamped_beads = count(fm);
+    // Пустая маска = "зажимов нет" (как в .fib).
+    model.clamps.solid_mask = summary.clamped_particles ? std::move(sm) : std::vector<std::uint8_t>{};
+    model.clamps.fiber_mask = summary.clamped_beads ? std::move(fm) : std::vector<std::uint8_t>{};
+}
+
 KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats, fiber::Model& model,
                                std::size_t& moni_particle)
 {
@@ -303,7 +380,9 @@ KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats
         tp = &table;
     }
     build_solid_from_deck(deck, tp, opts, mats, model.solid, moni_particle, summary);
-    if (fib) build_fibers_from_deck(deck, table, opts, model, summary);
+    std::vector<long long> bead_nids;
+    if (fib) build_fibers_from_deck(deck, table, opts, model, summary, &bead_nids);
+    apply_spc_clamps(deck, bead_nids, model, summary);
     return summary;
 }
 
