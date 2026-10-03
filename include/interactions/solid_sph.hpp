@@ -513,8 +513,9 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     SolidContactPair* const contact_pairs = out.contact_pairs.data();
 
     // Тело прохода 2; ядро -- параметр (kernel_fn), чтобы skf выбирался один
-    // раз вне цикла, а вызов ядра встраивался (у каждой лямбды свой тип -- своя
-    // инстанциация build_loop; указатель на функцию дал бы непрямой вызов).
+    // раз вне цикла, а ядро вызывалось напрямую (у каждой лямбды свой тип --
+    // своя инстанциация build_loop; указатель на функцию дал бы непрямой
+    // вызов). Сами ядра не встраиваются ([[gnu::noinline]], см. kernel.hpp).
     // Межтельная пара попадает и в contact_pairs (k -- её индекс в real_pairs).
     auto build_loop = [&](auto kernel_fn) {
         exec.parallel_for(nb, 1, [&](std::size_t t) {

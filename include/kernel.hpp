@@ -1,8 +1,11 @@
 #pragma once
 // kernel.hpp
 // Вычисление ядра сглаживания и его производной.
-// Определение inline в заголовке (а не в kernel.cpp): вызов встраивается в цикл
-// сборки примитивов build_solid_sph_search, где skf выбирается один раз вне цикла.
+// Определение в заголовке (а не в kernel.cpp): цикл сборки примитивов
+// build_solid_sph_search выбирает skf один раз вне цикла и вызывает
+// kernel_cubic/gauss/quintic напрямую. Сами ядра -- [[gnu::noinline]]: при
+// встраивании в цикл сборки проход записи на 1 потоке замедлялся на ~20 %
+// (A: 40 мс против 33 мс с вызовом, speedup/prims_parallel.md).
 //
 // Параметр dx принимает std::span<const double> — это допускает передачу
 // как std::vector<double>, так и std::array<double, dim> (и плоских буферов SoA в будущем),
@@ -18,7 +21,7 @@
 #include "param.hpp"
 
 // Кубический сплайн (Monaghan 1985).
-inline void kernel_cubic(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
+[[gnu::noinline]] inline void kernel_cubic(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
 {
     // Инициализация выходных значений
     w = 0.0;
@@ -73,7 +76,7 @@ inline void kernel_cubic(double r, std::span<const double> dx, double mhsml, dou
 }
 
 // Гауссово ядро.
-inline void kernel_gauss(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
+[[gnu::noinline]] inline void kernel_gauss(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
 {
     // Инициализация выходных значений
     w = 0.0;
@@ -100,7 +103,7 @@ inline void kernel_gauss(double r, std::span<const double> dx, double mhsml, dou
 }
 
 // Квинтическое ядро (Morris 1997).
-inline void kernel_quintic(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
+[[gnu::noinline]] inline void kernel_quintic(double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
 {
     // Инициализация выходных значений
     w = 0.0;
