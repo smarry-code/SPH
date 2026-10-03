@@ -515,7 +515,7 @@ inline void compute_solid_sph_contributions(
     exec.parallel_for(n, [&](std::size_t k) { cnt[k] = 1 + (primitives[k].j < ext.nreal ? 1 : 0); });
     exec.parallel_scan(cnt, offset, n);
     out.prepare(offset[n]);
-    rhs::Contribution<SolidDelta>* const dst = out.data();
+    const auto w_out = out.writer();
 
     const int density_method = cfg.density_method;
     const int pa_sph = cfg.pa_sph;
@@ -795,12 +795,12 @@ inline void compute_solid_sph_contributions(
         }
 
         const std::size_t pos = offset[k];
-        dst[pos] = rhs::Contribution<SolidDelta>{
-            i, di, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 0}};
+        w_out.set(pos, rhs::Contribution<SolidDelta>{
+            i, di, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 0}});
         if (j_real)
         {
-            dst[pos + 1] = rhs::Contribution<SolidDelta>{
-                j, dj, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 1}};
+            w_out.set(pos + 1, rhs::Contribution<SolidDelta>{
+                j, dj, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 1}});
         }
     });
 }

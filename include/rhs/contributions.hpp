@@ -82,6 +82,12 @@ private:
 // кэш-линию — false sharing), а порядок вкладов канонический и не зависит от
 // числа потоков. prepare(n) только растит ёмкость и не обнуляет данные:
 // память переиспользуется между шагами.
+//
+// Рядом с вкладами хранится компактный массив целей targets_ (4 Б на вклад):
+// проходы 1-2 свёртки читают из вклада только target, а вклад занимает 176 Б,
+// т.е. целую кэш-линию на 4 полезных байта; чтение компактного массива снимает
+// этот упор в память. Писать вклады можно только через writer().set(...), чтобы
+// цель и вклад не разошлись; неконстантных data()/operator[] нет.
 // ----------------------------------------------------------------------
 template <class Delta>
 class IndexedContributions
@@ -90,15 +96,29 @@ public:
     void prepare(std::size_t n)
     {
         if (n > data_.size()) data_.resize(n);
+        if (n > targets_.size()) targets_.resize(n);
         size_ = n;
     }
     std::size_t size() const { return size_; }
     std::size_t capacity() const { return data_.size(); }
 
     const Contribution<Delta>* data() const { return data_.data(); }
-    Contribution<Delta>* data() { return data_.data(); }
     const Contribution<Delta>& operator[](std::size_t i) const { return data_[i]; }
-    Contribution<Delta>& operator[](std::size_t i) { return data_[i]; }
+    const index_t* targets() const { return targets_.data(); }
+
+    // Единственный способ записи: вклад и его цель пишутся вместе. Сырые
+    // указатели -- чтобы цикл kernel'а не перечитывал заголовки vector.
+    struct Writer
+    {
+        Contribution<Delta>* d;
+        index_t* t;
+        void set(std::size_t pos, const Contribution<Delta>& c) const
+        {
+            d[pos] = c;
+            t[pos] = c.target;
+        }
+    };
+    Writer writer() { return Writer{data_.data(), targets_.data()}; }
 
     // Постоянные вспомогательные массивы kernel'а (число вкладов на примитив
     // и смещения); тоже только растут.
@@ -106,6 +126,7 @@ public:
 
 private:
     std::vector<Contribution<Delta>> data_;
+    std::vector<index_t> targets_; // targets_[k] == data_[k].target
     std::size_t size_ = 0;
 };
 
@@ -175,6 +196,8 @@ struct ReduceScratch
     // Отрезки вкладов в порядке суммирования: начало (Contribution<Delta>*) и размер.
     std::vector<const void*> seg_ptr;
     std::vector<std::size_t> seg_size;
+    // Компактные цели отрезка (const index_t*); nullptr -- цель читается из самого вклада.
+    std::vector<const index_t*> seg_tgt;
     std::vector<std::size_t> shard_bound; // границы shard'ов, shard_count + 1
     std::vector<std::size_t> shard_start; // начало блока shard'а в refs, shard_count + 1
     std::vector<std::size_t> counts;      // (буфер, shard) -> количество вкладов
@@ -233,6 +256,7 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
 
     const auto* const seg_ptr = scratch.seg_ptr.data();
     const std::size_t* const seg_size = scratch.seg_size.data();
+    const index_t* const* const seg_tgt = scratch.seg_tgt.data();
 
     // Проход 1: подсчёт (буфер, shard) -> количество; параллельно по буферам,
     // каждый буфер пишет только свою строку counts.
@@ -242,10 +266,15 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
         const auto* const seg = static_cast<const Contribution<Delta>*>(seg_ptr[g]);
         const std::size_t n = seg_size[g];
         std::size_t* const row = counts + g * shard_count;
-        for (std::size_t k = 0; k < n; ++k)
-        {
-            row[reduce_shard_of(bound, shard_count, particle_count, inv_width, seg[k].target)]++;
-        }
+        const auto count_all = [&](auto target_of) {
+            for (std::size_t k = 0; k < n; ++k)
+                row[reduce_shard_of(bound, shard_count, particle_count, inv_width, target_of(k))]++;
+        };
+        // Выбор источника целей один раз на отрезок, не на элемент.
+        if (const index_t* const tg = seg_tgt[g])
+            count_all([tg](std::size_t k) { return tg[k]; });
+        else
+            count_all([seg](std::size_t k) { return seg[k].target; });
     });
 
     // Префиксная сумма: сначала непрерывный блок shard'а 0 (по всем буферам по
@@ -276,11 +305,17 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
         const auto* const seg = static_cast<const Contribution<Delta>*>(seg_ptr[g]);
         const std::size_t n = seg_size[g];
         std::size_t* const cursor = dest + g * shard_count;
-        for (std::size_t k = 0; k < n; ++k)
-        {
-            const std::size_t s = reduce_shard_of(bound, shard_count, particle_count, inv_width, seg[k].target);
-            refs[cursor[s]++] = &seg[k];
-        }
+        const auto scatter_all = [&](auto target_of) {
+            for (std::size_t k = 0; k < n; ++k)
+            {
+                const std::size_t s = reduce_shard_of(bound, shard_count, particle_count, inv_width, target_of(k));
+                refs[cursor[s]++] = &seg[k];
+            }
+        };
+        if (const index_t* const tg = seg_tgt[g])
+            scatter_all([tg](std::size_t k) { return tg[k]; });
+        else
+            scatter_all([seg](std::size_t k) { return seg[k].target; });
     });
 
     // Проход 3: суммирование по shard'ам, параллельно между shard'ами.
@@ -324,6 +359,7 @@ void reduce_contributions_into(const CpuExecutor& exec,
     for (std::size_t k = 0; k < set_count; ++k) nbuf += sets[k]->size();
     scratch.seg_ptr.resize(nbuf);
     scratch.seg_size.resize(nbuf);
+    scratch.seg_tgt.assign(nbuf, nullptr);
     std::size_t g = 0;
     for (std::size_t k = 0; k < set_count; ++k)
     {
@@ -352,12 +388,14 @@ void reduce_contributions_into(const CpuExecutor& exec, const IndexedContributio
     for (const auto* set : rest) nbuf += set->size();
     scratch.seg_ptr.resize(nbuf);
     scratch.seg_size.resize(nbuf);
+    scratch.seg_tgt.assign(nbuf, nullptr);
     const std::size_t n = first.size();
     for (std::size_t q = 0; q < m; ++q)
     {
         const std::size_t b = (n * q) / m, e = (n * (q + 1)) / m;
         scratch.seg_ptr[q] = first.data() + b;
         scratch.seg_size[q] = e - b;
+        scratch.seg_tgt[q] = first.targets() + b;
     }
     std::size_t g = m;
     for (const auto* set : rest)

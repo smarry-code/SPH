@@ -557,8 +557,8 @@ static void fill_indexed(rhs::IndexedContributions<TestDelta>& idx, std::size_t 
     {
         TestDelta d;
         for (int c = 0; c < 3; ++c) d.v[c] = val(rng);
-        idx[k] = rhs::Contribution<TestDelta>{pid(rng), d,
-                                              rhs::ContributionMeta{static_cast<std::uint32_t>(next_id % 3), next_id, 0}};
+        idx.writer().set(k, rhs::Contribution<TestDelta>{
+                                pid(rng), d, rhs::ContributionMeta{static_cast<std::uint32_t>(next_id % 3), next_id, 0}});
         ++next_id;
     }
 }
@@ -581,6 +581,10 @@ static void test_indexed_contributions()
             for (std::size_t particle_count : {1u, 40u, 1200u})
             {
                 fill_indexed(idx, n, particle_count, rng, next_id);
+                bool tgt_ok = true;
+                for (std::size_t k = 0; k < idx.size(); ++k)
+                    if (idx.targets()[k] != idx[k].target) tgt_ok = false;
+                check(tgt_ok, "IndexedContributions: targets()[k] не совпадает с operator[](k).target");
                 BufferSet contact = make_buffers(static_cast<std::size_t>(nt), 200, particle_count, rng, next_id);
                 BufferSet one(1);
                 for (std::size_t k = 0; k < idx.size(); ++k) one[0].push(idx[k].target, idx[k].delta, idx[k].meta);
