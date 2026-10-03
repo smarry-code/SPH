@@ -194,7 +194,9 @@ private:
     // вызовами, только растёт (индекс живёт между шагами).
     std::vector<std::size_t> count_;
     std::vector<std::size_t> cursor_;
-    mutable std::vector<std::vector<std::pair<index_t, index_t>>> local_pairs_;
+    // alignas(64): заголовок вектора каждого потока -- в своей кэш-линии (false sharing).
+    struct alignas(64) LocalPairs { std::vector<std::pair<index_t, index_t>> v; };
+    mutable std::vector<LocalPairs> local_pairs_;
 
     std::size_t total_cells() const
     {
@@ -368,17 +370,17 @@ private:
     {
         const int nw = std::max(1, exec.num_workers());
         if (local_pairs_.size() < static_cast<std::size_t>(nw)) local_pairs_.resize(static_cast<std::size_t>(nw));
-        for (auto& v : local_pairs_) v.clear();
+        for (auto& lp : local_pairs_) lp.v.clear();
         exec.parallel_for(range_n, [&](std::size_t idx) {
             int w = CpuExecutor::worker_id();
             if (w < 0 || w >= nw) w = 0;
-            body(idx, local_pairs_[static_cast<std::size_t>(w)]);
+            body(idx, local_pairs_[static_cast<std::size_t>(w)].v);
         });
         std::size_t total = 0;
-        for (auto& v : local_pairs_) total += v.size();
+        for (auto& lp : local_pairs_) total += lp.v.size();
         out.clear();
         out.reserve(total);
-        for (auto& v : local_pairs_) out.insert(out.end(), v.begin(), v.end());
+        for (auto& lp : local_pairs_) out.insert(out.end(), lp.v.begin(), lp.v.end());
     }
 };
 
