@@ -345,8 +345,136 @@ void make_scene(const SimulationConfig& cfg, const ParticleSystem& sys, std::siz
     interactions::build_solid_extended(sys, n, sc.derived, sc.ghosts, sc.ext);
 }
 
+// Дословная копия прежнего ядра (src/kernel.cpp @ 06e0b99, до переноса в
+// kernel.hpp): эталон сборки не зависит от нового inline-ядра, так что
+// test_parallel_build проверяет и дословность kernel_cubic/gauss/quintic.
+static void kernel_06e0b99(int skf, double r, std::span<const double> dx, double mhsml, double& w, double* dwdx)
+{
+    // Инициализация выходных значений
+    w = 0.0;
+
+    for (size_t d = 0; d < dim; d++)
+    {
+        dwdx[d] = 0.0;
+    }
+    // Вычисление относительного расстояния
+    double q = r / mhsml;
+    double factor = 0.0;
+
+    // Выбор ядра в зависимости от skf
+    if (skf == 1)    // Кубический сплайн (Monaghan 1985)
+    {
+        // Определение нормировочного фактора в зависимости от размерности
+        if (dim == 1)
+        {
+            factor = 1.0 / mhsml;
+        }
+        else if (dim == 2)
+        {
+            factor = 15.0 / (7.0 * pi * mhsml * mhsml);
+        }
+        else if (dim == 3)
+        {
+            factor = 3.0 / (2.0 * pi * mhsml * mhsml * mhsml);
+        }
+        else
+        {
+            throw std::runtime_error("Неверная размерность: dim = " + std::to_string(dim));
+        }
+
+        // Вычисление ядра и его производной
+        if (q >= 0.0 && q <= 1.0)
+        {
+            w = factor * (2.0/3.0 - q*q + q*q*q / 2.0);
+            for (size_t d = 0; d < dim; ++d)
+            {
+                dwdx[d] = factor * (-2.0 + 1.5 * q) * dx[d] / (mhsml * mhsml);
+            }
+        }
+        else if (q > 1.0 && q <= 2.0)
+        {
+            double t = 2.0 - q;
+            w = factor * (1.0/6.0) * ((2.0 - q)*(2.0 - q)*(2.0 - q));
+            //w = factor * (1.0/6.0) * t * t * t;
+            for (size_t d = 0; d < dim; ++d)
+            {
+                dwdx[d] = -factor * 0.5 * ((2.0 - q)*(2.0 - q)) * dx[d] / (r * mhsml);
+                //dwdx[d] = -factor * 0.5 * t * t * dx[d] / (r * mhsml);
+            }
+        }
+        // Иначе w и dwdx остаются нулевыми
+
+    }
+    else if (skf == 2)      // Гауссово ядро
+    {
+        factor = 1.0 / (std::pow(mhsml, dim) * std::pow(pi, dim/2.0));
+
+        if (q >= 0.0 && q <= 3.0)
+        {
+            w = factor * std::exp(-q*q);
+            for (size_t d = 0; d < dim; ++d)
+            {
+                dwdx[d] = w * (-2.0 * dx[d]) / (mhsml * mhsml);
+            }
+        }
+        // Иначе w и dwdx остаются нулевыми
+
+    }
+    else if (skf == 3)      // Квинтическое ядро (Morris 1997)
+    {
+        if (dim == 1)
+        {
+            factor = 1.0 / (120.0 * mhsml);
+        }
+        else if (dim == 2)
+        {
+            factor = 7.0 / (478.0 * pi * mhsml * mhsml);
+        }
+        else if (dim == 3)
+        {
+            factor = 1.0 / (120.0 * pi * mhsml * mhsml * mhsml);
+        }
+        else
+        {
+            throw std::runtime_error("Неверная размерность: dim = " + std::to_string(dim));
+        }
+
+        if (q >= 0.0 && q <= 1.0)
+        {
+            w = factor * (((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) - 6.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)) + 15.0 * ((1.0 - q)*(1.0 - q)*(1.0 - q)*(1.0 - q)*(1.0 - q)));
+            for (size_t d = 0; d < dim; ++d)
+            {
+                dwdx[d] = factor * (-120.0 + 120.0*q - 50.0*q*q) * dx[d] / (mhsml * mhsml);
+            }
+        }
+        else if (q > 1.0 && q <= 2.0)
+        {
+            w = factor * (((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) - 6.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q)));
+            for (size_t d = 0; d < dim; ++d)
+            {
+                if (r > 1e-8)
+                {
+                    dwdx[d] = factor * (-5.0 * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) + 30.0 * ((2.0 - q)*(2.0 - q)*(2.0 - q)*(2.0 - q))) * dx[d] / (r * mhsml);
+                }
+            }
+        }
+        else if (q > 2.0 && q <= 3.0)
+        {
+            w = factor * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q));
+            for (size_t d = 0; d < dim; ++d)
+            {
+                if (r > 1e-8)
+                {
+                    dwdx[d] = -factor * 5.0 * ((3.0 - q)*(3.0 - q)*(3.0 - q)*(3.0 - q)) * dx[d] / (r * mhsml);
+                }
+            }
+        }
+        // Иначе w и dwdx остаются нулевыми
+    }
+}
+
 // Эталон: прежний последовательный цикл сборки (build_solid_sph_search до
-// параллельной версии), от уже найденных пар.
+// параллельной версии), от уже найденных пар, с прежним ядром.
 struct RefBuild
 {
     std::vector<interactions::SolidSphPrimitive> primitives;
@@ -383,7 +511,7 @@ RefBuild reference_build(const SimulationConfig& cfg, const interactions::SolidE
         prim.i = i; prim.j = j;
         double w = 0.0;
         double dwdx_buf[dim];
-        kernel(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+        kernel_06e0b99(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
         prim.w = w;
         for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
         out.primitives.push_back(prim);
@@ -424,7 +552,7 @@ void test_parallel_build()
 {
     std::printf("test_parallel_build:\n");
     constexpr std::size_t kSideBig = 8;
-    for (int skf : {1, 2, 3})
+    for (int skf : {0, 1, 2, 3}) // 0 -- неизвестный skf: ядро даёт нули (ветка default)
         for (bool same_body : {false, true})
         {
             SimulationConfig cfg = make_config(same_body, 1);

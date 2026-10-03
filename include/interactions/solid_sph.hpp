@@ -486,7 +486,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     // (j >= nreal) не затрагиваются.
     exec.parallel_for(nb, 1, [&](std::size_t t) {
         std::size_t prim = 0, real = 0, cont = 0;
-        for (std::size_t q = block_begin(t); q < block_begin(t + 1); ++q)
+        for (std::size_t q = block_begin(t), qe = block_begin(t + 1); q < qe; ++q)
         {
             const rhs::index_t i = pairs[q].first, j = pairs[q].second;
             const bool cross = j < nreal && ext.body[i] != ext.body[j];
@@ -519,7 +519,7 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
     auto build_loop = [&](auto kernel_fn) {
         exec.parallel_for(nb, 1, [&](std::size_t t) {
             std::size_t p = blocks[t].prim, r = blocks[t].real, c = blocks[t].cont;
-            for (std::size_t q = block_begin(t); q < block_begin(t + 1); ++q)
+            for (std::size_t q = block_begin(t), qe = block_begin(t + 1); q < qe; ++q)
             {
                 const rhs::index_t i = pairs[q].first, j = pairs[q].second;
                 if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
