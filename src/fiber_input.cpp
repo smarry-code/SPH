@@ -56,6 +56,7 @@
 //   A = pi*d^2/4, для концевой бусины берётся только один прилежащий
 //   сегмент (второе слагаемое отсутствует, а не делится пополам дважды).
 #include "fiber/fiber_input.hpp"
+#include "fiber/fiber_build.hpp"
 
 #include <array>
 #include <cmath>
@@ -74,19 +75,6 @@ namespace fiber
 namespace
 {
 
-struct RawFiber
-{
-    int material_id = -1;
-    std::vector<std::array<double, 3>> points;
-};
-
-struct ClampBox
-{
-    double lo[dim];
-    double hi[dim];
-    std::uint8_t mask = interactions::kClampAll;
-};
-
 // Обрезает комментарий, начинающийся с '#'. Возвращает true, если после
 // обрезки строка непустая (содержит не-пробельные символы).
 bool strip_comment_nonblank(std::string& line)
@@ -98,6 +86,166 @@ bool strip_comment_nonblank(std::string& line)
 }
 
 } // namespace
+
+void parse_material_directive(std::istringstream& iss, std::size_t line_no, const std::string& who,
+                              std::vector<FiberMaterial>& materials, std::vector<char>& material_defined)
+{
+    long long id = -1;
+    double E = 0.0, nu = 0.0, d = 0.0, rho = 0.0, eps_break = 0.0;
+    if (!(iss >> id >> E >> nu >> d >> rho >> eps_break) || id < 0)
+    {
+        throw std::runtime_error(
+            who + ": неверный формат MATERIAL в строке " + std::to_string(line_no));
+    }
+
+    // mu_ff (коэффициент динамического трения нить-нить,
+    // fiber/fiber_friction_implementation.md, §8) — НЕОБЯЗАТЕЛЬНОЕ
+    // седьмое поле строки MATERIAL. Если после шести обязательных
+    // полей в строке больше нет токена, оставляем mu_ff = 0.0
+    // (старое поведение без трения, ничего не меняющее для уже
+    // существующих файлов нитей). Если токен есть, он обязан
+    // разбираться как double ЦЕЛИКОМ (иначе — ошибка формата, как и
+    // для остальных полей MATERIAL выше) и быть неотрицательным.
+    // Разбор — потоком, как у остальных полей (локаль потока
+    // "classic"), а не std::stod, зависящим от глобальной C-локали.
+    // mu_fs (коэффициент трения нить-Solid, fiber/
+    // fiber_solid_friction_implementation.md, §2) -- НЕОБЯЗАТЕЛЬНОЕ
+    // восьмое поле (только после mu_ff), те же правила разбора и
+    // проверок; по умолчанию 0.0.
+    auto read_optional_mu = [&](const char* name, double& value) {
+        std::string tok_str;
+        if (!(iss >> tok_str)) return;
+        std::istringstream tok(tok_str);
+        const bool ok = static_cast<bool>(tok >> value) && (tok >> std::ws).eof();
+        if (!ok)
+        {
+            throw std::runtime_error(who + ": неверный формат MATERIAL (" + name +
+                                     ") в строке " + std::to_string(line_no));
+        }
+        if (value < 0.0)
+        {
+            throw std::runtime_error(who + ": " + std::string(name) +
+                                     " должен быть >= 0 в MATERIAL, строка " + std::to_string(line_no));
+        }
+    };
+    double mu_ff = 0.0;
+    double mu_fs = 0.0;
+    read_optional_mu("mu_ff", mu_ff);
+    read_optional_mu("mu_fs", mu_fs);
+
+    const std::size_t uid = static_cast<std::size_t>(id);
+    if (uid >= materials.size())
+    {
+        materials.resize(uid + 1);
+        material_defined.resize(uid + 1, 0);
+    }
+    materials[uid] = FiberMaterial{E, nu, d, rho, eps_break, mu_ff, mu_fs};
+    material_defined[uid] = 1;
+}
+
+void build_model_from_polylines(const std::vector<PolylineSpec>& polylines,
+                                const std::vector<FiberMaterial>& materials,
+                                const std::vector<ClampBoxSpec>& boxes, Model& model)
+{
+    for (std::size_t fid = 0; fid < polylines.size(); ++fid)
+    {
+        const PolylineSpec& f = polylines[fid];
+        if (f.material_id < 0 || static_cast<std::size_t>(f.material_id) >= materials.size())
+        {
+            throw std::runtime_error("fiber::build_model_from_polylines: нить " + std::to_string(fid) +
+                                     " ссылается на неопределённый материал " + std::to_string(f.material_id));
+        }
+        if (f.points.size() < 2)
+        {
+            throw std::runtime_error("fiber::build_model_from_polylines: нить " + std::to_string(fid) +
+                                     " содержит меньше двух точек");
+        }
+    }
+
+    std::size_t total_n = 0;
+    for (const auto& f : polylines) total_n += f.points.size();
+
+    model.materials = materials;
+    model.fiber.resize(total_n);
+    model.topology.resize(total_n);
+    model.topology.bonds.clear();
+    model.topology.bonds.reserve(total_n);
+    ++model.topology.version;
+
+    std::size_t base = 0;
+    for (std::size_t fid = 0; fid < polylines.size(); ++fid)
+    {
+        const PolylineSpec& f = polylines[fid];
+        const std::size_t n = f.points.size();
+        const FiberMaterial& mat = model.materials[static_cast<std::size_t>(f.material_id)];
+        const double A = pi * mat.d * mat.d / 4.0;
+
+        std::vector<double> seg(n - 1);
+        for (std::size_t k = 0; k + 1 < n; ++k)
+        {
+            double d2 = 0.0;
+            for (std::size_t c = 0; c < 3; ++c)
+            {
+                const double dc = f.points[k + 1][c] - f.points[k][c];
+                d2 += dc * dc;
+            }
+            seg[k] = std::sqrt(d2);
+            if (!(seg[k] > 0.0))
+            {
+                throw std::runtime_error(
+                    "fiber::load_fiber_file: нулевая или отрицательная длина сегмента в нити " +
+                    std::to_string(fid) + " (точки " + std::to_string(k) + ", " + std::to_string(k + 1) + ")");
+            }
+        }
+
+        for (std::size_t k = 0; k < n; ++k)
+        {
+            const std::size_t gi = base + k;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                model.fiber.x[d][gi] = f.points[k][d];
+                model.fiber.vx[d][gi] = 0.0;
+            }
+            const double l_prev = (k > 0) ? seg[k - 1] : 0.0;
+            const double l_next = (k + 1 < n) ? seg[k] : 0.0;
+            model.fiber.mass[gi] = mat.rho * A * (l_prev + l_next) / 2.0;
+            model.fiber.object_id[gi] = static_cast<int>(fid);
+            model.fiber.material_id[gi] = f.material_id;
+
+            model.topology.prev[gi] = (k > 0) ? static_cast<long long>(gi - 1) : -1;
+            model.topology.next[gi] = (k + 1 < n) ? static_cast<long long>(gi + 1) : -1;
+        }
+
+        for (std::size_t k = 0; k + 1 < n; ++k)
+        {
+            FiberBond b;
+            b.i = base + k;
+            b.j = base + k + 1;
+            b.l0 = seg[k];
+            b.l_break = (1.0 + mat.eps_break) * seg[k];
+            model.topology.bonds.push_back(b);
+        }
+
+        base += n;
+    }
+
+    // Применяем все собранные boxes к clamps.fiber_mask
+    if (!boxes.empty())
+    {
+        rhs::CpuExecutor exec(1);
+        model.clamps.fiber_mask.assign(total_n, 0);
+        for (const auto& box : boxes)
+        {
+            interactions::mark_clamp_box(exec, model.fiber.x, total_n, box.lo, box.hi, box.mask,
+                                        model.clamps.fiber_mask);
+        }
+    }
+    else
+    {
+        // Нет директив CLAMP_BOX -> оставляем fiber_mask пустым (не заполненным нулями)
+        model.clamps.fiber_mask.clear();
+    }
+}
 
 void load_fiber_file(const std::string& filename, Model& model)
 {
@@ -115,8 +263,8 @@ void load_fiber_file(const std::string& filename, Model& model)
 
     std::vector<FiberMaterial> materials;
     std::vector<char> material_defined;
-    std::vector<RawFiber> fibers;
-    std::vector<ClampBox> boxes;
+    std::vector<PolylineSpec> fibers;
+    std::vector<ClampBoxSpec> boxes;
 
     std::string line;
     std::size_t line_no = 0;
@@ -131,57 +279,7 @@ void load_fiber_file(const std::string& filename, Model& model)
 
         if (kw == "MATERIAL")
         {
-            long long id = -1;
-            double E = 0.0, nu = 0.0, d = 0.0, rho = 0.0, eps_break = 0.0;
-            if (!(iss >> id >> E >> nu >> d >> rho >> eps_break) || id < 0)
-            {
-                throw std::runtime_error(
-                    "fiber::load_fiber_file: неверный формат MATERIAL в строке " + std::to_string(line_no));
-            }
-
-            // mu_ff (коэффициент динамического трения нить-нить,
-            // fiber/fiber_friction_implementation.md, §8) — НЕОБЯЗАТЕЛЬНОЕ
-            // седьмое поле строки MATERIAL. Если после шести обязательных
-            // полей в строке больше нет токена, оставляем mu_ff = 0.0
-            // (старое поведение без трения, ничего не меняющее для уже
-            // существующих файлов нитей). Если токен есть, он обязан
-            // разбираться как double ЦЕЛИКОМ (иначе — ошибка формата, как и
-            // для остальных полей MATERIAL выше) и быть неотрицательным.
-            // Разбор — потоком, как у остальных полей (локаль потока
-            // "classic"), а не std::stod, зависящим от глобальной C-локали.
-            // mu_fs (коэффициент трения нить-Solid, fiber/
-            // fiber_solid_friction_implementation.md, §2) -- НЕОБЯЗАТЕЛЬНОЕ
-            // восьмое поле (только после mu_ff), те же правила разбора и
-            // проверок; по умолчанию 0.0.
-            auto read_optional_mu = [&](const char* name, double& value) {
-                std::string tok_str;
-                if (!(iss >> tok_str)) return;
-                std::istringstream tok(tok_str);
-                const bool ok = static_cast<bool>(tok >> value) && (tok >> std::ws).eof();
-                if (!ok)
-                {
-                    throw std::runtime_error(std::string("fiber::load_fiber_file: неверный формат MATERIAL (") + name +
-                                             ") в строке " + std::to_string(line_no));
-                }
-                if (value < 0.0)
-                {
-                    throw std::runtime_error(std::string("fiber::load_fiber_file: ") + name +
-                                             " должен быть >= 0 в MATERIAL, строка " + std::to_string(line_no));
-                }
-            };
-            double mu_ff = 0.0;
-            double mu_fs = 0.0;
-            read_optional_mu("mu_ff", mu_ff);
-            read_optional_mu("mu_fs", mu_fs);
-
-            const std::size_t uid = static_cast<std::size_t>(id);
-            if (uid >= materials.size())
-            {
-                materials.resize(uid + 1);
-                material_defined.resize(uid + 1, 0);
-            }
-            materials[uid] = FiberMaterial{E, nu, d, rho, eps_break, mu_ff, mu_fs};
-            material_defined[uid] = 1;
+            parse_material_directive(iss, line_no, "fiber::load_fiber_file", materials, material_defined);
         }
         else if (kw == "FIBER")
         {
@@ -201,7 +299,7 @@ void load_fiber_file(const std::string& filename, Model& model)
                     std::to_string(material_id) + " в строке " + std::to_string(line_no));
             }
 
-            RawFiber rf;
+            PolylineSpec rf;
             rf.material_id = material_id;
             rf.points.reserve(static_cast<std::size_t>(point_count));
             for (long long p = 0; p < point_count; ++p)
@@ -227,7 +325,7 @@ void load_fiber_file(const std::string& filename, Model& model)
         }
         else if (kw == "CLAMP_BOX")
         {
-            ClampBox box;
+            ClampBoxSpec box;
             for (std::size_t d = 0; d < dim; ++d)
             {
                 if (!(iss >> box.lo[d]))
@@ -331,89 +429,7 @@ void load_fiber_file(const std::string& filename, Model& model)
         throw std::runtime_error("fiber::load_fiber_file: файл '" + filename + "' не содержит ни одной нити (FIBER)");
     }
 
-    std::size_t total_n = 0;
-    for (const auto& f : fibers) total_n += f.points.size();
-
-    model.materials = materials;
-    model.fiber.resize(total_n);
-    model.topology.resize(total_n);
-    model.topology.bonds.clear();
-    model.topology.bonds.reserve(total_n);
-    ++model.topology.version;
-
-    std::size_t base = 0;
-    for (std::size_t fid = 0; fid < fibers.size(); ++fid)
-    {
-        const RawFiber& f = fibers[fid];
-        const std::size_t n = f.points.size();
-        const FiberMaterial& mat = model.materials[static_cast<std::size_t>(f.material_id)];
-        const double A = pi * mat.d * mat.d / 4.0;
-
-        std::vector<double> seg(n - 1);
-        for (std::size_t k = 0; k + 1 < n; ++k)
-        {
-            double d2 = 0.0;
-            for (std::size_t c = 0; c < 3; ++c)
-            {
-                const double dc = f.points[k + 1][c] - f.points[k][c];
-                d2 += dc * dc;
-            }
-            seg[k] = std::sqrt(d2);
-            if (!(seg[k] > 0.0))
-            {
-                throw std::runtime_error(
-                    "fiber::load_fiber_file: нулевая или отрицательная длина сегмента в нити " +
-                    std::to_string(fid) + " (точки " + std::to_string(k) + ", " + std::to_string(k + 1) + ")");
-            }
-        }
-
-        for (std::size_t k = 0; k < n; ++k)
-        {
-            const std::size_t gi = base + k;
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                model.fiber.x[d][gi] = f.points[k][d];
-                model.fiber.vx[d][gi] = 0.0;
-            }
-            const double l_prev = (k > 0) ? seg[k - 1] : 0.0;
-            const double l_next = (k + 1 < n) ? seg[k] : 0.0;
-            model.fiber.mass[gi] = mat.rho * A * (l_prev + l_next) / 2.0;
-            model.fiber.object_id[gi] = static_cast<int>(fid);
-            model.fiber.material_id[gi] = f.material_id;
-
-            model.topology.prev[gi] = (k > 0) ? static_cast<long long>(gi - 1) : -1;
-            model.topology.next[gi] = (k + 1 < n) ? static_cast<long long>(gi + 1) : -1;
-        }
-
-        for (std::size_t k = 0; k + 1 < n; ++k)
-        {
-            FiberBond b;
-            b.i = base + k;
-            b.j = base + k + 1;
-            b.l0 = seg[k];
-            b.l_break = (1.0 + mat.eps_break) * seg[k];
-            model.topology.bonds.push_back(b);
-        }
-
-        base += n;
-    }
-
-    // Применяем все собранные boxes к clamps.fiber_mask
-    if (!boxes.empty())
-    {
-        rhs::CpuExecutor exec(1);
-        model.clamps.fiber_mask.assign(total_n, 0);
-        for (const auto& box : boxes)
-        {
-            interactions::mark_clamp_box(exec, model.fiber.x, total_n, box.lo, box.hi, box.mask,
-                                        model.clamps.fiber_mask);
-        }
-    }
-    else
-    {
-        // Нет директив CLAMP_BOX -> оставляем fiber_mask пустым (не заполненным нулями)
-        model.clamps.fiber_mask.clear();
-    }
+    build_model_from_polylines(fibers, materials, boxes, model);
 }
 
 } // namespace fiber
