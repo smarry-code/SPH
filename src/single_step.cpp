@@ -134,14 +134,14 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     interactions::build_solid_sph_search(exec, cfg, ext, search);
 
     // --- Compute interaction kernels -> contributions -----------------------
-    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, ws.sph_buffers);
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, ws.sph_contribs);
     interactions::compute_solid_contact_contributions(exec, cfg, cfg.mats, sys, derived.c, dt,
                                                         search.contact_pairs, ws.contact_buffers);
 
     // --- Reduce (owner-computes по шардам, fiber/PLAN.md §3.5) -------------
-    // Наборы буферов склеиваются логически (без копирования), порядок прежний:
+    // Вклады склеиваются логически (без копирования), порядок прежний:
     // сначала Solid-SPH, затем контакт.
-    rhs::reduce_contributions_into(exec, {&ws.sph_buffers, &ws.contact_buffers}, ntotal, ws.reduced,
+    rhs::reduce_contributions_into(exec, ws.sph_contribs, {&ws.contact_buffers}, ntotal, ws.reduced,
                                    ws.reduce_scratch);
     const std::vector<interactions::SolidDelta>& reduced = ws.reduced;
 

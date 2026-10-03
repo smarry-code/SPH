@@ -74,6 +74,42 @@ private:
 };
 
 // ----------------------------------------------------------------------
+// IndexedContributions<Delta> — постоянный массив вкладов с записью по
+// индексу, для kernel'ов, у которых число вкладов известно заранее (например,
+// Solid-SPH: примитив даёт вклад для i и, если j реальна, для j; позиции
+// считаются префиксной суммой). Нет общего заголовка, в который пишут все
+// потоки (у ContributionBuffer заголовки vector'ов соседних потоков делят
+// кэш-линию — false sharing), а порядок вкладов канонический и не зависит от
+// числа потоков. prepare(n) только растит ёмкость и не обнуляет данные:
+// память переиспользуется между шагами.
+// ----------------------------------------------------------------------
+template <class Delta>
+class IndexedContributions
+{
+public:
+    void prepare(std::size_t n)
+    {
+        if (n > data_.size()) data_.resize(n);
+        size_ = n;
+    }
+    std::size_t size() const { return size_; }
+    std::size_t capacity() const { return data_.size(); }
+
+    const Contribution<Delta>* data() const { return data_.data(); }
+    Contribution<Delta>* data() { return data_.data(); }
+    const Contribution<Delta>& operator[](std::size_t i) const { return data_[i]; }
+    Contribution<Delta>& operator[](std::size_t i) { return data_[i]; }
+
+    // Постоянные вспомогательные массивы kernel'а (число вкладов на примитив
+    // и смещения); тоже только растут.
+    std::vector<std::size_t> counts, offsets;
+
+private:
+    std::vector<Contribution<Delta>> data_;
+    std::size_t size_ = 0;
+};
+
+// ----------------------------------------------------------------------
 // ContributionWriter<Delta> — интерфейс kernel'а на одну compute-структуру:
 //     output.emit(target, delta, primitive_id[, slot]);
 // соответствует SPH.md: "output.emit<Fiber>(fiber_id, fiber_delta)".
@@ -301,6 +337,41 @@ void reduce_contributions_into(const CpuExecutor& exec,
     reduce_segments_into<Delta>(exec, nbuf, particle_count, output, scratch, options);
 }
 
+// Индексированный массив first (режется на max(1, num_workers()) смежных
+// отрезков почти равного размера в порядке индексов) и затем наборы буферов
+// rest в порядке перечисления. Порядок суммирования на частицу — порядок
+// вкладов в first, затем rest; не зависит от числа потоков.
+template <class Delta>
+void reduce_contributions_into(const CpuExecutor& exec, const IndexedContributions<Delta>& first,
+                                std::initializer_list<const std::vector<ContributionBuffer<Delta>>*> rest,
+                                std::size_t particle_count, std::vector<Delta>& output, ReduceScratch& scratch,
+                                const ReduceOptions& options = ReduceOptions{})
+{
+    const std::size_t m = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    std::size_t nbuf = m;
+    for (const auto* set : rest) nbuf += set->size();
+    scratch.seg_ptr.resize(nbuf);
+    scratch.seg_size.resize(nbuf);
+    const std::size_t n = first.size();
+    for (std::size_t q = 0; q < m; ++q)
+    {
+        const std::size_t b = (n * q) / m, e = (n * (q + 1)) / m;
+        scratch.seg_ptr[q] = first.data() + b;
+        scratch.seg_size[q] = e - b;
+    }
+    std::size_t g = m;
+    for (const auto* set : rest)
+    {
+        for (const auto& buf : *set)
+        {
+            scratch.seg_ptr[g] = buf.data();
+            scratch.seg_size[g] = buf.size();
+            ++g;
+        }
+    }
+    reduce_segments_into<Delta>(exec, nbuf, particle_count, output, scratch, options);
+}
+
 // Один набор буферов.
 template <class Delta>
 void reduce_contributions_into(const CpuExecutor& exec, const std::vector<ContributionBuffer<Delta>>& thread_buffers,
@@ -332,6 +403,18 @@ std::vector<Delta> reduce_contributions(const CpuExecutor& exec,
     std::vector<Delta> output;
     ReduceScratch scratch;
     reduce_contributions_into(exec, thread_buffers, particle_count, output, scratch, options);
+    return output;
+}
+
+// Обёртка для одного индексированного массива: локальная рабочая память.
+template <class Delta>
+std::vector<Delta> reduce_contributions(const CpuExecutor& exec, const IndexedContributions<Delta>& contribs,
+                                         std::size_t particle_count,
+                                         const ReduceOptions& options = ReduceOptions{})
+{
+    std::vector<Delta> output;
+    ReduceScratch scratch;
+    reduce_contributions_into(exec, contribs, {}, particle_count, output, scratch, options);
     return output;
 }
 

@@ -542,6 +542,88 @@ static void test_reduce_into_scratch_reuse()
 }
 
 // -----------------------------------------------------------------------
+// 4e) IndexedContributions + наборы буферов == прежняя реализация на одном
+//     буфере (1 поток), где лежит вся последовательность "индексированные,
+//     затем буферы контакта"; при 1/2/7 потоках, оба режима. Плюс prepare:
+//     ёмкость только растёт, уменьшение не перевыделяет память.
+// -----------------------------------------------------------------------
+static void fill_indexed(rhs::IndexedContributions<TestDelta>& idx, std::size_t n, std::size_t particle_count,
+                          std::mt19937& rng, std::uint64_t& next_id)
+{
+    idx.prepare(n);
+    std::uniform_int_distribution<std::size_t> pid(0, particle_count - 1);
+    std::uniform_real_distribution<double> val(-10.0, 10.0);
+    for (std::size_t k = 0; k < n; ++k)
+    {
+        TestDelta d;
+        for (int c = 0; c < 3; ++c) d.v[c] = val(rng);
+        idx[k] = rhs::Contribution<TestDelta>{pid(rng), d,
+                                              rhs::ContributionMeta{static_cast<std::uint32_t>(next_id % 3), next_id, 0}};
+        ++next_id;
+    }
+}
+
+static void test_indexed_contributions()
+{
+    std::mt19937 rng(777);
+    std::uint64_t next_id = 0;
+    bool ok = true;
+    CpuExecutor exec1(1);
+    for (int nt : {1, 2, 7})
+    {
+        CpuExecutor exec(nt);
+        rhs::IndexedContributions<TestDelta> idx;
+        ReduceScratch scratch;
+        std::vector<TestDelta> actual;
+        // Рост, затем спад и снова рост размера на одном массиве и одной scratch.
+        for (std::size_t n : {0u, 1u, 5u, 1000u, 37u, 0u, 2500u})
+        {
+            for (std::size_t particle_count : {1u, 40u, 1200u})
+            {
+                fill_indexed(idx, n, particle_count, rng, next_id);
+                BufferSet contact = make_buffers(static_cast<std::size_t>(nt), 200, particle_count, rng, next_id);
+                BufferSet one(1);
+                for (std::size_t k = 0; k < idx.size(); ++k) one[0].push(idx[k].target, idx[k].delta, idx[k].meta);
+                const BufferSet all = concat_sets({&one, &contact});
+                for (bool det : {false, true})
+                {
+                    ReduceOptions opts;
+                    opts.deterministic = det;
+                    // Эталон: прежняя схема, один поток, вся последовательность в одном буфере.
+                    BufferSet merged(1);
+                    for (const auto& buf : all)
+                        for (std::size_t k = 0; k < buf.size(); ++k)
+                            merged[0].push(buf[k].target, buf[k].delta, buf[k].meta);
+                    auto expected = reduce_contributions_reference(exec1, merged, particle_count, opts);
+                    reduce_contributions_into(exec, idx, {&contact}, particle_count, actual, scratch, opts);
+                    // Побитово при любом числе потоков: порядок слагаемых на частицу
+                    // совпадает с эталоном (first по индексам, затем буферы контакта по порядку).
+                    if (!bitwise_equal(actual, expected)) ok = false;
+                    if (!bitwise_equal(reduce_contributions(exec, idx, particle_count, opts),
+                                       reduce_contributions_reference(exec1, one, particle_count, opts)))
+                        ok = false;
+                }
+            }
+        }
+    }
+    check(ok, "IndexedContributions + буферы: результат не совпадает побитно с прежней схемой на одном буфере");
+
+    // prepare: ёмкость только растёт, уменьшение не перевыделяет и не затирает.
+    rhs::IndexedContributions<TestDelta> idx;
+    idx.prepare(100);
+    const auto* p = idx.data();
+    const std::size_t cap = idx.capacity();
+    idx.prepare(10);
+    check(idx.size() == 10 && idx.data() == p && idx.capacity() == cap,
+          "IndexedContributions::prepare: уменьшение размера не должно перевыделять память");
+    idx.prepare(100);
+    check(idx.size() == 100 && idx.data() == p && idx.capacity() == cap,
+          "IndexedContributions::prepare: возврат к прежнему размеру не должен перевыделять память");
+    idx.prepare(500);
+    check(idx.size() == 500 && idx.capacity() >= 500, "IndexedContributions::prepare: рост размера");
+}
+
+// -----------------------------------------------------------------------
 // 3) RhsWorkspace: переиспользуемый буфер между "вызовами RHS".
 // -----------------------------------------------------------------------
 static void test_rhs_workspace_reuse()
@@ -586,6 +668,7 @@ int main()
     test_reduce_into_matches_reference();
     test_reduce_into_multiple_sets();
     test_reduce_into_scratch_reuse();
+    test_indexed_contributions();
 
     if (failures == 0)
         std::printf("test_contributions: ПРОЙДЕН\n");

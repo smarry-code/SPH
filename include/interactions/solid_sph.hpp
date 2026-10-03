@@ -496,14 +496,26 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
 inline void compute_solid_sph_contributions(
     const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const SolidExtended& ext,
     const std::vector<SolidSphPrimitive>& primitives,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& thread_buffers)
+    rhs::IndexedContributions<SolidDelta>& out)
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
-    if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
-    for (auto& buf : thread_buffers) buf.clear();
-
+    // Число вкладов известно заранее: примитив k даёт вклад для i и, если j
+    // реальна, для j. Позиции -- исключающая префиксная сумма; порядок вкладов
+    // i0, j0, i1, j1, ... канонический (не зависит от числа потоков), общего
+    // буфера с заголовком, в который пишут все потоки, нет.
     const std::size_t n = primitives.size();
-    if (n == 0) return;
+    if (n == 0)
+    {
+        out.prepare(0);
+        return;
+    }
+    out.counts.resize(n);
+    out.offsets.resize(n + 1);
+    std::size_t* const cnt = out.counts.data();
+    std::size_t* const offset = out.offsets.data();
+    exec.parallel_for(n, [&](std::size_t k) { cnt[k] = 1 + (primitives[k].j < ext.nreal ? 1 : 0); });
+    exec.parallel_scan(cnt, offset, n);
+    out.prepare(offset[n]);
+    rhs::Contribution<SolidDelta>* const dst = out.data();
 
     const int density_method = cfg.density_method;
     const int pa_sph = cfg.pa_sph;
@@ -782,11 +794,14 @@ inline void compute_solid_sph_contributions(
             }
         }
 
-        int w_id = rhs::CpuExecutor::worker_id();
-        if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
-        rhs::ContributionWriter<SolidDelta> writer(thread_buffers[static_cast<std::size_t>(w_id)], kSolidSphInteractionType);
-        writer.emit(i, di, static_cast<std::uint64_t>(k), 0);
-        if (j_real) writer.emit(j, dj, static_cast<std::uint64_t>(k), 1);
+        const std::size_t pos = offset[k];
+        dst[pos] = rhs::Contribution<SolidDelta>{
+            i, di, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 0}};
+        if (j_real)
+        {
+            dst[pos + 1] = rhs::Contribution<SolidDelta>{
+                j, dj, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 1}};
+        }
     });
 }
 

@@ -31,9 +31,12 @@ struct SolidStepWorkspace
     SolidExtended ext;
     SolidSphSearchResult search; // вместе с SpatialIndex и буфером пар поиска
 
-    // Буферы вкладов по interaction type; в reduce идут в этом порядке
-    // (сначала Solid-SPH, затем Solid-Solid-Contact).
-    std::vector<rhs::ContributionBuffer<SolidDelta>> sph_buffers, contact_buffers;
+    // Вклады по interaction type; в reduce идут в этом порядке (сначала
+    // Solid-SPH, затем Solid-Solid-Contact). Solid-SPH пишет по заранее
+    // известным позициям в постоянный массив; контакт пишет вклад только при
+    // fn > 0 (число заранее неизвестно) -- в буферы потоков.
+    rhs::IndexedContributions<SolidDelta> sph_contribs;
+    std::vector<rhs::ContributionBuffer<SolidDelta>> contact_buffers;
     std::vector<SolidDelta> reduced;
     rhs::ReduceScratch reduce_scratch;
     std::vector<SolidFinal> finalres;

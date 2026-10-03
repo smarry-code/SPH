@@ -175,7 +175,7 @@ Rates probe_rates(const VelocityField& field,
     interactions::SolidSphSearchResult search;
     interactions::build_solid_sph_search(exec, cfg, ext, search);
 
-    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers;
+    rhs::IndexedContributions<interactions::SolidDelta> sph_buffers;
     interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
 
     const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
