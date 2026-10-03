@@ -11,6 +11,9 @@
 #include <locale>       // Для setlocale
 #include <codecvt>      // Для UTF-8 в Windows
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX       // иначе макросы min/max из windows.h ломают std::min/std::max в заголовках
+#endif
 #include <windows.h>   // Для SetConsoleOutputCP
 #endif
 #include "input.hpp"

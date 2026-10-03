@@ -30,6 +30,7 @@
 #include <array>
 #include <cstdlib>
 #include <limits>
+#include <numbers>
 
 namespace clamp_e2e
 {
@@ -622,7 +623,7 @@ struct CantRes
 
 inline double cant_T_an(const Elastic& el, double H, double L)
 {
-    const double f = (1.875104 * 1.875104 / (2.0 * M_PI)) * (H / (L * L)) * std::sqrt(el.E / (12.0 * el.rho));
+    const double f = (1.875104 * 1.875104 / (2.0 * std::numbers::pi)) * (H / (L * L)) * std::sqrt(el.E / (12.0 * el.rho));
     return 1.0 / f;
 }
 
@@ -639,7 +640,7 @@ inline CantRes run_cant(const Options& opt, const CantCfg& cc, double t_factor, 
     const Elastic el = al_elastic(sc.cfg.mats);
     const double H = static_cast<double>(cc.H) * dx, L = static_cast<double>(nb) * dx;
     res.T_an = cant_T_an(el, H, L);
-    const double omega = 2.0 * M_PI / res.T_an;
+    const double omega = 2.0 * std::numbers::pi / res.T_an;
     res.amp = cs::es2_amp_frac * L;
     const double V = res.amp * omega;
     const double bl = 1.875104, sg = 0.734096;
@@ -728,7 +729,7 @@ inline void run_ES2(const Options& opt)
         sc.cfg.CFL = es23_cfl(opt.solver);
         const Elastic el = al_elastic(sc.cfg.mats);
         const double H = static_cast<double>(cc.H) * cs::kDx, L = static_cast<double>(nb) * cs::kDx;
-        const double V = cs::es2_amp_frac * L * 2.0 * M_PI / cant_T_an(el, H, L);
+        const double V = cs::es2_amp_frac * L * 2.0 * std::numbers::pi / cant_T_an(el, H, L);
         // То же начальное поле, что в run_cant (первая мода консоли): §1.3 п. 3 требует невязку
         // ТОЙ ЖЕ сцены без маски.
         const double bl = 1.875104, sg = 0.734096;
@@ -856,9 +857,9 @@ inline void build_pinned(Scene& sc, int solver, const PinCfg& pc, bool with_clam
     sc.cfg.CFL = es23_cfl(solver);
     const Elastic el = al_elastic(sc.cfg.mats);
     const double H = static_cast<double>(pc.H) * dx, Leff = static_cast<double>(nx - 1) * dx;
-    const double f = (M_PI / 2.0) * (H / (Leff * Leff)) * std::sqrt(el.E / (12.0 * el.rho));
+    const double f = (std::numbers::pi / 2.0) * (H / (Leff * Leff)) * std::sqrt(el.E / (12.0 * el.rho));
     T_an_out = 1.0 / f;
-    V_out = cs::es3_amp_frac * Leff * 2.0 * M_PI * f;
+    V_out = cs::es3_amp_frac * Leff * 2.0 * std::numbers::pi * f;
     v1_out = cs::es3_v1_frac * V_out;
     ParticleSystem& s = sc.model.solid;
     const std::size_t mid = pc.H / 2;
@@ -869,7 +870,7 @@ inline void build_pinned(Scene& sc, int solver, const PinCfg& pc, bool with_clam
         s.vx[0][i] = v1_out;
         // v_z опорных частиц обнуляется: validate_clamps требует нулевой начальной скорости
         // зажатой компоненты (sin у кромки равен 0.03 V).
-        s.vx[2][i] = support ? 0.0 : V_out * std::sin(M_PI * (static_cast<double>(ix) * dx) / Leff);
+        s.vx[2][i] = support ? 0.0 : V_out * std::sin(std::numbers::pi * (static_cast<double>(ix) * dx) / Leff);
     }
     if (with_clamps)
     {
@@ -1060,7 +1061,7 @@ inline void ef3_build_fiber(Ef3Fiber& f, double mu_fs, double v_t0, double gap0,
 {
     namespace c3 = clamp_case::solid;
     const double r_s = 0.5 * c3::ef3_dxp, r_f = 0.5 * c3::ef3_d;
-    const double A = M_PI * c3::ef3_d * c3::ef3_d / 4.0;
+    const double A = std::numbers::pi * c3::ef3_d * c3::ef3_d / 4.0;
     f.mass_bead = c3::ef3_rho_f * A * c3::ef3_l0;
     const double z0 = r_s + r_f + gap0;
     // Сдвиг по x: к первому касанию (z ~ 1 мм) нить, летящая со скоростью v_t0, оказывается над центром плиты.
