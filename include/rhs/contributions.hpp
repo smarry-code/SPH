@@ -67,6 +67,7 @@ public:
 
     const Contribution<Delta>& operator[](std::size_t i) const { return data_[i]; }
     Contribution<Delta>& operator[](std::size_t i) { return data_[i]; }
+    const Contribution<Delta>* data() const { return data_.data(); }
 
 private:
     std::vector<Contribution<Delta>> data_;
@@ -135,7 +136,9 @@ struct ReduceOptions
 // растёт). Не зависит от Delta: буферы и вклады хранятся как const void*.
 struct ReduceScratch
 {
-    std::vector<const void*> buffer_ptr;  // глобальный номер буфера -> ContributionBuffer<Delta>*
+    // Отрезки вкладов в порядке суммирования: начало (Contribution<Delta>*) и размер.
+    std::vector<const void*> seg_ptr;
+    std::vector<std::size_t> seg_size;
     std::vector<std::size_t> shard_bound; // границы shard'ов, shard_count + 1
     std::vector<std::size_t> shard_start; // начало блока shard'а в refs, shard_count + 1
     std::vector<std::size_t> counts;      // (буфер, shard) -> количество вкладов
@@ -160,37 +163,20 @@ inline std::size_t reduce_shard_of(const std::size_t* shard_bound, std::size_t s
     return s;
 }
 
-// Базовая реализация: set_count наборов буферов sets[0..set_count),
-// логически конкатенированных в порядке перечисления (как если бы все буферы
-// были скопированы в один vector). output не должен совпадать с буферами;
-// ссылки в scratch живут только внутри вызова. Порядок суммирования на
-// каждую частицу тот же, что у прежней реализации (shard -> номер буфера ->
-// позиция в буфере), поэтому результат побитно совпадает с ней при любом
-// числе потоков.
+// Ядро свёртки: отрезки вкладов seg_ptr[0..seg_count) / seg_size[...] в
+// scratch (заполняет вызывающий) логически конкатенированы в порядке номеров.
+// output не должен совпадать с отрезками; ссылки в scratch живут только
+// внутри вызова. Порядок суммирования на каждую частицу: shard -> номер
+// отрезка -> позиция в отрезке, поэтому результат не зависит от числа потоков.
 template <class Delta>
-void reduce_contributions_into(const CpuExecutor& exec,
-                                const std::vector<ContributionBuffer<Delta>>* const* sets, std::size_t set_count,
-                                std::size_t particle_count, std::vector<Delta>& output, ReduceScratch& scratch,
-                                const ReduceOptions& options)
+void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t particle_count,
+                          std::vector<Delta>& output, ReduceScratch& scratch, const ReduceOptions& options)
 {
     output.assign(particle_count, Delta{});
     if (particle_count == 0) return;
 
-    std::size_t nbuf = 0;
-    for (std::size_t k = 0; k < set_count; ++k) nbuf += sets[k]->size();
-    scratch.buffer_ptr.resize(nbuf);
     std::size_t total = 0;
-    {
-        std::size_t g = 0;
-        for (std::size_t k = 0; k < set_count; ++k)
-        {
-            for (const auto& buf : *sets[k])
-            {
-                scratch.buffer_ptr[g++] = &buf;
-                total += buf.size();
-            }
-        }
-    }
+    for (std::size_t g = 0; g < nbuf; ++g) total += scratch.seg_size[g];
     if (total == 0) return;
 
     std::size_t shard_count = options.shard_count;
@@ -209,20 +195,20 @@ void reduce_contributions_into(const CpuExecutor& exec,
     const std::size_t* const bound = scratch.shard_bound.data();
     const double inv_width = static_cast<double>(shard_count) / static_cast<double>(particle_count);
 
-    auto buffer_at = [&scratch](std::size_t g) -> const ContributionBuffer<Delta>& {
-        return *static_cast<const ContributionBuffer<Delta>*>(scratch.buffer_ptr[g]);
-    };
+    const auto* const seg_ptr = scratch.seg_ptr.data();
+    const std::size_t* const seg_size = scratch.seg_size.data();
 
     // Проход 1: подсчёт (буфер, shard) -> количество; параллельно по буферам,
     // каждый буфер пишет только свою строку counts.
     scratch.counts.assign(nbuf * shard_count, 0);
     std::size_t* const counts = scratch.counts.data();
     exec.parallel_for(nbuf, std::size_t(1), [&](std::size_t g) {
-        const auto& buf = buffer_at(g);
+        const auto* const seg = static_cast<const Contribution<Delta>*>(seg_ptr[g]);
+        const std::size_t n = seg_size[g];
         std::size_t* const row = counts + g * shard_count;
-        for (std::size_t k = 0; k < buf.size(); ++k)
+        for (std::size_t k = 0; k < n; ++k)
         {
-            row[reduce_shard_of(bound, shard_count, particle_count, inv_width, buf[k].target)]++;
+            row[reduce_shard_of(bound, shard_count, particle_count, inv_width, seg[k].target)]++;
         }
     });
 
@@ -251,12 +237,13 @@ void reduce_contributions_into(const CpuExecutor& exec,
     const void** const refs = scratch.refs.data();
     std::size_t* const dest = scratch.dest_offset.data();
     exec.parallel_for(nbuf, std::size_t(1), [&](std::size_t g) {
-        const auto& buf = buffer_at(g);
+        const auto* const seg = static_cast<const Contribution<Delta>*>(seg_ptr[g]);
+        const std::size_t n = seg_size[g];
         std::size_t* const cursor = dest + g * shard_count;
-        for (std::size_t k = 0; k < buf.size(); ++k)
+        for (std::size_t k = 0; k < n; ++k)
         {
-            const std::size_t s = reduce_shard_of(bound, shard_count, particle_count, inv_width, buf[k].target);
-            refs[cursor[s]++] = &buf[k];
+            const std::size_t s = reduce_shard_of(bound, shard_count, particle_count, inv_width, seg[k].target);
+            refs[cursor[s]++] = &seg[k];
         }
     });
 
@@ -286,6 +273,32 @@ void reduce_contributions_into(const CpuExecutor& exec,
             out[c.target] += c.delta;
         }
     });
+}
+
+// Наборы буферов sets[0..set_count), логически конкатенированные в порядке
+// перечисления (как если бы все буферы были скопированы в один vector);
+// каждый буфер — один отрезок (пустой допустим).
+template <class Delta>
+void reduce_contributions_into(const CpuExecutor& exec,
+                                const std::vector<ContributionBuffer<Delta>>* const* sets, std::size_t set_count,
+                                std::size_t particle_count, std::vector<Delta>& output, ReduceScratch& scratch,
+                                const ReduceOptions& options)
+{
+    std::size_t nbuf = 0;
+    for (std::size_t k = 0; k < set_count; ++k) nbuf += sets[k]->size();
+    scratch.seg_ptr.resize(nbuf);
+    scratch.seg_size.resize(nbuf);
+    std::size_t g = 0;
+    for (std::size_t k = 0; k < set_count; ++k)
+    {
+        for (const auto& buf : *sets[k])
+        {
+            scratch.seg_ptr[g] = buf.data();
+            scratch.seg_size[g] = buf.size();
+            ++g;
+        }
+    }
+    reduce_segments_into<Delta>(exec, nbuf, particle_count, output, scratch, options);
 }
 
 // Один набор буферов.
