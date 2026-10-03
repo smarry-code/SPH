@@ -1,7 +1,7 @@
 // input.cpp
 // Определения функций ввода/инициализации данных.
-// Объявления — в input.hpp. Вспомогательные функции разбора (parse_k_file,
-// shock_tube, shear_cavity) — внутренние (internal linkage / static) этого TU.
+// Объявления — в input.hpp. Вспомогательные функции разбора (shock_tube,
+// shear_cavity) — внутренние (internal linkage / static) этого TU.
 #include "input.hpp"
 #include "fiber/fiber_system.hpp"
 #include <cctype>
@@ -21,12 +21,6 @@
 #include <windows.h>
 #endif
 
-struct RawSph
-{
-    long long nid;           // ID узла/частицы
-    int pid;                 // PID / signed material type
-    double mass;             // MASS (>0 по допущению)
-};
 // Вспомогательная функция для форматированного вывода
 static void format_output(std::ofstream& file, size_t particle_id, const std::vector<double>& values)
 {
@@ -45,20 +39,6 @@ static void format_output_other(std::ofstream& file, size_t particle_id, int ity
          << std::setw(2) << itype_val << "  "
          << std::setw(8) << std::scientific << hsml_val << "\n";
 }
-enum class BlockState
-{
-    None,
-    Node,
-    ElementSPH
-};
-static void trim_comment(std::string &line)
-{
-    std::size_t pos = line.find('$');
-    if (pos != std::string::npos)
-    {
-        line.erase(pos);
-    }        
-}
 static void trim_spaces(std::string& s)
 {
     // Приведение к unsigned char обязательно. std::isspace принимает int, но
@@ -73,190 +53,6 @@ static void trim_spaces(std::string& s)
     auto not_space = [](unsigned char ch){ return !std::isspace(ch); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
-}
-static std::vector<std::string> split_by_commas_preserve_empty(const std::string& line)
-{
-    std::vector<std::string> fields;
-    std::string current;
-
-    for (char c : line)
-    {
-        if (c == ',')
-        {
-            // конец поля
-            trim_spaces(current);
-            fields.push_back(current);
-            current.clear();
-        }
-        else
-        {
-            current.push_back(c);
-        }
-    }
-    // последнее поле
-    trim_spaces(current);
-    fields.push_back(current);
-
-    return fields;
-}
-static long long to_int_or_zero(const std::string& s)
-{
-    if (s.empty())
-    {
-        return 0;
-    }      
-    return std::stoll(s);
-}
-
-// безопасное чтение double: пустая строка => 0.0
-static double to_double_or_zero(const std::string& s)
-{
-    if (s.empty())
-    {
-        return 0.0;
-    }      
-    return std::stod(s);
-}
-
-void parse_k_file(SimulationConfig& cfg, const std::string& filename, ParticleSystem& sys)
-{
-    std::ifstream in(filename);
-    // узлы: NID -> (x,y,z)
-    std::unordered_map<long long, std::array<double,3>> nodes;
-    nodes.reserve(1024);
-
-    // сырые SPH-элементы
-    std::vector<RawSph> sph_elements;
-    sph_elements.reserve(1024);
-
-    BlockState state = BlockState::None;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.empty())
-        {
-            continue;
-        }
-        // заголовки ключевых слов
-        if (!line.empty() && line[0] == '*')
-        {
-            std::string header = line;
-            trim_comment(header);
-            for (char& c : header)
-            {
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            }
-            if (header.find("*NODE") == 0)
-            {
-                state = BlockState::Node;
-            }
-            else if (header.find("*ELEMENT_SPH") == 0)
-            {
-                state = BlockState::ElementSPH;
-            }
-            else
-            {
-                state = BlockState::None;
-            }
-            continue;
-        }
-        // обрезаем комментарий и проверяем на пустоту
-        trim_comment(line);
-        bool only_space = true;
-        for (char c : line)
-        {
-            if (!std::isspace(static_cast<unsigned char>(c)))
-            {
-                only_space = false;
-                break;
-            }
-        }
-        if (only_space)
-        {
-            continue;
-        }
-        // free format: делим по запятым
-        auto fields = split_by_commas_preserve_empty(line);
-        if (fields.empty())
-        {
-            continue;
-        }  
-        if (state == BlockState::Node)
-        {
-            // NID, x, y, z (недостающие поля -> 0)
-            if (fields.size() < 4)
-                fields.resize(4);
-
-            long long nid = to_int_or_zero(fields[0]);
-            double x = to_double_or_zero(fields[1]);
-            double y = to_double_or_zero(fields[2]);
-            double z = to_double_or_zero(fields[3]);
-            if (nid < 0)
-            {
-                continue;
-            }            
-            nodes[nid] = {x, y, z};
-        }
-        else if (state == BlockState::ElementSPH)
-        {
-            // NID, PID, MASS (недостающие поля -> 0)
-            if (fields.size() < 3)
-            {
-                fields.resize(3);
-            }                
-            long long nid = to_int_or_zero(fields[0]);
-            int pid = fields[1].empty() ? 0 : std::stoi(fields[1]);
-            double mass = to_double_or_zero(fields[2]);
-            if (nid < 0)
-            {
-                continue;
-            }                
-            RawSph e{nid, pid, mass};
-            sph_elements.push_back(e);
-        }                  
-    }
-    // объединение: по каждому RawSph ищем координаты узла.
-    // Сначала подсчитываем число валидных элементов (с найденным узлом),
-    // затем resize sys и заполняем плоские массивы.
-    size_t valid = 0;
-    for (const auto& e : sph_elements)
-    {
-        if (nodes.find(e.nid) != nodes.end()) ++valid;
-    }
-    sys.resize(valid);
-    size_t idx = 0;
-    for (const auto& e : sph_elements)
-    {
-        auto it = nodes.find(e.nid);
-        if (it == nodes.end())
-        {
-            // узел не найден — пропускаем
-            continue;
-        }
-        sys.inzializ_index(idx);  // обнулить все поля (эквивалент default Particle)
-        sys.x[0][idx] = it->second[0];
-        sys.x[1][idx] = it->second[1];
-        sys.x[2][idx] = it->second[2];
-        sys.mass[idx]  = e.mass;
-        sys.itype[idx] = e.pid;
-        // body[] = PID (fiber/PLAN.md §3.1): "для k-файла это PID". Совпадает
-        // с itype здесь только потому, что itype тоже читается из PID выше —
-        // но body[] хранит именно номер тела (object_id), а не материал, и
-        // остаётся отдельным полем для будущего Solid-Solid-Contact (Ф4).
-        sys.body[idx]  = e.pid;
-        if (sys.x[0][idx] > 0.0131 && sys.itype[idx] == 3 &&
-            sys.x[1][idx] > -1.9e-4 && sys.x[1][idx] < 1.9e-4 &&
-            sys.x[2][idx] > -1.9e-4 && sys.x[2][idx] < 1.9e-4)
-        {
-            cfg.moni_particle = idx;
-            std::ofstream file("log.txt", std::ios::app);
-            file << "Частица номер " << cfg.moni_particle << " с координатами " << sys.x[0][idx] << ", " << sys.x[1][idx]
-                 << ", " << sys.x[2][idx] << std::endl;
-            file.close();
-        }
-        ++idx;
-    }
-    in.close();
 }
 void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 {
