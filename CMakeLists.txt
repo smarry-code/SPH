@@ -38,6 +38,14 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+# Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
+# SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
+# solid_fiber требуют 3.
+set(SPH_DIM "1" CACHE STRING "Размерность исполняемого SPH (1|2|3)")
+set_property(CACHE SPH_DIM PROPERTY STRINGS 1 2 3)
+if(NOT SPH_DIM MATCHES "^[123]$")
+    message(FATAL_ERROR "SPH_DIM должен быть 1, 2 или 3, получено: ${SPH_DIM}")
+endif()
 
 # --- Конфигурация по умолчанию ----------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -56,6 +64,7 @@ list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 # --- Исполняемый модуль (имя SPH.exe на Windows — как прежде) ----------------
 add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
+target_compile_definitions(SPH PRIVATE SPH_DIM=${SPH_DIM})
 
 # --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
 enable_testing()
