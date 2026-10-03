@@ -22,6 +22,10 @@ namespace k_input
 
 enum class KMode { Solid, SolidFiber };
 
+// Что делать с *ELEMENT_SOLID (K9): Skip - пропустить с предупреждением;
+// Particles - одна частица на элемент в центре масс, mass = rho*V (нужны dim=3 и таблица).
+enum class KSolidElements { Skip, Particles };
+
 struct KImportOptions
 {
     std::string k_file;
@@ -32,6 +36,7 @@ struct KImportOptions
     std::string parts_file;
     double length_scale = 1.0;    // множитель координат (Р5)
     double mass_scale = 1.0;      // множитель масс (Р5)
+    KSolidElements solid_elements = KSolidElements::Skip;
     long long monitor_nid = -1;   // NID мониторной частицы (Р4); < 0 - не задан
 };
 
@@ -39,6 +44,7 @@ struct KImportSummary
 {
     std::size_t nodes = 0;               // узлов в колоде
     std::size_t sph_particles = 0;
+    std::size_t solid_element_particles = 0;   // частиц из *ELEMENT_SOLID (K9); идут после SPH
     std::array<double, 3> bbox_min{0.0, 0.0, 0.0};   // габарит SPH-частиц, м
     std::array<double, 3> bbox_max{0.0, 0.0, 0.0};
     double dx_median = 0.0;              // медиана (m/rho)^(1/dim); 0 без таблицы

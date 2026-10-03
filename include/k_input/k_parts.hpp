@@ -66,8 +66,8 @@ KPartsTable read_k_parts_from_string(const std::string& text, const std::string&
 // PID из deck.sph без SOLID_PART; при fiber_mode - PID из deck.beams без
 // FIBER_PART. Предупреждения (в warnings): PID таблицы, которого нет ни в
 // sph, ни в beams, ни в solids, ни в *PART колоды. PID из *ELEMENT_SOLID
-// проверяются на этапе K9.
+// проверяются при solid_elements = true (K9): PID без SOLID_PART - ошибка.
 void check_parts_against_deck(const KPartsTable& table, const KDeck& deck, bool fiber_mode,
-                              std::vector<std::string>& warnings);
+                              std::vector<std::string>& warnings, bool solid_elements = false);
 
 } // namespace k_input

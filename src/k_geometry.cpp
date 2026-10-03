@@ -32,6 +32,75 @@ std::string join_pids(const std::set<long long>& pids)
     return l;
 }
 
+using Vec3 = std::array<double, 3>;
+
+// Знаковый объём тетраэдра: det(b-a, c-a, d-a)/6.
+double tet_volume(const Vec3& a, const Vec3& b, const Vec3& c, const Vec3& d)
+{
+    const double u[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+    const double v[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+    const double w[3] = {d[0] - a[0], d[1] - a[1], d[2] - a[2]};
+    return (u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0])
+            + u[2] * (v[0] * w[1] - v[1] * w[0])) / 6.0;
+}
+
+// Разбиение гексаэдра N1..N8 на 6 тетраэдров по диагонали N1-N7 (при нумерации
+// LS-DYNA все объёмы положительны; вырожденные формы дают нулевые тетраэдры).
+constexpr int kHexTets[6][4] = {{0, 1, 2, 6}, {0, 2, 3, 6}, {0, 3, 7, 6}, {0, 7, 4, 6}, {0, 4, 5, 6}, {0, 5, 1, 6}};
+
+struct SolidGeom
+{
+    double volume = 0.0;
+    Vec3 center{0.0, 0.0, 0.0};
+    bool mixed_sign = false;
+    double scale3 = 0.0;   // (макс. размах узлов)^3 - для порога нулевого объёма
+};
+
+SolidGeom solid_geometry(const std::array<Vec3, 10>& p, int nn)
+{
+    SolidGeom g;
+    std::vector<std::array<int, 4>> tets;
+    if (nn == 8)
+        for (const auto& t : kHexTets) tets.push_back({t[0], t[1], t[2], t[3]});
+    else
+        tets.push_back({0, 1, 2, 3});   // 4 узла или углы 10-узлового
+    const int used = nn == 8 ? 8 : 4;
+    Vec3 lo = p[0], hi = p[0];
+    for (int k = 1; k < used; ++k)
+        for (int c = 0; c < 3; ++c)
+        {
+            lo[c] = std::min(lo[c], p[static_cast<std::size_t>(k)][c]);
+            hi[c] = std::max(hi[c], p[static_cast<std::size_t>(k)][c]);
+        }
+    const double ext = std::max({hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+    g.scale3 = ext * ext * ext;
+
+    double sum = 0.0, maxabs = 0.0;
+    Vec3 mom{0.0, 0.0, 0.0};
+    std::vector<double> vols;
+    for (const auto& t : tets)
+    {
+        const Vec3 &a = p[static_cast<std::size_t>(t[0])], &b = p[static_cast<std::size_t>(t[1])],
+                   &c = p[static_cast<std::size_t>(t[2])], &d = p[static_cast<std::size_t>(t[3])];
+        const double v = tet_volume(a, b, c, d);
+        vols.push_back(v);
+        sum += v;
+        maxabs = std::max(maxabs, std::fabs(v));
+        for (int k = 0; k < 3; ++k) mom[k] += v * 0.25 * (a[k] + b[k] + c[k] + d[k]);
+    }
+    bool pos = false, neg = false;
+    for (double v : vols)
+    {
+        if (v > 1e-12 * maxabs) pos = true;
+        if (v < -1e-12 * maxabs) neg = true;
+    }
+    g.mixed_sign = pos && neg;
+    g.volume = std::fabs(sum);
+    if (sum != 0.0)
+        for (int k = 0; k < 3; ++k) g.center[k] = mom[k] / sum;
+    return g;
+}
+
 } // namespace
 
 void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KImportOptions& opts,
@@ -51,7 +120,13 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
         summary.warnings.push_back("*ELEMENT_BEAM пропущены (режим solid): " + std::to_string(deck.beams.size())
                                    + " элементов, PID: " + join_pids(pids));
     }
-    if (!deck.solids.empty())
+    const bool solid_parts = opts.solid_elements == KSolidElements::Particles;
+    if (solid_parts && !deck.solids.empty())
+    {
+        if (dim != 3) fail(opts.k_file, "*ELEMENT_SOLID → частицы требует SPH_DIM=3");
+        if (!table) fail(opts.k_file, "k_solid_elements=particles требует таблицу деталей (k_parts_file)");
+    }
+    if (!solid_parts && !deck.solids.empty())
     {
         std::set<long long> pids;
         for (const auto& s : deck.solids) pids.insert(s.pid);
@@ -74,6 +149,50 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
             else { lo[c] = std::min(lo[c], pos[i][c]); hi[c] = std::max(hi[c], pos[i][c]); }
         }
     }
+
+    // K9: частицы из *ELEMENT_SOLID (после всех SPH, в порядке файла, Р9).
+    struct SolidParticle { Vec3 pos; double volume; const SolidPart* sp; const KSolid* el; };
+    std::vector<SolidParticle> sol;
+    if (solid_parts && !deck.solids.empty())
+    {
+        std::set<long long> sph_nodes, beam_nodes;
+        for (const KSph& e : deck.sph) sph_nodes.insert(e.nid);
+        for (const KBeam& b : deck.beams) { beam_nodes.insert(b.n1); beam_nodes.insert(b.n2); }
+        for (const KSolid& el : deck.solids)
+        {
+            const SolidPart* sp = table->find_solid(el.pid);
+            if (!sp)
+                fail(table->file, "PID " + std::to_string(el.pid) + " из " + deck.where(el.src)
+                                      + " не описан в SOLID_PART");
+            std::array<Vec3, 10> pts{};
+            for (int k = 0; k < el.nn; ++k)
+            {
+                const long long nid = el.n[static_cast<std::size_t>(k)];
+                const KNode* nd = deck.find_node(nid);
+                if (!nd) fail(deck.where(el.src), "узел " + std::to_string(nid) + " не найден");
+                if (sph_nodes.count(nid))
+                    fail(deck.where(el.src), "узел " + std::to_string(nid) + " одновременно в *ELEMENT_SOLID и в *ELEMENT_SPH");
+                if (beam_nodes.count(nid))
+                    fail(deck.where(el.src), "узел " + std::to_string(nid) + " одновременно в *ELEMENT_SOLID и в *ELEMENT_BEAM");
+                pts[static_cast<std::size_t>(k)] = {nd->x * opts.length_scale, nd->y * opts.length_scale,
+                                                    nd->z * opts.length_scale};
+            }
+            const SolidGeom g = solid_geometry(pts, el.nn);
+            if (!std::isfinite(g.volume) || g.volume <= 1e-12 * g.scale3)
+                fail(deck.where(el.src), "*ELEMENT_SOLID EID " + std::to_string(el.eid)
+                                             + ": нулевой или неконечный объём V=" + std::to_string(g.volume));
+            if (g.mixed_sign)
+                summary.warnings.push_back(deck.where(el.src) + ": *ELEMENT_SOLID EID " + std::to_string(el.eid)
+                                           + ": тетраэдры разбиения разной ориентации (вывернутый элемент?)");
+            sol.push_back({g.center, g.volume, sp, &el});
+            for (int c = 0; c < 3; ++c)
+            {
+                if (n == 0 && sol.size() == 1) { lo[c] = hi[c] = g.center[c]; }
+                else { lo[c] = std::min(lo[c], g.center[c]); hi[c] = std::max(hi[c], g.center[c]); }
+            }
+        }
+    }
+    summary.solid_element_particles = sol.size();
     summary.bbox_min = lo;
     summary.bbox_max = hi;
 
@@ -92,7 +211,7 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
                              + std::to_string(tol) + " при dim=" + std::to_string(dim));
     }
 
-    sys.resize(n);
+    sys.resize(n + sol.size());
     std::vector<double> dxs;
     for (std::size_t i = 0; i < n; ++i)
     {
@@ -140,9 +259,27 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
         }
     }
 
+    for (std::size_t k = 0; k < sol.size(); ++k)
+    {
+        const std::size_t i = n + k;
+        const SolidParticle& s = sol[k];
+        const SolidPart* sp = s.sp;
+        sys.inzializ_index(i);
+        for (std::size_t d = 0; d < dim; ++d) sys.x[d][i] = s.pos[d];
+        sys.itype[i] = sp->itype;
+        sys.body[i] = static_cast<int>(s.el->pid);
+        sys.rho[i] = sp->rho;
+        sys.rho_0[i] = sp->rho;
+        sys.mass[i] = sp->rho * s.volume;
+        const double dx = std::cbrt(s.volume);
+        dxs.push_back(dx);
+        sys.hsml[i] = sp->has_hsml ? sp->hsml : 2.0 * dx;
+        for (int c = 0; c < sp->nv; ++c) sys.vx[c][i] = sp->v[c];
+    }
+
     if (table)
     {
-        for (std::size_t i = 0; i < n; ++i) urs(mats, sys, i);
+        for (std::size_t i = 0; i < n + sol.size(); ++i) urs(mats, sys, i);
         if (!dxs.empty())
         {
             const std::size_t m = dxs.size() / 2;
@@ -301,7 +438,7 @@ void apply_spc_clamps(const KDeck& deck, const std::vector<long long>& bead_nids
     for (std::size_t i = 0; i < deck.sph.size(); ++i) solid_of.emplace(deck.sph[i].nid, i);
     for (std::size_t k = 0; k < bead_nids.size(); ++k) bead_of.emplace(bead_nids[k], k);
 
-    const std::size_t n_solid = deck.sph.size();
+    const std::size_t n_solid = model.solid.size();
     const std::size_t n_bead = model.fiber.size();
     std::vector<std::uint8_t> sm(n_solid, 0), fm(n_bead, 0);
     if (model.clamps.fiber_mask.size() == n_bead) fm = model.clamps.fiber_mask;   // CLAMP_BOX: OR
@@ -376,7 +513,7 @@ KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats
     if (!opts.parts_file.empty())
     {
         table = read_k_parts_file(opts.parts_file);
-        check_parts_against_deck(table, deck, fib, summary.warnings);
+        check_parts_against_deck(table, deck, fib, summary.warnings, opts.solid_elements == KSolidElements::Particles);
         tp = &table;
     }
     build_solid_from_deck(deck, tp, opts, mats, model.solid, moni_particle, summary);

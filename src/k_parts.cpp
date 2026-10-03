@@ -202,8 +202,13 @@ KPartsTable read_k_parts_file(const std::string& path)
 }
 
 void check_parts_against_deck(const KPartsTable& table, const KDeck& deck, bool fiber_mode,
-                              std::vector<std::string>& warnings)
+                              std::vector<std::string>& warnings, bool solid_elements)
 {
+    if (solid_elements)
+        for (const auto& e : deck.solids)
+            if (!table.find_solid(e.pid))
+                throw std::runtime_error(table.file + ": PID " + std::to_string(e.pid) + " из *ELEMENT_SOLID ("
+                                         + deck.where(e.src) + ") не описан в SOLID_PART");
     for (const auto& e : deck.sph)
         if (!table.find_solid(e.pid))
             throw std::runtime_error(table.file + ": PID " + std::to_string(e.pid) + " из *ELEMENT_SPH ("
