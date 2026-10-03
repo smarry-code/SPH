@@ -303,6 +303,24 @@ endif()
 add_test(NAME k_fiber_test COMMAND test_k_fiber)
 set_tests_properties(k_fiber_test PROPERTIES LABELS "3d")
 
+# --- Сквозной тест подключения импорта .k к input()/time_integration (этап K6).
+add_executable(test_k_e2e tests/test_k_e2e.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_e2e PRIVATE SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_e2e PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_e2e PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_e2e PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_e2e PRIVATE -fopenmp)
+    target_link_options(test_k_e2e PRIVATE -fopenmp)
+endif()
+add_test(NAME k_e2e_test COMMAND test_k_e2e)
+set_tests_properties(k_e2e_test PROPERTIES LABELS "3d")
+
 # --- Закрепления из *BOUNDARY_SPC_* (readk/k-import-plan.md, этап K8).
 add_executable(test_k_clamp tests/test_k_clamp.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_k_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

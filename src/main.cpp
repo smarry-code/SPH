@@ -1,5 +1,6 @@
 // sph.cpp
 #include <vector>
+#include <cmath>
 #include <omp.h>
 #include "param.hpp"
 #include "particle_system.hpp"
@@ -36,7 +37,24 @@ void time_elapsed(double& elapsed)
 }
 } // namespace
 
+static int run_sph();
+
 int main()
+{
+    // Ошибки импорта (k_*, .k, .fib) бросают исключения: без перехвата процесс
+    // умирает по terminate без сообщения.
+    try
+    {
+        return run_sph();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Ошибка: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+static int run_sph()
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
@@ -60,7 +78,9 @@ int main()
     // inzializ() ещё до загрузки реальных частиц (Этап 3.4).
     // Первичное хранилище частиц — Structure-of-Arrays (Этап 4.3.3). AoS
     // vector<Particle> упразднён: все поля в плоских непрерывных массивах sys.
-    ParticleSystem sys;
+    // Model = Solid (model.solid, прежний ParticleSystem) + нити; без нитей
+    // time_integration(Model) эквивалентна прежней перегрузке для ParticleSystem.
+    fiber::Model model;
     // Инициализация динамических массивов
     //std::vector<std::vector<double>> x(dim, std::vector<double>(maxn, 0.0));
     //std::vector<std::vector<double>> vx(dim, std::vector<double>(maxn, 0.0));
@@ -101,7 +121,8 @@ int main()
     time_print();
     time_elapsed(s1);
 
-    input(cfg, sys, ntotal, dx);
+    input(cfg, model, ntotal, dx);
+    ParticleSystem& sys = model.solid;
     cfg.maxn = static_cast<size_t>(ntotal * 1.4);
     cfg.max_interaction = 100 * cfg.maxn;
     // Подгоняем размер системы под актуальное число частиц с запасом maxn
@@ -119,7 +140,19 @@ int main()
             }
         }
     }
-    time_integration(cfg, sys, ntotal, dt, time, dx);
+    // Импорт .k: начальный шаг -- по CFL реальной геометрии (флаг shocktube
+    // выше даёт dt = 0.005, для .k это слишком много).
+    if (!cfg.k_file.empty())
+    {
+        // Без таблицы деталей hsml и c нулевые -> шаг не определён; тогда dt
+        // остаётся прежним, а цикл пересчитывает его сам на каждом шаге.
+        const double dt_cfl = compute_cfl_timestep(cfg, sys, ntotal);
+        if (std::isfinite(dt_cfl) && dt_cfl > 0.0)
+        {
+            dt = dt_cfl;
+        }
+    }
+    time_integration(cfg, model, ntotal, dt, time, dx);
     output(sys, ntotal, time, maxtimestep, dt);
 
     time_print();

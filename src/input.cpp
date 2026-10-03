@@ -4,6 +4,8 @@
 // shear_cavity) — внутренние (internal linkage / static) этого TU.
 #include "input.hpp"
 #include "fiber/fiber_system.hpp"
+#include "fiber/fiber_input.hpp"
+#include "k_input/k_geometry.hpp"
 #include <cctype>
 #include <cmath>
 #include <stdexcept>
@@ -53,6 +55,25 @@ static void trim_spaces(std::string& s)
     auto not_space = [](unsigned char ch){ return !std::isspace(ch); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+}
+// Положительное конечное число для ключей k_*; иначе исключение с именем ключа.
+static double parse_k_positive(const char* key, const std::string& value)
+{
+    std::size_t pos = 0;
+    double v = 0.0;
+    try
+    {
+        v = std::stod(value, &pos);
+    }
+    catch (const std::exception&)
+    {
+        pos = 0;
+    }
+    if (pos == 0 || pos != value.size() || !std::isfinite(v) || !(v > 0.0))
+    {
+        throw std::runtime_error(std::string(key) + ": ожидается конечное число > 0, получено '" + value + "'");
+    }
+    return v;
 }
 void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 {
@@ -220,6 +241,61 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             // dim != 3, это ошибка, и она должна выявляться здесь, на этапе
             // разбора конфигурации, а не позже в середине расчёта.
             fiber::check_fiber_requires_dim3();
+        }
+        else if (key == "k_file")
+        {
+            cfg.k_file = value;
+        }
+        else if (key == "k_mode")
+        {
+            // Геометрия важнее удобства: неверное значение -- ошибка, не откат.
+            if (value != "solid" && value != "solid_fiber")
+            {
+                throw std::runtime_error("k_mode: допустимы solid и solid_fiber, получено '" + value + "'");
+            }
+            cfg.k_mode = value;
+            if (value == "solid_fiber")
+            {
+                fiber::check_fiber_requires_dim3();
+            }
+        }
+        else if (key == "k_parts_file")
+        {
+            cfg.k_parts_file = value;
+        }
+        else if (key == "k_length_scale")
+        {
+            cfg.k_length_scale = parse_k_positive("k_length_scale", value);
+        }
+        else if (key == "k_mass_scale")
+        {
+            cfg.k_mass_scale = parse_k_positive("k_mass_scale", value);
+        }
+        else if (key == "k_monitor_nid")
+        {
+            std::size_t pos = 0;
+            long long v = 0;
+            try
+            {
+                v = std::stoll(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            if (pos == 0 || pos != value.size())
+            {
+                throw std::runtime_error("k_monitor_nid: ожидается целое число, получено '" + value + "'");
+            }
+            cfg.k_monitor_nid = v;
+        }
+        else if (key == "k_solid_elements")
+        {
+            if (value != "skip" && value != "particles")
+            {
+                throw std::runtime_error("k_solid_elements: допустимы skip и particles, получено '" + value + "'");
+            }
+            cfg.k_solid_elements = value;
         }
     }
     in.close();
@@ -524,13 +600,9 @@ void shear_cavity(ParticleSystem& sys, size_t& ntotal)
     }
 }
 
-// Основная функция ввода данных
-void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& dx)
+// Встроенные источники Solid: particles.dat / shock_tube / shear_cavity.
+static void input_builtin(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& dx)
 {
-#ifdef _WIN32
-    SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
-#endif
-    parse_sph_config(cfg, "Initial_Conditions.txt");
     // Если загрузка из файла включена
     if (config_input)
     {
@@ -650,75 +722,6 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
     // Иначе генерируем данные
     else
     {
-        /*parse_k_file("1.k", Elem);
-        double delta_x = 0.0003;
-        ntotal = sys.size();
-        std::ofstream file("test.txt");
-        file << "N" << " " << "Nmat" << " " << "M" << " ";
-        if (dim == 1)
-        {
-            file << "x" << " ";
-        }
-        else if (dim == 2)
-        {
-            file << "x" << " " << "y" << " ";
-        }
-        else if (dim == 3)
-        {
-            file << "x" << " " << "y" << " " << "z" << " ";
-        }
-        if (dim == 1)
-        {
-            file << "vx" << " ";
-        }
-        else if (dim == 2)
-        {
-            file << "vx" << " " << "vy" << " ";
-        }
-        else if (dim == 3)
-        {
-            file << "vx" << " " << "vy" << " " << "vz" << " ";
-        }
-        file << "rho" << " " << "p" << " " << "u" << " " << "c" << " " << "sigma_i" << " " << "e_pl" << " " << "D" << " " << "hsml" << " "
-             << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << "\n";
-        for (size_t i = 0; i < ntotal; ++i)
-        {
-            sys.hsml[i] = 2 * delta_x;
-
-            if (sys.x[0][i] < 0.0045)
-            {
-                sys.vx[0][i] = 1546;
-            }
-            if (sys.itype[i] == 1)
-            {
-                sys.itype[i] = 7;
-                sys.rho[i] = 320;
-                sys.rho_0[i] = sys.rho[i];
-                //sys.vx[0][i] = 1546;
-            }
-            else if (sys.itype[i] == 2)
-            {
-                sys.itype[i] = 10;
-                sys.rho[i] = 2510;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            else if (sys.itype[i] == 3)
-            {
-                sys.itype[i] = 10;
-                sys.rho[i] = 2510;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            else if (sys.itype[i] == 4)
-            {
-                sys.itype[i] = 5;
-                sys.rho[i] = 2638;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            // Запись основных данных
-            file << i + 1; // ID частицы (в Fortran индексы начинаются с 1)
-            sys.vuvod_index(i, file);
-        }
-        file.close();*/
         if (shocktube)
         {
             shock_tube(cfg, sys, ntotal, dx);
@@ -732,5 +735,91 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
         std::wcout << " Начальная конфигурация сгенерирована\n";
         std::wcout << " Общее количество частиц " << ntotal << "\n";
         std::wcout << " ******************************\n";
+    }
+}
+
+// Сводка импорта .k (readk/k-import-plan.md, раздел 4.4).
+static void print_k_summary(const SimulationConfig& cfg, const k_input::KImportSummary& sm)
+{
+    std::cout << " ******************************\n";
+    std::cout << " Импорт LS-DYNA .k: " << cfg.k_file << " (режим " << cfg.k_mode << ")\n";
+    std::cout << " Узлов в колоде " << sm.nodes << "\n";
+    std::cout << " Частиц: SPH " << sm.sph_particles << ", из солидов " << sm.solid_element_particles << "\n";
+    std::cout << " Габарит SPH, м: x [" << sm.bbox_min[0] << ", " << sm.bbox_max[0] << "]"
+              << ", y [" << sm.bbox_min[1] << ", " << sm.bbox_max[1] << "]"
+              << ", z [" << sm.bbox_min[2] << ", " << sm.bbox_max[2] << "]\n";
+    std::cout << " dx_median, м: " << sm.dx_median << "\n";
+    if (sm.fibers > 0 || sm.beads > 0)
+    {
+        std::cout << " Нитей " << sm.fibers << ", бусин " << sm.beads << ", связей " << sm.bonds << "\n";
+        std::cout << " Сегмент l0, м: [" << sm.seg_min << ", " << sm.seg_max << "], l/d: ["
+                  << sm.ld_min << ", " << sm.ld_max << "]\n";
+    }
+    if (sm.clamped_particles > 0 || sm.clamped_beads > 0)
+    {
+        std::cout << " Зажато частиц " << sm.clamped_particles << ", бусин " << sm.clamped_beads << "\n";
+    }
+    for (const std::string& w : sm.warnings)
+    {
+        std::cout << " Предупреждение: " << w << "\n";
+    }
+    for (const auto& kv : sm.skipped)
+    {
+        std::cout << " Пропущено " << kv.first << ": " << kv.second << "\n";
+    }
+    std::cout << " ******************************\n";
+}
+
+// Основная функция ввода данных
+void input(SimulationConfig& cfg, fiber::Model& model, size_t& ntotal, double& dx)
+{
+#ifdef _WIN32
+    SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
+#endif
+    parse_sph_config(cfg, "Initial_Conditions.txt");
+
+    const bool solid_fiber = (cfg.k_mode == "solid_fiber");
+    // Р10: два источника нитей одновременно не допускаются.
+    if (solid_fiber && !cfg.fiber_file.empty())
+    {
+        throw std::runtime_error("k_mode=solid_fiber вместе с fiber_file: два источника нитей");
+    }
+
+    if (!cfg.k_file.empty())
+    {
+        if (config_input)
+        {
+            throw std::runtime_error("k_file несовместим с config_input (загрузка particles.dat)");
+        }
+        k_input::KImportOptions opts;
+        opts.k_file = cfg.k_file;
+        opts.mode = solid_fiber ? k_input::KMode::SolidFiber : k_input::KMode::Solid;
+        opts.parts_file = cfg.k_parts_file;
+        opts.length_scale = cfg.k_length_scale;
+        opts.mass_scale = cfg.k_mass_scale;
+        opts.monitor_nid = cfg.k_monitor_nid;
+        opts.solid_elements = (cfg.k_solid_elements == "particles") ? k_input::KSolidElements::Particles
+                                                                    : k_input::KSolidElements::Skip;
+        const k_input::KImportSummary summary = k_input::load_k_geometry(opts, cfg.mats, model, cfg.moni_particle);
+        ntotal = model.solid.size();
+        // Для печати/совместимости: интегратор delta_x не использует.
+        dx = summary.dx_median;
+        print_k_summary(cfg, summary);
+    }
+    else
+    {
+        input_builtin(cfg, model.solid, ntotal, dx);
+    }
+
+    if (!cfg.fiber_file.empty())
+    {
+        fiber::load_fiber_file(cfg.fiber_file, model);
+        std::size_t fibers = 0;
+        for (std::size_t k = 0; k < model.fiber.size(); ++k)
+        {
+            fibers = std::max<std::size_t>(fibers, static_cast<std::size_t>(model.fiber.object_id[k]) + 1);
+        }
+        std::cout << " Нити из " << cfg.fiber_file << ": бусин " << model.fiber.size()
+                  << ", связей " << model.topology.bonds.size() << ", нитей " << fibers << "\n";
     }
 }
