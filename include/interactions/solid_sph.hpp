@@ -452,33 +452,61 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
             out.contact_pairs.push_back({i, j, static_cast<std::uint64_t>(out.real_pairs.size())});
         out.real_pairs.emplace_back(i, j);
     };
-    for (const auto& pr : pairs)
-    {
-        const rhs::index_t i = pr.first, j = pr.second;
-        // Изоляция по телам (ТЗ эксперименты Guo 2019, §4.2): пара real-real
-        // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по
-        // этому же списку работает Solid-Solid-Contact (solid_contact.hpp).
-        // Пары с ghost (j >= nreal) не затрагиваются.
-        if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+    // Тело цикла сборки; ядро -- параметр (kernel_fn), чтобы skf выбирался один
+    // раз вне цикла, а вызов ядра встраивался (у каждой лямбды свой тип -- своя
+    // инстанциация build_loop; указатель на функцию дал бы непрямой вызов).
+    auto build_loop = [&](auto kernel_fn) {
+        for (const auto& pr : pairs)
         {
-            add_real_pair(i, j);
-            continue;
-        }
-        double dx[dim];
-        double r2 = 0.0;
-        for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
-        const double r = std::sqrt(r2);
-        const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+            const rhs::index_t i = pr.first, j = pr.second;
+            // Изоляция по телам (ТЗ эксперименты Guo 2019, §4.2): пара real-real
+            // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по
+            // этому же списку работает Solid-Solid-Contact (solid_contact.hpp).
+            // Пары с ghost (j >= nreal) не затрагиваются.
+            if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+            {
+                add_real_pair(i, j);
+                continue;
+            }
+            double dx[dim];
+            double r2 = 0.0;
+            for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
+            const double r = std::sqrt(r2);
+            const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
 
-        SolidSphPrimitive prim;
-        prim.i = i; prim.j = j;
-        double w = 0.0;
-        double dwdx_buf[dim];
-        kernel(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
-        prim.w = w;
-        for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
-        out.primitives.push_back(prim);
-        if (j < nreal) add_real_pair(i, j);
+            SolidSphPrimitive prim;
+            prim.i = i; prim.j = j;
+            double w = 0.0;
+            double dwdx_buf[dim];
+            kernel_fn(r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+            prim.w = w;
+            for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
+            out.primitives.push_back(prim);
+            if (j < nreal) add_real_pair(i, j);
+        }
+    };
+    switch (cfg.skf)
+    {
+    case 1:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_cubic(r, dx, mh, w, dwdx);
+        });
+        break;
+    case 2:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_gauss(r, dx, mh, w, dwdx);
+        });
+        break;
+    case 3:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_quintic(r, dx, mh, w, dwdx);
+        });
+        break;
+    // Неизвестный skf: kernel() обнуляет w и dwdx.
+    default:
+        build_loop([&](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel(cfg.skf, r, dx, mh, w, dwdx);
+        });
     }
 }
 
