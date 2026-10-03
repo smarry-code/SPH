@@ -286,6 +286,23 @@ endif()
 add_test(NAME k_legacy_equiv_test COMMAND test_k_legacy_equiv)
 set_tests_properties(k_legacy_equiv_test PROPERTIES LABELS "3d")
 
+# --- Нити из *ELEMENT_BEAM (readk/k-import-plan.md, этап K5) и эквивалентность .fib <-> .k.
+add_executable(test_k_fiber tests/test_k_fiber.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_fiber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_fiber PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_fiber PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_fiber PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_fiber PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_fiber PRIVATE -fopenmp)
+    target_link_options(test_k_fiber PRIVATE -fopenmp)
+endif()
+add_test(NAME k_fiber_test COMMAND test_k_fiber)
+set_tests_properties(k_fiber_test PROPERTIES LABELS "3d")
+
 # --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
 #     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit
 #     связей, предиктор-корректор для fiber::FiberState. Нити — только при

@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
+#include <unordered_map>
+#include <utility>
 #include <stdexcept>
 
 #include "int_force.hpp"
@@ -158,15 +161,137 @@ void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KI
     }
 }
 
+void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const KImportOptions& opts,
+                            fiber::Model& model, KImportSummary& summary)
+{
+    fiber::check_fiber_requires_dim3();
+    if (deck.beams.empty())
+        fail(deck.files.empty() ? opts.k_file : deck.files[0],
+             "в режиме solid_fiber нет ни одной нити (нет *ELEMENT_BEAM)");
+
+    const std::size_t nb = deck.beams.size();
+    // Граф "узел - балка" по N1/N2 (N3 - узел ориентации - игнорируется).
+    std::unordered_map<long long, std::vector<std::size_t>> adj;
+    std::map<std::pair<long long, long long>, std::size_t> edges;
+    for (std::size_t b = 0; b < nb; ++b)
+    {
+        const KBeam& e = deck.beams[b];
+        if (e.n1 == e.n2)
+            fail(deck.where(e.src), "*ELEMENT_BEAM EID " + std::to_string(e.eid) + ": N1 == N2 (NID "
+                                        + std::to_string(e.n1) + ")");
+        const auto key = std::make_pair(std::min(e.n1, e.n2), std::max(e.n1, e.n2));
+        const auto ins = edges.emplace(key, b);
+        if (!ins.second)
+            fail(deck.where(e.src), "дубликат ребра (узлы " + std::to_string(key.first) + ", "
+                                        + std::to_string(key.second) + "): уже в балке EID "
+                                        + std::to_string(deck.beams[ins.first->second].eid) + " ("
+                                        + deck.where(deck.beams[ins.first->second].src) + ")");
+        for (long long nid : {e.n1, e.n2})
+        {
+            auto& v = adj[nid];
+            v.push_back(b);
+            if (v.size() > 2)
+                fail(deck.where(e.src), "ветвление нити: узел NID " + std::to_string(nid) + " принадлежит "
+                                            + std::to_string(v.size()) + " балкам (допустимо не более 2)");
+        }
+    }
+
+    const double ls = opts.length_scale;
+    std::vector<char> seen(nb, 0);
+    std::vector<fiber::PolylineSpec> lines;
+    for (std::size_t b0 = 0; b0 < nb; ++b0)
+    {
+        if (seen[b0]) continue;
+        // Компонента: обход балок от b0 по смежным узлам.
+        std::vector<std::size_t> comp;
+        std::vector<std::size_t> stack{b0};
+        seen[b0] = 1;
+        while (!stack.empty())
+        {
+            const std::size_t b = stack.back();
+            stack.pop_back();
+            comp.push_back(b);
+            for (long long nid : {deck.beams[b].n1, deck.beams[b].n2})
+                for (std::size_t o : adj[nid])
+                    if (!seen[o]) { seen[o] = 1; stack.push_back(o); }
+        }
+        // Один PID на нить.
+        const KBeam& first = deck.beams[b0];
+        for (std::size_t b : comp)
+            if (deck.beams[b].pid != first.pid)
+                fail(deck.where(deck.beams[b].src),
+                     "нить из балок с разными PID: " + std::to_string(deck.beams[b].pid) + " и "
+                         + std::to_string(first.pid) + " (первая балка: " + deck.where(first.src) + ")");
+        const FiberPart* fp = table.find_fiber(first.pid);
+        if (!fp)
+            fail(table.file, "PID " + std::to_string(first.pid) + " из " + deck.where(first.src)
+                                 + " не описан в FIBER_PART");
+        // Концы: узлы степени 1; без концов - кольцо.
+        long long start = 0;
+        bool have = false;
+        long long ring_nid = first.n1;
+        for (std::size_t b : comp)
+            for (long long nid : {deck.beams[b].n1, deck.beams[b].n2})
+            {
+                ring_nid = std::min(ring_nid, nid);
+                if (adj[nid].size() == 1 && (!have || nid < start)) { start = nid; have = true; }
+            }
+        if (!have)
+            fail(deck.where(first.src), "замкнутое кольцо из балок (узел NID " + std::to_string(ring_nid)
+                                            + "), нить должна быть незамкнутой цепочкой");
+        // Обход от start.
+        fiber::PolylineSpec ps;
+        ps.material_id = fp->material_id;
+        long long cur = start;
+        std::size_t prev_b = nb;
+        for (;;)
+        {
+            const KNode* nd = deck.find_node(cur);
+            if (!nd) fail(deck.where(first.src), "узел " + std::to_string(cur) + " не найден");
+            ps.points.push_back({nd->x * ls, nd->y * ls, nd->z * ls});
+            std::size_t nxt = nb;
+            for (std::size_t o : adj[cur])
+                if (o != prev_b) nxt = o;
+            if (nxt == nb) break;
+            prev_b = nxt;
+            cur = deck.beams[nxt].n1 == cur ? deck.beams[nxt].n2 : deck.beams[nxt].n1;
+        }
+        lines.push_back(std::move(ps));
+    }
+
+    fiber::build_model_from_polylines(lines, table.materials, {}, model, opts.k_file);
+
+    summary.fibers = lines.size();
+    summary.beads = model.fiber.size();
+    summary.bonds = model.topology.bonds.size();
+    bool first_bond = true;
+    for (const auto& bd : model.topology.bonds)
+    {
+        const double d = model.materials[static_cast<std::size_t>(model.fiber.material_id[bd.i])].d;
+        const double ld = d > 0.0 ? bd.l0 / d : 0.0;
+        if (first_bond)
+        {
+            summary.seg_min = summary.seg_max = bd.l0;
+            summary.ld_min = summary.ld_max = ld;
+            first_bond = false;
+        }
+        else
+        {
+            summary.seg_min = std::min(summary.seg_min, bd.l0);
+            summary.seg_max = std::max(summary.seg_max, bd.l0);
+            summary.ld_min = std::min(summary.ld_min, ld);
+            summary.ld_max = std::max(summary.ld_max, ld);
+        }
+    }
+}
+
 KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats, fiber::Model& model,
                                std::size_t& moni_particle)
 {
-    if (opts.mode == KMode::SolidFiber)
-    {
-        if (opts.parts_file.empty())
-            throw std::runtime_error("k_mode=solid_fiber требует таблицу деталей (k_parts_file)");
-        throw std::runtime_error("k_mode=solid_fiber: сборка нитей из .k ещё не реализована (K5)");
-    }
+    const bool fib = opts.mode == KMode::SolidFiber;
+    if (fib && opts.parts_file.empty())
+        throw std::runtime_error("k_mode=solid_fiber требует таблицу деталей (k_parts_file)");
+    if (fib) fiber::check_fiber_requires_dim3();
     const KDeck deck = read_k_deck(opts.k_file);
     KImportSummary summary;
     KPartsTable table;
@@ -174,10 +299,11 @@ KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats
     if (!opts.parts_file.empty())
     {
         table = read_k_parts_file(opts.parts_file);
-        check_parts_against_deck(table, deck, false, summary.warnings);
+        check_parts_against_deck(table, deck, fib, summary.warnings);
         tp = &table;
     }
     build_solid_from_deck(deck, tp, opts, mats, model.solid, moni_particle, summary);
+    if (fib) build_fibers_from_deck(deck, table, opts, model, summary);
     return summary;
 }
 

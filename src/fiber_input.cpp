@@ -145,7 +145,7 @@ void parse_material_directive(std::istringstream& iss, std::size_t line_no, cons
 
 void build_model_from_polylines(const std::vector<PolylineSpec>& polylines,
                                 const std::vector<FiberMaterial>& materials,
-                                const std::vector<ClampBoxSpec>& boxes, Model& model)
+                                const std::vector<ClampBoxSpec>& boxes, Model& model, const std::string& who)
 {
     for (std::size_t fid = 0; fid < polylines.size(); ++fid)
     {
@@ -193,7 +193,7 @@ void build_model_from_polylines(const std::vector<PolylineSpec>& polylines,
             if (!(seg[k] > 0.0))
             {
                 throw std::runtime_error(
-                    "fiber::load_fiber_file: нулевая или отрицательная длина сегмента в нити " +
+                    who + ": нулевая или отрицательная длина сегмента в нити " +
                     std::to_string(fid) + " (точки " + std::to_string(k) + ", " + std::to_string(k + 1) + ")");
             }
         }

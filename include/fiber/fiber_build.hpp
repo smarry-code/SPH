@@ -50,10 +50,12 @@ struct ClampBoxSpec
 // fiber_mask очищается (пустой, не заполненный нулями).
 // Увеличивает model.topology.version.
 // Бросает std::runtime_error: материал ломаной вне materials (индекс вне
-// диапазона), меньше двух точек, нулевой/отрицательный сегмент.
+// диапазона), меньше двух точек, нулевой/отрицательный сегмент (в тексте
+// последней ошибки префикс who: для .fib - "fiber::load_fiber_file", для .k - свой).
 void build_model_from_polylines(const std::vector<PolylineSpec>& polylines,
                                 const std::vector<FiberMaterial>& materials,
-                                const std::vector<ClampBoxSpec>& boxes, Model& model);
+                                const std::vector<ClampBoxSpec>& boxes, Model& model,
+                                const std::string& who = "fiber::load_fiber_file");
 
 // Разбор директивы "MATERIAL <id> <E> <nu> <d> <rho> <eps_break> [mu_ff [mu_fs]]".
 // iss позиционирован сразу после слова MATERIAL; line_no — номер строки для

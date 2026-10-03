@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "fiber/fiber_build.hpp"
 #include "fiber/model.hpp"
 #include "k_input/k_parts.hpp"
 #include "k_input/k_reader.hpp"
@@ -43,7 +44,10 @@ struct KImportSummary
     double dx_median = 0.0;              // медиана (m/rho)^(1/dim); 0 без таблицы
     std::vector<std::string> warnings;
     std::map<std::string, std::size_t> skipped;   // пропущенные ключевые слова
-    // Поля для нитей добавит K5.
+    // Нити (режим solid_fiber).
+    std::size_t fibers = 0, beads = 0, bonds = 0;
+    double seg_min = 0.0, seg_max = 0.0;   // длина сегмента l0, м
+    double ld_min = 0.0, ld_max = 0.0;     // l0 / d
 };
 
 // Solid-часть: по записи deck.sph на частицу, в порядке файла. table == nullptr -
@@ -51,6 +55,13 @@ struct KImportSummary
 void build_solid_from_deck(const KDeck& deck, const KPartsTable* table, const KImportOptions& opts,
                            const Materials& mats, ParticleSystem& sys, std::size_t& moni_particle,
                            KImportSummary& summary);
+
+// Нити из *ELEMENT_BEAM (Р1, Р9): нить - простая незамкнутая цепочка балок с
+// одним PID; порядок нитей - по первой балке в файле, обход от конца с меньшим
+// NID. Требует SPH_DIM=3 и FIBER_PART для каждого PID балок. Пишет в
+// model.materials/fiber/topology (model.solid не трогает).
+void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const KImportOptions& opts,
+                            fiber::Model& model, KImportSummary& summary);
 
 // Точка входа: читает колоду и таблицу, сверяет их, пишет в model.solid.
 KImportSummary load_k_geometry(const KImportOptions& opts, const Materials& mats, fiber::Model& model,
