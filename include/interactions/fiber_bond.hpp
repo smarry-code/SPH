@@ -114,17 +114,30 @@ inline void compute_fiber_bond_contributions(
 }
 
 // compute_fiber_bond — удобная обёртка: contributions + reduce за один
-// вызов. Возвращает вектор FiberDelta длины state.size() (индекс — частица
-// Fiber). thread_buffers передаётся вызывающей стороной (обычно —
-// переиспользуемый буфер из RhsWorkspace/локальной переменной цикла) для
+// вызов. Записывает в output вектор FiberDelta длины state.size() (индекс —
+// частица Fiber). thread_buffers, output и scratch передаются вызывающей
+// стороной (обычно — переиспользуемые переменные цикла по времени) для
 // соблюдения "память только растёт".
+inline void compute_fiber_bond(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                               const fiber::FiberTopology& topology,
+                               const std::vector<fiber::FiberMaterial>& materials,
+                               std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers,
+                               std::vector<fiber::FiberDelta>& output, rhs::ReduceScratch& scratch)
+{
+    compute_fiber_bond_contributions(exec, state, topology, materials, thread_buffers);
+    rhs::reduce_contributions_into(exec, thread_buffers, state.size(), output, scratch);
+}
+
+// Обёртка со старой сигнатурой: результат по значению, локальная рабочая память.
 inline std::vector<fiber::FiberDelta> compute_fiber_bond(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
 {
-    compute_fiber_bond_contributions(exec, state, topology, materials, thread_buffers);
-    return rhs::reduce_contributions(exec, thread_buffers, state.size());
+    std::vector<fiber::FiberDelta> output;
+    rhs::ReduceScratch scratch;
+    compute_fiber_bond(exec, state, topology, materials, thread_buffers, output, scratch);
+    return output;
 }
 
 // ----------------------------------------------------------------------

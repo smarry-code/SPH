@@ -38,6 +38,14 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+# Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
+# SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
+# solid_fiber требуют 3.
+set(SPH_DIM "1" CACHE STRING "Размерность исполняемого SPH (1|2|3)")
+set_property(CACHE SPH_DIM PROPERTY STRINGS 1 2 3)
+if(NOT SPH_DIM MATCHES "^[123]$")
+    message(FATAL_ERROR "SPH_DIM должен быть 1, 2 или 3, получено: ${SPH_DIM}")
+endif()
 
 # --- Конфигурация по умолчанию ----------------------------------------------
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -56,6 +64,7 @@ list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 # --- Исполняемый модуль (имя SPH.exe на Windows — как прежде) ----------------
 add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
+target_compile_definitions(SPH PRIVATE SPH_DIM=${SPH_DIM})
 
 # --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
 enable_testing()
@@ -176,6 +185,184 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME fiber_model_test COMMAND test_fiber_model)
 set_tests_properties(fiber_model_test PROPERTIES LABELS "3d")
+
+# --- Чтение LS-DYNA .k (readk/k-import-plan.md, этап K2): KReader + KDeck
+#     (include/k_input/, src/k_reader.cpp - попадает в SPH_SOURCES через GLOB).
+#     Слой формата не зависит от размерности; SPH_DIM=1 - как в плане (разд. 5).
+add_executable(test_k_reader tests/test_k_reader.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_reader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_reader PRIVATE
+    SPH_DIM=1
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_reader PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_reader PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_reader PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_reader PRIVATE -fopenmp)
+    target_link_options(test_k_reader PRIVATE -fopenmp)
+endif()
+add_test(NAME k_reader_test COMMAND test_k_reader)
+
+# --- Таблица деталей для импорта .k (readk/k-import-plan.md, этап K3, Р2):
+#     include/k_input/k_parts.hpp, src/k_parts.cpp. MATERIAL нитей - код .fib,
+#     поэтому SPH_DIM=3 (нити - только 3D, Р9).
+add_executable(test_k_parts tests/test_k_parts.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_parts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_parts PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_parts PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_parts PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_parts PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_parts PRIVATE -fopenmp)
+    target_link_options(test_k_parts PRIVATE -fopenmp)
+endif()
+add_test(NAME k_parts_test COMMAND test_k_parts)
+set_tests_properties(k_parts_test PROPERTIES LABELS "3d")
+
+# --- Solid-сборщик импорта .k (readk/k-import-plan.md, этап K4): src/k_geometry.cpp.
+#     test_k_solid собирается для SPH_DIM 1/2/3 (правило Р6 для каждой dim).
+
+add_executable(test_k_solid_1d tests/test_k_solid.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_solid_1d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_solid_1d PRIVATE SPH_DIM=1)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_1d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_solid_1d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_solid_1d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_1d PRIVATE -fopenmp)
+    target_link_options(test_k_solid_1d PRIVATE -fopenmp)
+endif()
+add_test(NAME k_solid_1d_test COMMAND test_k_solid_1d)
+
+add_executable(test_k_solid_2d tests/test_k_solid.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_solid_2d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_solid_2d PRIVATE SPH_DIM=2)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_2d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_solid_2d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_solid_2d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_2d PRIVATE -fopenmp)
+    target_link_options(test_k_solid_2d PRIVATE -fopenmp)
+endif()
+add_test(NAME k_solid_2d_test COMMAND test_k_solid_2d)
+
+add_executable(test_k_solid_3d tests/test_k_solid.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_solid_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_solid_3d PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_3d PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_solid_3d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_solid_3d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_3d PRIVATE -fopenmp)
+    target_link_options(test_k_solid_3d PRIVATE -fopenmp)
+endif()
+add_test(NAME k_solid_3d_test COMMAND test_k_solid_3d)
+set_tests_properties(k_solid_3d_test PROPERTIES LABELS "3d")
+
+# Эквивалентность старого parse_k_file (копия-эталон в тесте) и нового импорта на 1.k.
+
+add_executable(test_k_legacy_equiv tests/test_k_legacy_equiv.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_legacy_equiv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_legacy_equiv PRIVATE SPH_DIM=3
+    SPH_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_legacy_equiv PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_legacy_equiv PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_legacy_equiv PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_legacy_equiv PRIVATE -fopenmp)
+    target_link_options(test_k_legacy_equiv PRIVATE -fopenmp)
+endif()
+add_test(NAME k_legacy_equiv_test COMMAND test_k_legacy_equiv)
+set_tests_properties(k_legacy_equiv_test PROPERTIES LABELS "3d")
+
+# --- Нити из *ELEMENT_BEAM (readk/k-import-plan.md, этап K5) и эквивалентность .fib <-> .k.
+add_executable(test_k_fiber tests/test_k_fiber.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_fiber PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_fiber PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_fiber PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_fiber PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_fiber PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_fiber PRIVATE -fopenmp)
+    target_link_options(test_k_fiber PRIVATE -fopenmp)
+endif()
+add_test(NAME k_fiber_test COMMAND test_k_fiber)
+set_tests_properties(k_fiber_test PROPERTIES LABELS "3d")
+
+# --- Сквозной тест подключения импорта .k к input()/time_integration (этап K6).
+add_executable(test_k_e2e tests/test_k_e2e.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_e2e PRIVATE SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_e2e PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_e2e PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_e2e PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_e2e PRIVATE -fopenmp)
+    target_link_options(test_k_e2e PRIVATE -fopenmp)
+endif()
+add_test(NAME k_e2e_test COMMAND test_k_e2e)
+set_tests_properties(k_e2e_test PROPERTIES LABELS "3d")
+
+# --- Закрепления из *BOUNDARY_SPC_* (readk/k-import-plan.md, этап K8).
+add_executable(test_k_clamp tests/test_k_clamp.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_clamp PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_clamp PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_clamp PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_clamp PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_clamp PRIVATE -fopenmp)
+    target_link_options(test_k_clamp PRIVATE -fopenmp)
+endif()
+add_test(NAME k_clamp_test COMMAND test_k_clamp)
+set_tests_properties(k_clamp_test PROPERTIES LABELS "3d")
+
+# --- *ELEMENT_SOLID -> частицы (readk/k-import-plan.md, этап K9).
+add_executable(test_k_solid_elements tests/test_k_solid_elements.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_k_solid_elements PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_k_solid_elements PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_elements PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_k_solid_elements PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_k_solid_elements PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_k_solid_elements PRIVATE -fopenmp)
+    target_link_options(test_k_solid_elements PRIVATE -fopenmp)
+endif()
+add_test(NAME k_solid_elements_test COMMAND test_k_solid_elements)
+set_tests_properties(k_solid_elements_test PROPERTIES LABELS "3d")
 
 # --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
 #     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit

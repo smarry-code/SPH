@@ -37,6 +37,14 @@
 | `contact_force_type` | int | `0` | `contact_force_type` | Контакт «частица-частица» (ADR-007): 0 — выключен, 1 — пинбол Белицко, 2 — Свигл, 3 — импульсный. Значение вне 0..3 откатывается к 0 |
 | `contact_penalty_scale` | double | `1.0` | `contact_penalty_scale` | Масштабный коэффициент $K_p$ штрафной силы (типы 1-2) |
 | `contact_impulse_gamma` | double | `1.0` | `contact_impulse_gamma` | Доля нормальной скорости сближения, снимаемая за шаг (только тип 3): $F = \gamma\,m_{ij}\dot p/\Delta t$. Рабочий диапазон $(0;\,1.6]$; $\gamma\le0$ равносильно выключенному контакту, при $\gamma>1.6$ разбор предупреждает. Типы 1-2 ключ не читают |
+| `k_file` | string | (пусто) | `k_file` | Путь к файлу геометрии LS-DYNA `.k`. Если пуст, импорт не выполняется. Непустой `k_file` имеет приоритет над встроенными генераторами (они не вызываются). Относительный путь отсчитывается от текущего каталога процесса |
+| `k_mode` | string | `"solid"` | `k_mode` | Режим импорта: `solid` (только SPH-частицы) или `solid_fiber` (SPH + нити из `*ELEMENT_BEAM`). Другое значение - ошибка разбора. `solid_fiber` при `SPH_DIM` не равном 3 - ошибка уже при разборе ключа |
+| `k_parts_file` | string | (пусто) | `k_parts_file` | Путь к таблице деталей ([формат](../file-formats/k-parts.md)). В режиме `solid` необязателен: без него `itype = body = PID`, а `rho`, `hsml` и УРС не заполняются. В режиме `solid_fiber` обязателен |
+| `k_length_scale` | double | `1.0` | `k_length_scale` | Множитель координат узлов (например, `1e-3`, если `.k` в миллиметрах). Конечное число > 0, иначе ошибка |
+| `k_mass_scale` | double | `1.0` | `k_mass_scale` | Множитель поля `MASS` у SPH-элементов с `MASS > 0`. Конечное число > 0, иначе ошибка. На массы-«объёмы» (`MASS < 0`, `*ELEMENT_SPH_VOLUME`), на нити и на частицы из `*ELEMENT_SOLID` не действует |
+| `k_monitor_nid` | int | `-1` | `k_monitor_nid` | NID узла из `.k`, чья SPH-частица станет мониторной (`cfg.moni_particle`). Значение < 0 - не задан. Если узла нет среди SPH-частиц, ошибка. Не целое - ошибка разбора |
+| `k_solid_elements` | string | `"skip"` | `k_solid_elements` | Что делать с `*ELEMENT_SOLID`: `skip` - пропустить с предупреждением; `particles` - одна частица на элемент (требует `k_parts_file` и `SPH_DIM=3`; проверка срабатывает, если в файле есть такие элементы). Другое значение - ошибка разбора |
+| `fiber_file` | string | (пусто) | `fiber_file` | Путь к файлу нитей `.fib`. Загружается после построения Solid (из любого источника). При `SPH_DIM` не равном 3 - ошибка при разборе ключа. Вместе с `k_mode=solid_fiber` - ошибка (два источника нитей) |
 
 !!! warning "Параметры вне файла"
     Поля `maxn`, `max_interaction` вычисляются в `main()` после инициализации
@@ -44,6 +52,63 @@
     Размерность `dim` и логические флаги (`shocktube`, `visc_artificial`, ...)
     — compile-time константы в [`param.hpp`](../../../include/param.hpp) и
     требуют перекомпиляции.
+
+## Импорт геометрии из LS-DYNA `.k` файла
+
+Если задан `k_file`, начальная геометрия читается из файла вместо встроенных генераторов. Ключи `k_*` управляют импортом (см. [Формат `*.k`](../file-formats/k-file.md) и [Таблица деталей](../file-formats/k-parts.md)).
+
+!!! warning "Комментарии в `Initial_Conditions.txt`"
+    Разбор строки - только `ключ = значение`: значением считается всё после первого `=` до конца строки. Комментария после значения не существует (`k_length_scale = 1e-3  # мм` даёт ошибку, а `k_file = a.k  * вот` - путь `a.k  * вот`). Комментарий - только отдельная строка, начинающаяся с `*`.
+
+### Режимы импорта
+
+| Режим | Ключи | Что загружается | Таблица деталей |
+|---|---|---|---|
+| Solid | `k_file`, `k_mode = solid` | SPH-частицы из `*ELEMENT_SPH` (балки пропускаются с предупреждением) | Необязательна |
+| Solid + Fiber | `k_file`, `k_mode = solid_fiber` | SPH из `*ELEMENT_SPH` + нити из `*ELEMENT_BEAM`; только `SPH_DIM=3` | Обязательна |
+| Solid + внешние нити | `k_file`, `k_mode = solid`, `fiber_file` | SPH из `.k` + нити из `.fib`; только `SPH_DIM=3` | Необязательна |
+
+### Примеры конфигурации
+
+Только SPH из `.k` (режим `solid`, файл в миллиметрах):
+
+```text
+k_file = geometry/impact.k
+k_mode = solid
+k_parts_file = geometry/impact_parts.txt
+k_length_scale = 1e-3
+```
+
+SPH и нити из балок (режим `solid_fiber`, сборка с `SPH_DIM=3`):
+
+```text
+k_file = geometry/fabric.k
+k_mode = solid_fiber
+k_parts_file = geometry/fabric_parts.txt
+```
+
+SPH из `.k` и нити из отдельного файла:
+
+```text
+k_file = geometry/structure.k
+k_mode = solid
+k_parts_file = geometry/structure_parts.txt
+fiber_file = geometry/weave.fib
+```
+
+### Начальный шаг по времени
+
+При непустом `k_file` `main()` после загрузки пересчитывает начальный шаг по критерию Куранта ([`compute_cfl_timestep()`](../../../src/time_integration.cpp)):
+
+$$\Delta t = \mathrm{CFL} \cdot \min_i \frac{h_i}{c_i + |\mathbf v_i|}$$
+
+Здесь $h_i$ - `hsml` частицы (из `hsml=` в `SOLID_PART` или $2\,(m_i/\rho_i)^{1/\dim}$), $c_i$ - скорость звука, вычисленная `urs()` по `itype` и `rho`, $\mathbf v_i$ - начальная скорость (`v=` в таблице деталей). Новое значение принимается, только если оно конечно и больше нуля. Без таблицы деталей `hsml` и `c` нулевые, шаг не определён, и `dt` остаётся прежним (дальше цикл пересчитывает его сам на каждом шаге).
+
+### Несовместимые сочетания
+
+- `k_mode=solid_fiber` вместе с `fiber_file` - ошибка `k_mode=solid_fiber вместе с fiber_file: два источника нитей` (проверяется независимо от `k_file`);
+- `k_file` при `config_input = true` в [`param.hpp`](../../../include/param.hpp) (compile-time константа, не ключ файла) - ошибка `k_file несовместим с config_input (загрузка particles.dat)`;
+- `k_file` вместе с `shocktube`/`shearcavity` (тоже compile-time флаги `param.hpp`) - не ошибка: при непустом `k_file` встроенные генераторы не вызываются.
 
 ## Разбор параметров метода
 

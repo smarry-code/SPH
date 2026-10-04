@@ -105,6 +105,7 @@ nav:
       - Форматы файлов:
           - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
           - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
+          - Таблица деталей для .k: 03-reference/file-formats/k-parts.md
       - Материалы:
           - Реестр материалов: 03-reference/materials/registry.md
       - API (Doxygen): _build/doxygen/html/index.html

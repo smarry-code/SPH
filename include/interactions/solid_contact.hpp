@@ -74,13 +74,15 @@ inline double solid_contact_pair_dt_ref(const SimulationConfig& cfg, const Parti
 // и Solid-SPH (kSolidContactInteractionType отличает interaction_type для
 // детерминированного режима).
 //
-// real_pairs -- ПОДМНОЖЕСТВО (i,j), i<j, ОБА реальные, взятое из ТОГО ЖЕ
+// contact_pairs -- межтельные (body[i] != body[j]) пары (i,j), i<j, ОБА
+// реальные: подмножество real_pairs, взятое из ТОГО ЖЕ
 // поиска, что построил Solid-SPH (build_solid_sph_search) -- "Одна и та же
 // построенная spatial structure может использоваться несколькими interaction
 // types" (SPH.md, "Выполнение RHS"). Радиус этого поиска (scale_k*hsml)
 // ШИРЕ фактического контактного диапазона (R_i+R_j) -- ТОЧНО как в старом
 // пути, где ext_force фильтрует те же niac-пары от density/int_force, а не
-// строит собственный más узкий список.
+// строит собственный más узкий список. Исходный индекс пары в real_pairs (k)
+// идёт в meta вкладов (primitive_id), как раньше.
 //
 // dt_applied -- ФАКТИЧЕСКИЙ применяемый шаг интегрирования (не dt_ref пары):
 // у типа 3 (импульсный) сила зависит от него напрямую, как в
@@ -89,7 +91,7 @@ inline double solid_contact_pair_dt_ref(const SimulationConfig& cfg, const Parti
 inline void compute_solid_contact_contributions(
     const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const Materials& mats,
     const ParticleSystem& sys, const std::vector<double>& c, double dt_applied,
-    const std::vector<std::pair<rhs::index_t, rhs::index_t>>& real_pairs,
+    const std::vector<SolidContactPair>& contact_pairs,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& thread_buffers)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
@@ -97,12 +99,14 @@ inline void compute_solid_contact_contributions(
     for (auto& buf : thread_buffers) buf.clear();
 
     const int contact_type = cfg.contact_force_type;
-    if (contact_type == contact::Off || real_pairs.empty()) return;
+    if (contact_type == contact::Off || contact_pairs.empty()) return;
 
-    exec.parallel_for(real_pairs.size(), [&](std::size_t k) {
-        const rhs::index_t i = real_pairs[k].first;
-        const rhs::index_t j = real_pairs[k].second;
-        if (sys.body[i] == sys.body[j]) return; // fiber/PLAN.md §3.1: критерий body[]
+    exec.parallel_for(contact_pairs.size(), [&](std::size_t kk) {
+        const rhs::index_t i = contact_pairs[kk].i;
+        const rhs::index_t j = contact_pairs[kk].j;
+        const std::uint64_t k = contact_pairs[kk].k; // исходный индекс в real_pairs
+        // fiber/PLAN.md §3.1: критерий body[]; список уже межтельный, проверка -- защита
+        if (sys.body[i] == sys.body[j]) return;
 
         double dx[dim];
         double r2 = 0.0;
@@ -148,8 +152,8 @@ inline void compute_solid_contact_contributions(
         int w_id = rhs::CpuExecutor::worker_id();
         if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
         rhs::ContributionWriter<SolidDelta> writer(thread_buffers[static_cast<std::size_t>(w_id)], kSolidContactInteractionType);
-        writer.emit(i, di, static_cast<std::uint64_t>(k), 0);
-        writer.emit(j, dj, static_cast<std::uint64_t>(k), 1);
+        writer.emit(i, di, k, 0);
+        writer.emit(j, dj, k, 1);
     });
 }
 
@@ -159,10 +163,12 @@ inline void compute_solid_contact_contributions(
 // contact_force.hpp/ADR-007). Отдельный проход через CpuExecutor::
 // parallel_reduce, буквально по формулировке плана; независим от
 // compute_solid_contact_contributions (та же геометрия пересчитывается).
+// Идёт по contact_pairs -- межтельным парам того же поиска, а не по всем
+// real_pairs (см. build_solid_sph_search).
 // Вызывается КАЖДЫЙ шаг из src/single_step.cpp (fiber/PLAN.md, этап
 // Ф4-B1) -- ADR-007 требует min_dt_contact ограничивающим продовый шаг
-// сейчас же, а не по отдельному запросу; цена второго прохода по real_pairs
-// приемлема (см. src/single_step.cpp, комментарий у вызова).
+// сейчас же, а не по отдельному запросу; цена второго прохода по
+// contact_pairs приемлема (см. src/single_step.cpp, комментарий у вызова).
 // ----------------------------------------------------------------------
 struct SolidContactDiagnostics
 {
@@ -174,11 +180,11 @@ struct SolidContactDiagnostics
 inline SolidContactDiagnostics compute_solid_contact_diagnostics(
     const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const Materials& mats,
     const ParticleSystem& sys, const std::vector<double>& c, double dt_applied,
-    const std::vector<std::pair<rhs::index_t, rhs::index_t>>& real_pairs)
+    const std::vector<SolidContactPair>& contact_pairs)
 {
     const SolidContactDiagnostics zero{};
     const int contact_type = cfg.contact_force_type;
-    if (contact_type == contact::Off || real_pairs.empty()) return zero;
+    if (contact_type == contact::Off || contact_pairs.empty()) return zero;
 
     auto combine = [](SolidContactDiagnostics a, SolidContactDiagnostics b) {
         SolidContactDiagnostics r;
@@ -189,11 +195,11 @@ inline SolidContactDiagnostics compute_solid_contact_diagnostics(
     };
 
     return exec.parallel_reduce(
-        real_pairs.size(), zero,
-        [&](std::size_t k) -> SolidContactDiagnostics {
-            const rhs::index_t i = real_pairs[k].first;
-            const rhs::index_t j = real_pairs[k].second;
-            if (sys.body[i] == sys.body[j]) return zero;
+        contact_pairs.size(), zero,
+        [&](std::size_t kk) -> SolidContactDiagnostics {
+            const rhs::index_t i = contact_pairs[kk].i;
+            const rhs::index_t j = contact_pairs[kk].j;
+            if (sys.body[i] == sys.body[j]) return zero; // защита: список уже межтельный
 
             double dx[dim];
             double r2 = 0.0;

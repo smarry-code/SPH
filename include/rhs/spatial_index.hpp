@@ -85,18 +85,18 @@ public:
         }
 
         const std::size_t nc = total_cells();
-        std::vector<std::size_t> count(nc, 0);
+        count_.assign(nc, 0);
         offset_.assign(nc + 1, 0);
         sorted_idx_.resize(n_);
 
-        for (std::size_t i = 0; i < n_; ++i) count[cell_of(i)]++;
-        for (std::size_t c = 0; c < nc; ++c) offset_[c + 1] = offset_[c] + count[c];
+        for (std::size_t i = 0; i < n_; ++i) count_[cell_of(i)]++;
+        for (std::size_t c = 0; c < nc; ++c) offset_[c + 1] = offset_[c] + count_[c];
 
-        std::vector<std::size_t> cursor(offset_.begin(), offset_.begin() + static_cast<std::ptrdiff_t>(nc));
+        cursor_.assign(offset_.begin(), offset_.begin() + static_cast<std::ptrdiff_t>(nc));
         for (std::size_t i = 0; i < n_; ++i)
         {
             const std::size_t c = cell_of(i);
-            sorted_idx_[cursor[c]++] = i;
+            sorted_idx_[cursor_[c]++] = i;
         }
     }
 
@@ -137,14 +137,38 @@ public:
     // пары в собственный буфер, затем буферы объединяются в один непрерывный
     // массив). Итоговое МНОЖЕСТВО пар совпадает с последовательными
     // find_pairs*/find_pairs_cross с точностью до порядка следования.
+    //
+    // Варианты с выходным параметром out переиспользуют буферы worker'ов
+    // (члены индекса) и память out — вызов не обращается к аллокатору, если
+    // емкости хватает; порядок пар тот же, что у вариантов по значению.
+    // Они не потокобезопасны относительно друг друга: один индекс — один
+    // параллельный запрос одновременно.
+    template <class Accept = bool (*)(index_t, index_t)>
+    void find_pairs_parallel(const CpuExecutor& exec, double radius, Accept accept,
+                              std::vector<std::pair<index_t, index_t>>& out) const
+    {
+        const std::size_t nc = total_cells();
+        parallel_merge(exec, nc, out, [&](std::size_t c, std::vector<std::pair<index_t, index_t>>& local) {
+            collect_same_type_cell(c, radius, accept, local);
+        });
+    }
+
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_parallel(
         const CpuExecutor& exec, double radius,
         Accept accept = [](index_t, index_t) { return true; }) const
     {
-        const std::size_t nc = total_cells();
-        return parallel_merge(exec, nc, [&](std::size_t c, std::vector<std::pair<index_t, index_t>>& local) {
-            collect_same_type_cell(c, radius, accept, local);
+        std::vector<std::pair<index_t, index_t>> out;
+        find_pairs_parallel(exec, radius, accept, out);
+        return out;
+    }
+
+    template <class Accept = bool (*)(index_t, index_t)>
+    void find_pairs_cross_parallel(const CpuExecutor& exec, Coords other_coords, std::size_t n_other, double radius,
+                                    Accept accept, std::vector<std::pair<index_t, index_t>>& out) const
+    {
+        parallel_merge(exec, n_other, out, [&](std::size_t a, std::vector<std::pair<index_t, index_t>>& local) {
+            collect_cross_one(other_coords, a, radius, accept, local);
         });
     }
 
@@ -153,9 +177,9 @@ public:
         const CpuExecutor& exec, Coords other_coords, std::size_t n_other, double radius,
         Accept accept = [](index_t, index_t) { return true; }) const
     {
-        return parallel_merge(exec, n_other, [&](std::size_t a, std::vector<std::pair<index_t, index_t>>& local) {
-            collect_cross_one(other_coords, a, radius, accept, local);
-        });
+        std::vector<std::pair<index_t, index_t>> out;
+        find_pairs_cross_parallel(exec, other_coords, n_other, radius, accept, out);
+        return out;
     }
 
 private:
@@ -166,6 +190,13 @@ private:
     std::array<int, Dim> ncell_{};
     std::vector<std::size_t> offset_;
     std::vector<std::size_t> sorted_idx_;
+    // Рабочая память build() и параллельных запросов: переиспользуется между
+    // вызовами, только растёт (индекс живёт между шагами).
+    std::vector<std::size_t> count_;
+    std::vector<std::size_t> cursor_;
+    // alignas(64): заголовок вектора каждого потока -- в своей кэш-линии (false sharing).
+    struct alignas(64) LocalPairs { std::vector<std::pair<index_t, index_t>> v; };
+    mutable std::vector<LocalPairs> local_pairs_;
 
     std::size_t total_cells() const
     {
@@ -331,23 +362,25 @@ private:
         });
     }
 
+    // Буферы worker'ов — mutable-член local_pairs_ (clear() сохраняет память);
+    // результат worker-major дописывается в out, предварительно очищенный.
     template <class Body>
-    std::vector<std::pair<index_t, index_t>> parallel_merge(const CpuExecutor& exec, std::size_t range_n,
-                                                              Body&& body) const
+    void parallel_merge(const CpuExecutor& exec, std::size_t range_n,
+                         std::vector<std::pair<index_t, index_t>>& out, Body&& body) const
     {
         const int nw = std::max(1, exec.num_workers());
-        std::vector<std::vector<std::pair<index_t, index_t>>> local(static_cast<std::size_t>(nw));
+        if (local_pairs_.size() < static_cast<std::size_t>(nw)) local_pairs_.resize(static_cast<std::size_t>(nw));
+        for (auto& lp : local_pairs_) lp.v.clear();
         exec.parallel_for(range_n, [&](std::size_t idx) {
             int w = CpuExecutor::worker_id();
             if (w < 0 || w >= nw) w = 0;
-            body(idx, local[static_cast<std::size_t>(w)]);
+            body(idx, local_pairs_[static_cast<std::size_t>(w)].v);
         });
         std::size_t total = 0;
-        for (auto& v : local) total += v.size();
-        std::vector<std::pair<index_t, index_t>> out;
+        for (auto& lp : local_pairs_) total += lp.v.size();
+        out.clear();
         out.reserve(total);
-        for (auto& v : local) out.insert(out.end(), v.begin(), v.end());
-        return out;
+        for (auto& lp : local_pairs_) out.insert(out.end(), lp.v.begin(), lp.v.end());
     }
 };
 
