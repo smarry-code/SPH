@@ -134,6 +134,24 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
     std::vector<std::vector<interactions::FiberBreakEvent>> fiber_break_thread_buffers;
+    // Результаты reduce и его рабочая память (память только растёт): одна
+    // ReduceScratch на все вызовы шага, они выполняются строго последовательно.
+    rhs::ReduceScratch fiber_reduce_scratch;
+    std::vector<fiber::FiberDelta> fiber_bond_delta;
+    std::vector<fiber::FiberDelta> fiber_contact_delta;
+    std::vector<fiber::FiberDelta> fiber_solid_fiber_delta;
+    std::vector<interactions::SolidDelta> fiber_solid_solid_delta;
+    std::vector<fiber::FiberDelta> friction_delta;
+    std::vector<interactions::SolidDelta> friction_solid_delta;
+    std::vector<interactions::FiberCountDelta> fiber_friction_count_delta;
+    std::vector<interactions::SolidCountDelta> solid_friction_count_delta;
+    // Поиск Fiber-Solid-Contact текущего шага: primitives читаются dt_limit,
+    // рядом живёт рабочая память поиска (индекс, пары, копии координат).
+    interactions::FiberSolidContactSearchResult fiber_solid_search;
+
+    // Файл мониторинга открывается ОДИН раз (дозапись; до цикла log.txt уже
+    // содержит строки main.cpp/input.cpp); std::endl сбрасывает буфер каждый шаг.
+    std::ofstream log_file("log.txt", std::ios::app);
 
     // Кинематическое закрепление (interactions/clamp.hpp): проверки, списки
     // зажатых и рабочая память -- ОДИН раз до цикла (в шаге -- без аллокаций).
@@ -202,16 +220,16 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         bool has_active_solid_friction_contacts = false; // Fiber-Solid
         if (nfiber > 0)
         {
-            std::vector<fiber::FiberDelta> fiber_bond_delta =
-                interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers);
+            interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers,
+                                             fiber_bond_delta, fiber_reduce_scratch);
 
             interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search);
             // Только нормальная сила; заполняет слоты трения friction_contacts.
             has_active_friction_contacts = interactions::compute_fiber_contact_contributions(
                 fiber_exec, fb, materials, fiber_contact_search.primitives, fiber_contact_thread_buffers,
                 friction_contacts);
-            std::vector<fiber::FiberDelta> fiber_contact_delta =
-                rhs::reduce_contributions(fiber_exec, fiber_contact_thread_buffers, fb.size());
+            rhs::reduce_contributions_into(fiber_exec, fiber_contact_thread_buffers, fb.size(), fiber_contact_delta,
+                                           fiber_reduce_scratch);
 
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < nfiber; ++i)
@@ -230,20 +248,20 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             // (interactions/fiber_solid_contact.hpp, шапка файла, решения 1-6).
             // Вклад в Fiber складывается с Fiber-Bond/Fiber-Fiber-Contact в тот
             // же dv, как и они между собой.
-            const interactions::FiberSolidContactResult fiber_solid_result = interactions::compute_fiber_solid_contact(
+            has_active_solid_friction_contacts = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
-                fiber_solid_solid_buffers, &friction_solid_contacts);
-            has_active_solid_friction_contacts = fiber_solid_result.has_active_friction;
+                fiber_solid_solid_buffers, fiber_solid_search, fiber_solid_fiber_delta, fiber_solid_solid_delta,
+                fiber_reduce_scratch, &friction_solid_contacts);
 
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < nfiber; ++i)
-                    solver.fiber_rhs.dv[d][i] += fiber_solid_result.fiber_delta[i].dv[d];
+                    solver.fiber_rhs.dv[d][i] += fiber_solid_fiber_delta[i].dv[d];
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < ntotal; ++i)
-                    solver.solid_rhs.dvx[d][i] += fiber_solid_result.solid_delta[i].dv[d];
+                    solver.solid_rhs.dvx[d][i] += fiber_solid_solid_delta[i].dv[d];
 
             const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
-                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_result.primitives);
+                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives);
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
         }
 
@@ -283,7 +301,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             interactions::compute_friction_counts(fiber_exec, nfiber, ntotal, friction_contacts,
                                                    friction_solid_contacts, fiber_friction_count_buffers,
                                                    solid_friction_count_buffers, fiber_friction_bead_count,
-                                                   solid_friction_count);
+                                                   solid_friction_count, fiber_friction_count_delta,
+                                                   solid_friction_count_delta, fiber_reduce_scratch);
             // [2] Бесконечная масса полностью зажатых в mass splitting: c = 0.
             if (has_clamps)
                 interactions::apply_clamp_friction_counts(fiber_exec, clamp_ws, fiber_friction_bead_count,
@@ -292,15 +311,15 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 fiber_exec, fb, fupd, solver.fiber_rhs.dv, friction_contacts, sys, supd, solver.solid_rhs.dvx,
                 friction_solid_contacts, fiber_friction_bead_count, solid_friction_count, /*solid_kinematic=*/false,
                 fiber_friction_thread_buffers, solid_friction_thread_buffers);
-            const std::vector<fiber::FiberDelta> friction_delta =
-                rhs::reduce_contributions(fiber_exec, fiber_friction_thread_buffers, nfiber);
+            rhs::reduce_contributions_into(fiber_exec, fiber_friction_thread_buffers, nfiber, friction_delta,
+                                           fiber_reduce_scratch);
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < nfiber; ++i)
                     solver.fiber_rhs.dv[d][i] += friction_delta[i].dv[d];
             if (has_active_solid_friction_contacts)
             {
-                const std::vector<interactions::SolidDelta> friction_solid_delta =
-                    rhs::reduce_contributions(fiber_exec, solid_friction_thread_buffers, ntotal);
+                rhs::reduce_contributions_into(fiber_exec, solid_friction_thread_buffers, ntotal, friction_solid_delta,
+                                               fiber_reduce_scratch);
                 for (size_t d = 0; d < dim; ++d)
                     for (size_t i = 0; i < ntotal; ++i)
                         solver.solid_rhs.dvx[d][i] += friction_solid_delta[i].dv[d];
@@ -363,14 +382,12 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         time += dt;
 
         // Вывод информации о мониторинге
-        std::ofstream file("log.txt", std::ios::app);
         // Пишется ОСЕВАЯ компонента. В осесимметричной постановке ось удара —
         // x[1] (z), и именно осевую скорость поверхности измеряет интерферометр,
         // с которым сверяется эталон. Осевая компонента — последняя координата:
         // z в 3D, z (ось симметрии) в осесимметричном 2D, x в 1D.
         const size_t moni_axis = dim - 1;
-        file << time << " " << sys.vx[moni_axis][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
-        file.close();
+        log_file << time << " " << sys.vx[moni_axis][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
 
         // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе
         // шага крутится бесконечно: время задачи практически не растёт, а

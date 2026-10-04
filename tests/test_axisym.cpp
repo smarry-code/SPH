@@ -50,8 +50,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 static_assert(dim == 2, "тест осесимметрии требует сборки с SPH_DIM=2");
@@ -175,7 +178,7 @@ Rates probe_rates(const VelocityField& field,
     interactions::SolidSphSearchResult search;
     interactions::build_solid_sph_search(exec, cfg, ext, search);
 
-    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers;
+    rhs::IndexedContributions<interactions::SolidDelta> sph_buffers;
     interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
 
     const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
@@ -340,6 +343,105 @@ void test_shear_source_at_rest()
           "E2 dv_r/dt == 0: однородный сдвиг не создаёт радиальной силы");
 }
 
+// --- F. Поиск пар и сборка примитивов при разном числе потоков ---------------
+// Осесимметричная решётка с зеркальными (ghost) частицами у оси: массивы
+// поиска (primitives, real_pairs, contact_pairs) обязаны совпасть ПОБАЙТНО при
+// 1 и 7 потоках (сборка по индексам: счёт -> префиксная сумма -> запись).
+// Решётка больше основной площадки, чтобы блоков сборки было несколько.
+void test_search_threads()
+{
+    std::printf("F. поиск и сборка примитивов: 1 и 7 потоков\n");
+    constexpr size_t nr = 60, nz = 60;
+    const size_t n = nr * nz;
+
+    ParticleSystem sys;
+    sys.resize(n);
+    for (size_t ir = 0; ir < nr; ++ir)
+        for (size_t iz = 0; iz < nz; ++iz)
+        {
+            const size_t k = ir * nz + iz;
+            sys.x[0][k]  = (static_cast<double>(ir) + 0.5) * kDx;
+            sys.x[1][k]  = static_cast<double>(iz) * kDx;
+            sys.itype[k] = kItype;
+            sys.rho[k]   = kRho0;
+            sys.rho_0[k] = kRho0;
+            sys.mass[k]  = kRho0 * kDx * kDx;
+            sys.hsml[k]  = 1.3 * kDx;
+            sys.axis[k]  = (ir == 0) ? 1 : 0;
+        }
+
+    SimulationConfig cfg;
+    cfg.pa_sph          = 2;
+    cfg.skf             = 1;
+    cfg.density_method  = 1;
+    cfg.maxn            = n;
+    cfg.max_interaction = n * 200;
+
+    rhs::CpuExecutor exec1(1);
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec1, cfg.mats, sys, n, derived);
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, n, ghosts);
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, n, derived, ghosts, ext);
+
+    interactions::SolidSphSearchResult s1, s7;
+    interactions::build_solid_sph_search(exec1, cfg, ext, s1);
+    interactions::build_solid_sph_search(rhs::CpuExecutor(7), cfg, ext, s7);
+
+    size_t ghost_prims = 0;
+    for (const auto& pr : s1.primitives) if (pr.j >= ext.nreal) ++ghost_prims;
+    std::printf("  пар: %zu, primitives: %zu (с ghost: %zu), real_pairs: %zu, блоков: %zu\n",
+                s1.pairs.size(), s1.primitives.size(), ghost_prims, s1.real_pairs.size(),
+                s1.blocks.size() - 1);
+    check(ghost_prims > 0, "F1 в сцене есть примитивы с ghost-частицами");
+    check(s1.blocks.size() > 2, "F2 блоков сборки несколько");
+
+    // Порядок пар у find_pairs_parallel зависит от числа потоков, поэтому
+    // каждый результат сверяется с последовательной сборкой (прежний цикл с
+    // push_back) ПО СВОИМ ЖЕ парам, а между потоками -- как множество.
+    auto reference = [&](const interactions::SolidSphSearchResult& s,
+                         std::vector<interactions::SolidSphPrimitive>& prims,
+                         std::vector<std::pair<rhs::index_t, rhs::index_t>>& real) {
+        for (const auto& pr : s.pairs)
+        {
+            const rhs::index_t i = pr.first, j = pr.second;
+            double dx[dim];
+            double r2 = 0.0;
+            for (size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
+            const double r = std::sqrt(r2);
+            const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+            interactions::SolidSphPrimitive prim;
+            prim.i = i; prim.j = j;
+            double w = 0.0;
+            double dwdx_buf[dim];
+            kernel(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+            prim.w = w;
+            for (size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
+            prims.push_back(prim);
+            if (j < ext.nreal) real.emplace_back(i, j);
+        }
+    };
+    auto same_as_reference = [&](const interactions::SolidSphSearchResult& s) {
+        std::vector<interactions::SolidSphPrimitive> prims;
+        std::vector<std::pair<rhs::index_t, rhs::index_t>> real;
+        reference(s, prims, real);
+        return s.primitives.size() == prims.size() &&
+               std::memcmp(s.primitives.data(), prims.data(), prims.size() * sizeof(prims[0])) == 0 &&
+               s.real_pairs == real;
+    };
+    check(same_as_reference(s1), "F3 1 поток: primitives (побайтно) и real_pairs == последовательная сборка");
+    check(same_as_reference(s7), "F4 7 потоков: primitives (побайтно) и real_pairs == последовательная сборка");
+    check(s1.contact_pairs.empty() && s7.contact_pairs.empty(), "F5 одно тело: contact_pairs пуст");
+    auto sorted_pairs = [](std::vector<std::pair<rhs::index_t, rhs::index_t>> v) {
+        std::sort(v.begin(), v.end());
+        return v;
+    };
+    check(s1.primitives.size() == s7.primitives.size() &&
+              sorted_pairs(s1.real_pairs) == sorted_pairs(s7.real_pairs),
+          "F6 множества real_pairs и число примитивов совпадают при 1 и 7 потоках");
+}
+
 } // namespace
 
 int main()
@@ -351,6 +453,7 @@ int main()
     test_isotropic_compression();
     test_axial_source_at_rest();
     test_shear_source_at_rest();
+    test_search_threads();
 
     std::printf("\n=== %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);

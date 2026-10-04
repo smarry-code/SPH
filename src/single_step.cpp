@@ -18,6 +18,7 @@
 
 #include "interactions/solid_contact.hpp"
 #include "interactions/solid_sph.hpp"
+#include "interactions/solid_workspace.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 
@@ -27,6 +28,7 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <memory>
 #include <omp.h>
 
 #ifdef _WIN32
@@ -108,36 +110,43 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // omp_set_num_threads(cfg.num_threads), rhs/cpu_executor.hpp).
     rhs::CpuExecutor exec;
 
+    // Рабочая память шага живёт в wb между вызовами (interactions/
+    // solid_workspace.hpp) -- создаётся при первом вызове, дальше только
+    // переиспользуется.
+    if (!wb.solid_ws) wb.solid_ws = std::make_shared<interactions::SolidStepWorkspace>();
+    interactions::SolidStepWorkspace& ws = *static_cast<interactions::SolidStepWorkspace*>(wb.solid_ws.get());
+
     // --- Solid derived: EOS (p, c) -- fiber/PLAN.md §3.6 -------------------
-    interactions::SolidDerived derived;
+    interactions::SolidDerived& derived = ws.derived;
     interactions::compute_solid_derived(exec, cfg.mats, sys, ntotal, derived);
 
     // --- GhostSet + SolidExtended -- замена virt_part.cpp -------------------
-    interactions::GhostSet ghosts;
+    interactions::GhostSet& ghosts = ws.ghosts;
     interactions::build_ghost_set(sys, ntotal, ghosts);
 
-    interactions::SolidExtended ext;
+    interactions::SolidExtended& ext = ws.ext;
     interactions::build_solid_extended(sys, ntotal, derived, ghosts, ext);
 
     // --- Поиск пар Solid-SPH (общий для Solid-SPH и Solid-Solid-Contact,
     // fiber/SPH.md: "Одна и та же построенная spatial structure может
     // использоваться несколькими interaction types") --------------------
-    interactions::SolidSphSearchResult search;
+    interactions::SolidSphSearchResult& search = ws.search;
     interactions::build_solid_sph_search(exec, cfg, ext, search);
 
     // --- Compute interaction kernels -> contributions -----------------------
-    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sph_buffers, contact_buffers;
-    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, sph_buffers);
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, ws.sph_contribs);
     interactions::compute_solid_contact_contributions(exec, cfg, cfg.mats, sys, derived.c, dt,
-                                                        search.real_pairs, contact_buffers);
+                                                        search.contact_pairs, ws.contact_buffers);
 
     // --- Reduce (owner-computes по шардам, fiber/PLAN.md §3.5) -------------
-    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> all_buffers = sph_buffers;
-    all_buffers.insert(all_buffers.end(), contact_buffers.begin(), contact_buffers.end());
-    const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, all_buffers, ntotal);
+    // Вклады склеиваются логически (без копирования), порядок прежний:
+    // сначала Solid-SPH, затем контакт.
+    rhs::reduce_contributions_into(exec, ws.sph_contribs, {&ws.contact_buffers}, ntotal, ws.reduced,
+                                   ws.reduce_scratch);
+    const std::vector<interactions::SolidDelta>& reduced = ws.reduced;
 
     // --- Finalize (parallel_for по реальным частицам) -----------------------
-    std::vector<interactions::SolidFinal> finalres;
+    std::vector<interactions::SolidFinal>& finalres = ws.finalres;
     interactions::finalize_solid(exec, cfg.mats, sys, ntotal, reduced, finalres);
 
     // --- Диагностика контакта -- заполняет wb (ADR-007), как старый
@@ -151,7 +160,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     if (cfg.contact_force_type != contact::Off)
     {
         const interactions::SolidContactDiagnostics diag = interactions::compute_solid_contact_diagnostics(
-            exec, cfg, cfg.mats, sys, derived.c, dt, search.real_pairs);
+            exec, cfg, cfg.mats, sys, derived.c, dt, search.contact_pairs);
         wb.contact_pair_count = diag.pair_count;
         wb.contact_max_delta = diag.max_delta;
         wb.min_dt_contact = diag.min_dt;
