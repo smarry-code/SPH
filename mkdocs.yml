@@ -94,6 +94,7 @@ nav:
   - Практика:
       - Запуск тестов и бенчмарков: 02-how-to/01-run-tests.md
       - Генератор полотняного переплетения: 02-how-to/02-plain-weave-generator.md
+      - Из LS-PrePost в расчёт: 02-how-to/03-ls-prepost-to-calculation.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
       - Конфигурация:
@@ -103,6 +104,7 @@ nav:
       - Форматы файлов:
           - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
           - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
+          - Таблица деталей для .k: 03-reference/file-formats/k-parts.md
       - Материалы:
           - Реестр материалов: 03-reference/materials/registry.md
       - API (Doxygen): _build/doxygen/html/index.html
