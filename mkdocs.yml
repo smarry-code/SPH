@@ -94,7 +94,8 @@ nav:
   - Практика:
       - Запуск тестов и бенчмарков: 02-how-to/01-run-tests.md
       - Генератор полотняного переплетения: 02-how-to/02-plain-weave-generator.md
-      - Визуализация в ParaView: 02-how-to/03-paraview.md
+      - Из LS-PrePost в расчёт: 02-how-to/03-ls-prepost-to-calculation.md
+      - Визуализация в ParaView: 02-how-to/04-paraview.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
       - Конфигурация:
