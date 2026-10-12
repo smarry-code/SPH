@@ -38,6 +38,7 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+option(SPH_ENERGY_LOG  "Лог механической энергии (#ifdef SPH_ENERGY_LOG, include/energy_log.hpp)" OFF)  # OFF: кода лога в сборке нет
 # Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
 # SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
 # solid_fiber требуют 3.
@@ -611,6 +612,28 @@ foreach(_guo_cfg A 1T 1T_A A_1T)
         ENVIRONMENT "OMP_NUM_THREADS=2")
 endforeach()
 
+# --- Лог механической энергии (include/energy_log.hpp) на smoke Guo 2019:
+#     формат CSV, сверка запасов, замыкание баланса, лог не возмущает расчёт.
+#     Собирается с SPH_ENERGY_LOG всегда, независимо от опции.
+add_executable(test_energy_log tests/test_energy_log.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_energy_log PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_energy_log PRIVATE
+    SPH_DIM=3
+    SPH_ENERGY_LOG
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_energy_log PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_energy_log PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_energy_log PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_energy_log PRIVATE -fopenmp)
+    target_link_options(test_energy_log PRIVATE -fopenmp)
+endif()
+add_test(NAME energy_log_test COMMAND test_energy_log --time-limit=200)
+set_tests_properties(energy_log_test PROPERTIES LABELS "3d;e2e" TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=2")
+
 # --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
 add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(guo2019_shot PRIVATE
@@ -1122,6 +1145,13 @@ endif()
 #     в force_timing.csv) ----
 if(SPH_PROFILE)
     target_compile_definitions(SPH PRIVATE SPH_PROFILE)
+endif()
+
+# --- Лог механической энергии: включает блоки #ifdef SPH_ENERGY_LOG и ключи
+#     конфига energy_log_every/energy_log_file. Без опции кода лога в сборке нет.
+if(SPH_ENERGY_LOG)
+    target_compile_definitions(SPH PRIVATE SPH_ENERGY_LOG)
+    target_compile_definitions(guo2019_shot PRIVATE SPH_ENERGY_LOG)
 endif()
 
 # --- Каталоги include: заголовки — в include/, исходники — в src/ ------------

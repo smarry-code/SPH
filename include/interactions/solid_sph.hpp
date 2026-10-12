@@ -104,9 +104,15 @@ struct SolidDelta
     double drxy = 0.0, drxz = 0.0, dryz = 0.0;
     double xsph[dim] = {};
     double dh = 0.0;
+#ifdef SPH_ENERGY_LOG
+    double du_av = 0.0; // вклад искусственной вязкости в du (SPH_ENERGY_LOG)
+#endif
 
     SolidDelta& operator+=(const SolidDelta& o)
     {
+#ifdef SPH_ENERGY_LOG
+        du_av += o.du_av;
+#endif
         for (std::size_t d = 0; d < dim; ++d)
         {
             dv[d] += o.dv[d];
@@ -148,6 +154,9 @@ struct SolidFinal
     double dsxx = 0.0, dsyy = 0.0, dszz = 0.0, dsxy = 0.0, dsyz = 0.0, dsxz = 0.0;
     double exx = 0.0, eyy = 0.0, ezz = 0.0, exy = 0.0, exz = 0.0, eyz = 0.0;
     double rxy = 0.0, rxz = 0.0, ryz = 0.0;
+#ifdef SPH_ENERGY_LOG
+    double du_av = 0.0; // тепло искусственной вязкости, du/dt (SPH_ENERGY_LOG)
+#endif
 };
 
 // ----------------------------------------------------------------------
@@ -872,6 +881,10 @@ inline void compute_solid_sph_contributions(
                     const double dedt_j = ext.mass[i] * dvx_iminusj[d] * h;
                     di.du += -dedt_i; // Acc::add(dedt[i], -(dedt_i)) в art_visc.cpp
                     dj.du += -dedt_j;
+#ifdef SPH_ENERGY_LOG
+                    di.du_av += -dedt_i;
+                    dj.du_av += -dedt_j;
+#endif
                 }
             }
         }
@@ -980,6 +993,9 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                          + 2.0 * sys.sxy[i] * exy + 2.0 * sys.syz[i] * eyz + 2.0 * sys.sxz[i] * exz) / sys.rho[i];
         }
         f.du = dedt_half + deviatoric;
+#ifdef SPH_ENERGY_LOG
+        f.du_av = 0.5 * d.du_av;
+#endif
 
         // Закон Гука + производная Яуманна (int_force.cpp, финальный блок).
         if (sys.itype[i] > 2)

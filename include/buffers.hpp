@@ -47,6 +47,15 @@ struct WorkBuffers
     double min_dt_contact    = 1e30;  // ограничитель шага; 1e30 => контакт не ограничивает (contact::kNoLimit)
     size_t contact_pair_count = 0;    // число пар с p > 0 за шаг
     double contact_max_delta  = 0.0;  // max(p) за шаг, м
+#ifdef SPH_ENERGY_LOG
+    // Лог энергии (include/energy_log.hpp). energy_log -- выставляет
+    // time_integration при включённом логе; только тогда single_step
+    // заполняет contact_dv (отдельная свёртка вкладов контакта Solid-Solid).
+    bool energy_log = false;
+    std::vector<double> du_av;                   // тепло ИВ, du/dt, [0, ntotal)
+    std::vector<std::vector<double>> contact_dv; // ускорение контакта Solid-Solid, [dim][ntotal]
+    bool has_contact_dv = false;                 // contact_dv заполнен на этом шаге
+#endif
 
     // Сброс контактной диагностики перед накоплением на текущем шаге.
     void reset_contact()
@@ -54,6 +63,9 @@ struct WorkBuffers
         min_dt_contact = 1e30;
         contact_pair_count = 0;
         contact_max_delta = 0.0;
+#ifdef SPH_ENERGY_LOG
+        has_contact_dv = false;
+#endif
     }
 
     // Гарантирует вместимость n элементов во всех тензорных буферах.

@@ -90,14 +90,39 @@ namespace interactions
 // §Ф7, пункт 5 обоснования координатора).
 // ----------------------------------------------------------------------
 inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem& sys, std::size_t ntotal, double dt,
-                                     const std::vector<double>& drho)
+                                     const std::vector<double>& drho
+#ifdef SPH_ENERGY_LOG
+                                     ,
+                                     double* plastic_acc = nullptr
+#endif
+)
 {
     for (std::size_t i = 0; i < ntotal; ++i)
     {
         if (sys.itype[i] >= 3 && sys.itype[i] <= 9)
         {
+#ifdef SPH_ENERGY_LOG
+            double ss_before = 0.0;
+            if (plastic_acc)
+                ss_before = sys.sxx[i] * sys.sxx[i] + sys.syy[i] * sys.syy[i] + sys.szz[i] * sys.szz[i] +
+                            2.0 * (sys.sxy[i] * sys.sxy[i] + sys.syz[i] * sys.syz[i] + sys.sxz[i] * sys.sxz[i]);
+#endif
             prochnost_mises(cfg.mats, static_cast<size_t>(sys.itype[i]), sys.sxx[i], sys.syy[i], sys.szz[i],
                              sys.sxy[i], sys.syz[i], sys.sxz[i]);
+#ifdef SPH_ENERGY_LOG
+            // Радиальный возврат Мизеса: упругая энергия сдвига (s:s)/(4G rho)
+            // переходит в тепло. Она уже входит в Σm·u (справочная величина,
+            // в баланс не добавляется). JH-2 (itype 10-11) не учитывается.
+            if (plastic_acc)
+            {
+                const double ss_after =
+                    sys.sxx[i] * sys.sxx[i] + sys.syy[i] * sys.syy[i] + sys.szz[i] * sys.szz[i] +
+                    2.0 * (sys.sxy[i] * sys.sxy[i] + sys.syz[i] * sys.syz[i] + sys.sxz[i] * sys.sxz[i]);
+                const double G = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
+                if (G > 0.0 && sys.rho[i] > 0.0)
+                    *plastic_acc += sys.mass[i] * (ss_before - ss_after) / (4.0 * G * sys.rho[i]);
+            }
+#endif
         }
         else if (sys.itype[i] == 10 || sys.itype[i] == 11)
         {
@@ -245,7 +270,13 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 //     в проекте пока нет (задел на будущее кеширование), поэтому выбор не
 //     наблюдаем ни одним тестом -- документируется как осознанный.
 inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopology& topology,
-                                      const std::vector<FiberBreakEvent>& events)
+                                      const std::vector<FiberBreakEvent>& events
+#ifdef SPH_ENERGY_LOG
+                                      ,
+                                      const std::vector<fiber::FiberMaterial>* materials = nullptr,
+                                      double* break_acc = nullptr
+#endif
+)
 {
     if (events.empty()) return;
 
@@ -254,6 +285,32 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
     for (const auto& e : events) break_indices.push_back(e.bond_index);
     std::sort(break_indices.begin(), break_indices.end());
     break_indices.erase(std::unique(break_indices.begin(), break_indices.end()), break_indices.end());
+
+#ifdef SPH_ENERGY_LOG
+    // Упругая энергия порвавшихся связей, 0.5*k*(l-l0)^2, k = E*A/l0: она исчезает
+    // из модели при удалении связи. Считается по дедуплицированным индексам ДО
+    // любой мутации topology.bonds (индексы ещё валидны).
+    if (materials && break_acc)
+    {
+        for (std::size_t bidx : break_indices)
+        {
+            const fiber::FiberBond& b = topology.bonds[bidx];
+            double l2 = 0.0;
+            for (std::size_t d = 0; d < dim; ++d)
+            {
+                const double dx = state.x[d][b.j] - state.x[d][b.i];
+                l2 += dx * dx;
+            }
+            const double l = std::sqrt(l2);
+            if (l > b.l0)
+            {
+                const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(state.material_id[b.i])];
+                const double k = mat.E * fiber_cross_section_area(mat) / b.l0;
+                *break_acc += 0.5 * k * (l - b.l0) * (l - b.l0);
+            }
+        }
+    }
+#endif
 
     int next_object_id = 0;
     for (int id : state.object_id) next_object_id = std::max(next_object_id, id);
@@ -299,10 +356,20 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
 // за один вызов (по образцу compute_fiber_bond в interactions/fiber_bond.hpp).
 inline void run_fiber_topology_postprocessing(const rhs::CpuExecutor& exec, fiber::FiberState& state,
                                                fiber::FiberTopology& topology,
-                                               std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
+                                               std::vector<std::vector<FiberBreakEvent>>& thread_buffers
+#ifdef SPH_ENERGY_LOG
+                                               ,
+                                               const std::vector<fiber::FiberMaterial>* materials = nullptr,
+                                               double* break_acc = nullptr
+#endif
+)
 {
     const std::vector<FiberBreakEvent> events = find_fiber_break_events(exec, state, topology, thread_buffers);
+#ifdef SPH_ENERGY_LOG
+    apply_fiber_break_events(state, topology, events, materials, break_acc);
+#else
     apply_fiber_break_events(state, topology, events);
+#endif
 }
 
 } // namespace interactions

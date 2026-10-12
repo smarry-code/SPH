@@ -165,13 +165,38 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         wb.contact_max_delta = diag.max_delta;
         wb.min_dt_contact = diag.min_dt;
     }
+#ifdef SPH_ENERGY_LOG
+    // Ускорение контакта Solid-Solid отдельно от SPH -- для точной потери
+    // энергии контактом в логе (time_integration). Только при включённом логе.
+    std::size_t contact_contribs = 0;
+    if (wb.energy_log)
+        for (const auto& buf : ws.contact_buffers) contact_contribs += buf.size();
+    if (contact_contribs > 0)
+    {
+        std::vector<interactions::SolidDelta>& cdelta = ws.contact_reduced;
+        rhs::reduce_contributions_into(exec, ws.contact_buffers, ntotal, cdelta, ws.reduce_scratch);
+        if (wb.contact_dv.size() != dim) wb.contact_dv.assign(dim, {});
+        for (size_t d = 0; d < dim; ++d)
+        {
+            if (wb.contact_dv[d].size() < ntotal) wb.contact_dv[d].resize(ntotal);
+            for (size_t i = 0; i < ntotal; ++i) wb.contact_dv[d][i] = cdelta[i].dv[d];
+        }
+        wb.has_contact_dv = true;
+    }
+#endif
 
+#ifdef SPH_ENERGY_LOG
+    if (wb.du_av.size() < ntotal) wb.du_av.resize(ntotal); // только рост
+#endif
     // --- Запись в выходные параметры + шим совместимости в sys -------------
     for (size_t i = 0; i < ntotal; ++i)
     {
         const interactions::SolidFinal& f = finalres[i];
         drho[i] = f.drho;
         du[i] = f.du;
+#ifdef SPH_ENERGY_LOG
+        wb.du_av[i] = f.du_av;
+#endif
         for (size_t d = 0; d < dim; ++d)
         {
             dvx[d][i] = f.dv[d];

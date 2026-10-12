@@ -9,7 +9,7 @@
 //                --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]
 //                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--repeat=N]
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
-//                [--probe-frame] [--plate-nz=N]
+//                [--probe-frame] [--plate-nz=N] [--energy-log=N]
 //
 // Каждый выстрел -- свежая сцена (build_guo_scene) в своём подкаталоге
 // <out>/<config>_<level>[_nz<N>]_v<V0>_r<i>/; файлы конвейера (log.txt, кадры) пишутся в CWD,
@@ -104,6 +104,7 @@ struct Options
     int threads = 0; // 0 -- как в cfg по умолчанию
     int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
+    std::size_t energy_log = 0; // > 0 -- energy_log.csv каждые N шагов (только сборка с SPH_ENERGY_LOG)
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -141,7 +142,8 @@ void print_usage()
                 "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
                 "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
-                "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n");
+                "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
+                "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n");
 }
 
 // 0 -- разобрано, 1 -- справка, 2 -- ошибка
@@ -248,6 +250,15 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--plate-nz="), n) || n < 1 || n > 64) return bad("--plate-nz");
             o.plate_nz = static_cast<int>(n);
+        }
+        else if (a.rfind("--energy-log=", 0) == 0)
+        {
+            if (!parse_ll(val("--energy-log="), n) || n < 1) return bad("--energy-log");
+#ifndef SPH_ENERGY_LOG
+            std::fprintf(stderr, "--energy-log: сборка без SPH_ENERGY_LOG (cmake -DSPH_ENERGY_LOG=ON)\n");
+            return 2;
+#endif
+            o.energy_log = static_cast<std::size_t>(n);
         }
         else if (a == "--probe-frame") o.probe_frame = 1;
         else if (a == "--no-probe-frame") o.probe_frame = 0;
@@ -386,6 +397,10 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         // save_t огромен: после него кадров больше не будет.
         sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);
         sc.cfg.print_step = 1000000000;
+#ifdef SPH_ENERGY_LOG
+        // Лог энергии -- в подкаталог выстрела (CWD), include/energy_log.hpp.
+        sc.cfg.energy_log_every = opt.energy_log;
+#endif
         // cfg.num_threads конвейер не читает (его применяет только main.cpp), поэтому
         // число потоков задаётся напрямую: CpuExecutor берёт omp_get_max_threads().
         if (opt.threads > 0)
