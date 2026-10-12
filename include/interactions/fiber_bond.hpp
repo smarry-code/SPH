@@ -21,6 +21,7 @@
 #include <limits>
 #include <vector>
 
+#include "fiber/fiber_plasticity.hpp"
 #include "fiber/fiber_system.hpp"
 #include "param.hpp"
 #include "rhs/contributions.hpp"
@@ -44,6 +45,43 @@ inline double fiber_cross_section_area(const fiber::FiberMaterial& mat)
     return pi * mat.d * mat.d / 4.0;
 }
 
+// Эффективная мгновенная жёсткость E_inst = E + E1 (ветвь Максвелла не успела
+// расслабиться; дизайн, раздел 5). Ветвь учитывается, только если задана
+// полностью (E1 > 0 и tau > 0), как в fiber::bond_constitutive_update.
+inline double fiber_instant_modulus(const fiber::FiberMaterial& mat)
+{
+    return mat.E + ((mat.visco.E1 > 0.0 && mat.visco.tau > 0.0) ? mat.visco.E1 : 0.0);
+}
+
+// Вязкость Кельвина ЭТОЙ связи. Если задана eta [Па·с] -- она и есть. Если задан
+// xi (доля критического демпфирования, имеет приоритет над eta), eta считается
+// через fiber::kelvin_eta_from_xi по E_inst и приведённой массе бусин связи.
+// Считается на лету (одна sqrt и деление) и в RHS-ядре, и в проходе
+// Postprocessing, а не кэшируется: масса бусин и l0 постоянны, значит результат
+// один и тот же в обоих местах (детерминированно), а кэш потребовал бы ещё
+// одного поля связи, которое надо переносить при разрыве. Возвращает копию
+// ViscoParams с заполненным eta -- fiber::BondLaw хранит ссылки.
+inline fiber::ViscoParams fiber_bond_visco(const fiber::FiberMaterial& mat, double A, double l0, double mi,
+                                           double mj)
+{
+    fiber::ViscoParams vp = mat.visco;
+    if (vp.xi > 0.0)
+    {
+        const double m_red = (mi * mj) / (mi + mj);
+        vp.eta = fiber::kelvin_eta_from_xi(vp.xi, fiber_instant_modulus(mat), A, l0, m_red);
+    }
+    return vp;
+}
+
+// Критический безразмерный шаг h = omega*dt схемы проекта (предиктор -> RHS ->
+// корректор) для линейного осциллятора с демпфером Кельвина, доля критического
+// демпфирования xi: h_cr = 2 (sqrt(1+4 xi^2) - 2 xi). xi = 0 даёт 2, при
+// больших xi -> 1/(2 xi). Вторая форма без вычитания близких чисел.
+inline double fiber_kelvin_h_crit(double xi)
+{
+    return 2.0 / (std::sqrt(1.0 + 4.0 * xi * xi) + 2.0 * xi);
+}
+
 // ----------------------------------------------------------------------
 // compute_fiber_bond_contributions — заполняет thread_buffers (по одному
 // на CPU worker, как в rhs/contributions.hpp) contributions Fiber-Bond для
@@ -56,6 +94,14 @@ inline double fiber_cross_section_area(const fiber::FiberMaterial& mat)
 //   F_i<-j = E*A * max(l_ij/l0 - 1, 0) * x_ij/l_ij      (только растяжение)
 //   F_j<-i = -F_i<-j
 //   dv_i = F_i<-j / m_i,  dv_j = F_j<-i / m_j = -F_i<-j / m_j
+// Для материала с неупругостью (FiberMaterial::inelastic(), дизайн
+// fiber/fiber-plasticity-design.md, раздел 3) вместо E*strain берётся
+// fiber::bond_stress: sigma = max(E*(eps - eps_p) + q + eta_v*eps_dot, 0),
+// сила A*sigma вдоль связи, eps_dot = ((v_j - v_i).n)/l0 по текущим скоростям
+// FiberState::vx (на момент RHS), eps_p и q читаются из FiberBond::st. Ядро
+// состояние НЕ пишет. Сила остаётся центральной и противоположной -- импульс и
+// момент сохраняются. Для упругого материала (по умолчанию) выполняется ровно
+// прежняя ветка с прежним порядком операций (побитовая совместимость, Т0).
 // l_break здесь не используется — критерий разрыва проверяется в
 // Postprocessing (этап Ф7, fiber/SPH.md «Разрыв связи»), НЕ в этом kernel.
 // ----------------------------------------------------------------------
@@ -90,12 +136,37 @@ inline void compute_fiber_bond_contributions(
         fiber::FiberDelta delta_i{};
         fiber::FiberDelta delta_j{};
 
-        if (l > b.l0 && l > 0.0) // только растяжение (fiber/SPH.md, "Постановка проекта")
+        const double mi = state.mass[i];
+        const double mj = state.mass[j];
+        bool active = false;
+        double coeff = 0.0; // F_i<-j = coeff * xij
+        if (mat.inelastic())
+        {
+            if (l > 0.0)
+            {
+                const double strain = l / b.l0 - 1.0;
+                double eps_dot = 0.0;
+                const fiber::ViscoParams vp = fiber_bond_visco(mat, A, b.l0, mi, mj);
+                if (vp.eta != 0.0)
+                {
+                    double vrel = 0.0; // (v_j - v_i) . x_ij
+                    for (std::size_t d = 0; d < dim; ++d) vrel += (state.vx[d][j] - state.vx[d][i]) * xij[d];
+                    eps_dot = (vrel / l) / b.l0;
+                }
+                const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+                const double sigma = fiber::bond_stress(law, b.st, strain, eps_dot);
+                coeff = A * sigma / l;
+                active = true;
+            }
+        }
+        else if (l > b.l0 && l > 0.0) // только растяжение (fiber/SPH.md, "Постановка проекта")
         {
             const double strain = l / b.l0 - 1.0;
-            const double coeff = mat.E * A * strain / l; // F_i<-j = coeff * xij
-            const double mi = state.mass[i];
-            const double mj = state.mass[j];
+            coeff = mat.E * A * strain / l;
+            active = true;
+        }
+        if (active)
+        {
             for (std::size_t d = 0; d < dim; ++d)
             {
                 const double f = coeff * xij[d];
@@ -145,6 +216,22 @@ inline std::vector<fiber::FiberDelta> compute_fiber_bond(
 // времени"; fiber/PLAN.md §3.7):
 //     dt_lim = 0.8 / sqrt(k_eff / m_red),  k_eff = E*A/l0,
 //     m_red = m_i*m_j / (m_i+m_j).
+// Для неупругого материала (дизайн, раздел 5): жёсткость по E_inst = E + E1,
+// а при демпфере Кельвина множитель Белычко (sqrt(1+xi^2) - xi),
+//     dt_lim = min( 0.8/omega_inst,  0.8 * h_cr(sqrt2*xi) / (sqrt2*omega_inst) ),
+//     h_cr(x) = 2 (sqrt(1+4x^2) - 2x) = 2/(sqrt(1+4x^2) + 2x),
+//     xi = c/(2 sqrt(k_inst m_red)), c = eta_v*A/l0 (или xi из материала).
+// h_cr(xi) -- точный критический шаг h = omega*dt схемы проекта на паре
+// (предиктор скорости -> RHS с демпфером по скорости предиктора -> корректор;
+// спектральный радиус матрицы шага 3x3 выходит на 1 через -1: это формула
+// Белычко с удвоенным ξ из-за запаздывающей скорости предиктора). Старшая мода
+// ЦЕПОЧКИ (бусина в двух связях, оба конца связи по m_red = m/2) имеет
+// omega_max = sqrt2*omega_пары и, так как c ~ k, xi_max = sqrt2*xi_пары -- шаг
+// считается по ней, а не по паре (иначе при xi >~ 1.2 цепочка неустойчива даже
+// при 0.9*dt_lim). Множитель 0.8 -- тот же запас, что в упругом лимите, а min
+// с упругим 0.8/omega_inst гарантирует, что демпфер лимит никогда не ослабляет.
+// Подтверждено тестом Т9 (пара и цепочка, tests/test_fiber_plasticity_integration.cpp).
+// Без демпфера Кельвина (в т.ч. при одной пластике) значение прежнее побитово.
 // Считается для ВСЕХ связей независимо от знака деформации ("чтобы шаг не
 // прыгал при переходе через l0") — минимум по всем связям через
 // exec.parallel_reduce. Возвращает +inf (numeric_limits::max), если связей
@@ -165,11 +252,22 @@ inline double compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fi
             const fiber::FiberBond& b = topology.bonds[k];
             const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
             const double A = fiber_cross_section_area(mat);
-            const double k_eff = mat.E * A / b.l0;
+            const double k_eff = fiber_instant_modulus(mat) * A / b.l0; // E1 = 0 => ровно прежнее E*A/l0
             const double mi = state.mass[b.i];
             const double mj = state.mass[b.j];
             const double m_red = (mi * mj) / (mi + mj);
-            return 0.8 / std::sqrt(k_eff / m_red);
+            const double omega = std::sqrt(k_eff / m_red);
+            double dt_b = 0.8 / omega;
+            if (mat.visco.xi > 0.0 || mat.visco.eta > 0.0)
+            {
+                const double xi = mat.visco.xi > 0.0
+                                      ? mat.visco.xi
+                                      : (mat.visco.eta * A / b.l0) / (2.0 * std::sqrt(k_eff * m_red));
+                // Старшая мода цепочки: omega*sqrt2, xi*sqrt2 (см. шапку функции).
+                constexpr double kSqrt2 = 1.4142135623730951;
+                dt_b = std::min(dt_b, 0.8 * fiber_kelvin_h_crit(kSqrt2 * xi) / (kSqrt2 * omega));
+            }
+            return dt_b;
         },
         [](double a, double b2) { return std::min(a, b2); });
 }

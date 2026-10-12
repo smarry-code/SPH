@@ -384,6 +384,97 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- Пластичность нити, этап 1 (fiber/fiber-plasticity-design.md): чистая
+#     функция bond_constitutive_update, тесты Т1-Т7. Без решателя и SPH_DIM.
+add_executable(test_fiber_plasticity tests/test_fiber_plasticity.cpp)
+target_include_directories(test_fiber_plasticity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(test_fiber_plasticity PRIVATE -Weverything -Wno-missing-prototypes -Wno-padded
+        -Wno-unsafe-buffer-usage -Wno-unsafe-buffer-usage-in-libc-call -Wno-c++98-compat -Wno-c++98-compat-pedantic)
+endif()
+add_test(NAME fiber_plasticity_test COMMAND test_fiber_plasticity)
+
+# --- Пластичность нити, этап 2 (fiber/fiber-plasticity-design.md): поля
+#     состояния FiberBond, RHS-ядро, проход Postprocessing; Т0, Т8-Т11 +
+#     полный цикл пластики. По образцу test_fiber_bond.
+add_executable(test_fiber_plasticity_integration tests/test_fiber_plasticity_integration.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_plasticity_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_plasticity_integration PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_integration PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_plasticity_integration PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_plasticity_integration PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_integration PRIVATE -fopenmp)
+    target_link_options(test_fiber_plasticity_integration PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_plasticity_integration_test COMMAND test_fiber_plasticity_integration)
+set_tests_properties(fiber_plasticity_integration_test PROPERTIES LABELS "3d")
+
+# --- Пластичность нити, этап 5 (валидация): Т12 двухволновая картина в
+#     стержне из бусин (Карман-Рахматулин), Т13 независимость от дискретизации
+#     (10 и 40 бусин, с RATE и без).
+add_executable(test_fiber_plasticity_validation tests/test_fiber_plasticity_validation.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_plasticity_validation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_plasticity_validation PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_validation PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_plasticity_validation PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_plasticity_validation PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_validation PRIVATE -fopenmp)
+    target_link_options(test_fiber_plasticity_validation PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_plasticity_validation_test COMMAND test_fiber_plasticity_validation)
+set_tests_properties(fiber_plasticity_validation_test PROPERTIES LABELS "3d" TIMEOUT 120
+    ENVIRONMENT "OMP_NUM_THREADS=2")
+
+# --- Т16: сцена Guo 2019, нить упругая против упруго-пластичной (smoke для
+#     ctest; без аргументов). С аргументами (--level/--config/--v0/--t-max/--out)
+#     -- длинный прогон с таблицей summary.txt (experiments/...-fiber-plasticity-guo).
+add_executable(test_fiber_plasticity_guo tests/test_fiber_plasticity_guo.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_plasticity_guo PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(test_fiber_plasticity_guo PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_guo PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_plasticity_guo PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_plasticity_guo PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_plasticity_guo PRIVATE -fopenmp)
+    target_link_options(test_fiber_plasticity_guo PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_plasticity_guo_smoke COMMAND test_fiber_plasticity_guo)
+set_tests_properties(fiber_plasticity_guo_smoke PROPERTIES LABELS "3d;e2e" TIMEOUT 240
+    ENVIRONMENT "OMP_NUM_THREADS=2")
+
+# --- Т15: директивы неупругости связи в .fib (PLASTIC, PLASTIC_TABLE, RATE,
+#     VISCO, FAILURE), ошибки разбора и колонки eps_p/sigma в выводе BONDS.
+add_executable(test_fiber_input_inelastic tests/test_fiber_input_inelastic.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_input_inelastic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_input_inelastic PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_input_inelastic PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_input_inelastic PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_input_inelastic PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_input_inelastic PRIVATE -fopenmp)
+    target_link_options(test_fiber_input_inelastic PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_input_inelastic_test COMMAND test_fiber_input_inelastic)
+set_tests_properties(fiber_input_inelastic_test PROPERTIES LABELS "3d")
+
 # --- ODESolver (fiber/PLAN.md, этап Ф8): интерфейс OdeSolver, PredictorCorrector
 #     и Euler (include/ode/ode_solver.hpp) -- первый порядок сходимости Эйлера
 #     на задаче с аналитическим решением, ограниченность энергии нити без
@@ -610,6 +701,22 @@ foreach(_guo_cfg A 1T 1T_A A_1T)
     set_tests_properties(e2e_guo2019_smoke_${_guo_cfg} PROPERTIES LABELS "3d;e2e" TIMEOUT 120
         ENVIRONMENT "OMP_NUM_THREADS=2")
 endforeach()
+
+# --- Т0 пластичности нити: дамп состояния нитей с %.17g для побитового
+#     сравнения до/после (tests/fiber_t0_dump.cpp), без add_test. Инструмент:
+#     EXCLUDE_FROM_ALL, собирается явно (--target fiber_t0_dump).
+add_executable(fiber_t0_dump EXCLUDE_FROM_ALL tests/fiber_t0_dump.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(fiber_t0_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(fiber_t0_dump PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(fiber_t0_dump PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(fiber_t0_dump PRIVATE -fopenmp)
+    target_link_options(fiber_t0_dump PRIVATE -fopenmp)
+endif()
 
 # --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
 add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})

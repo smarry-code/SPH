@@ -66,7 +66,7 @@ namespace detail
 // [1] проекция закрепления -> dt -> единая стадия трения нить-нить и Fiber-Solid
 // (fiber/fiber_friction_projection.md, fiber/fiber_solid_friction_implementation.md;
 // внутри неё [2] c_k = c_s = 0 у полностью зажатых и [3] повторная проекция
-// после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, разрыв
+// после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, apply_fiber_bond_constitutive, разрыв
 // связей Fiber-Bond) -> вывод. update_smoothing_length -- ИСКЛЮЧЕНИЕ, см.
 // большой комментарий в include/interactions/postprocessing.hpp (шапка
 // файла) -- почему он остаётся МЕЖДУ RHS и вычислением нового dt, а не после
@@ -163,6 +163,11 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         interactions::prepare_clamp_workspace(clamps, ntotal, nfiber, clamp_ws);
         if (clamp_report != nullptr) interactions::clamp_report_counts(clamp_ws, sys, *clamp_report);
     }
+
+    // Начальное eps_prev неупругих связей = текущая деформация (иначе связь,
+    // созданная при l != l0, даёт на первом шаге фиктивный скачок Δε и w_v).
+    // Для упругих материалов no-op.
+    if (nfiber > 0) interactions::init_fiber_bond_state(fb, topology, materials);
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -371,12 +376,16 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         interactions::apply_material_strength(cfg, sys, ntotal, dt, solver.solid_rhs.drho);
         if (nfiber > 0)
         {
-            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, fiber_break_thread_buffers);
+            // Внутренние переменные связей (пластика/Максвелл/диссипация) --
+            // с dt этого шага, по x^{n+1}, ПЕРЕД поиском разрыва: внутри обёртки
+            // (apply_fiber_bond_constitutive). Для упругих материалов no-op.
+            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, materials, dt,
+                                                            fiber_break_thread_buffers);
         }
         if (time >= next_output_time)
         {
             output(sys, ntotal, time, current_ts, dt);
-            if (nfiber > 0) fiber::fiber_output(fb, topology, current_ts, time);
+            if (nfiber > 0) fiber::fiber_output(fb, topology, materials, current_ts, time);
             next_output_time += save_t;
         }
         time += dt;

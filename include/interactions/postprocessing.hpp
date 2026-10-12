@@ -10,7 +10,9 @@
 //   - sle = 1 (пересчёт h)                     -- update_smoothing_length;
 //   - разрыв связей Fiber-Bond по l > l_break  -- find_fiber_break_events /
 //                                                  apply_fiber_break_events /
-//                                                  run_fiber_topology_postprocessing.
+//                                                  run_fiber_topology_postprocessing;
+//   - обновление внутренних переменных связи   -- apply_fiber_bond_constitutive
+//     (пластика, Максвелл, диссипация; ПЕРЕД поиском разрыва).
 //
 // Единая функция для ОБЕИХ перегрузок time_integration
 // (src/time_integration.cpp) -- было два независимых инлайновых блока кода
@@ -67,6 +69,7 @@
 
 #include "fiber/fiber_system.hpp"
 #include "h_upgrade.hpp"
+#include "interactions/fiber_bond.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
 #include "ppochnost.hpp"
@@ -136,6 +139,76 @@ inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem&
     // sle == 1).
 }
 
+// Текущая длина связи |x_j - x_i| (общая для поиска разрыва и прохода
+// apply_fiber_bond_constitutive; порядок операций прежний).
+inline double fiber_bond_length(const fiber::FiberState& state, const fiber::FiberBond& b)
+{
+    double l2 = 0.0;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        const double dx = state.x[d][b.j] - state.x[d][b.i];
+        l2 += dx * dx;
+    }
+    return std::sqrt(l2);
+}
+
+// ----------------------------------------------------------------------
+// apply_fiber_bond_constitutive -- обновление внутренних переменных связей
+// (eps_p, q, eps_prev, w_p, w_v) по определяющему закону
+// fiber::bond_constitutive_update (fiber/fiber-plasticity-design.md, раздел 4).
+// Вызывается в time_integration ПОСЛЕ advance (x^{n+1} финальны) и ПЕРЕД
+// поиском разрыва, с dt текущего шага. Параллельно по связям через exec: связь k
+// читает только state.x своих двух бусин и пишет только topology.bonds[k].st --
+// гонок нет, результат не зависит от числа потоков.
+//
+// Упругий материал (FiberMaterial::inelastic() == false) НЕ трогается: его st
+// остаётся нулевым, проход ничего не меняет. Если неупругого материала нет
+// вовсе, проход выходит сразу после одного обхода списка материалов.
+// ----------------------------------------------------------------------
+inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                                          fiber::FiberTopology& topology,
+                                          const std::vector<fiber::FiberMaterial>& materials, double dt)
+{
+    if (!(dt > 0.0)) return;
+    const std::size_t nbonds = topology.bonds.size();
+    if (nbonds == 0) return;
+    const bool any_inelastic = std::any_of(materials.begin(), materials.end(),
+                                           [](const fiber::FiberMaterial& m) { return m.inelastic(); });
+    if (!any_inelastic) return;
+
+    exec.parallel_for(nbonds, [&](std::size_t k) {
+        fiber::FiberBond& b = topology.bonds[k];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        if (!mat.inelastic()) return;
+        const double eps = fiber_bond_length(state, b) / b.l0 - 1.0;
+        const double A = fiber_cross_section_area(mat);
+        const fiber::ViscoParams vp = fiber_bond_visco(mat, A, b.l0, state.mass[b.i], state.mass[b.j]);
+        const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+        b.st = fiber::bond_constitutive_update(law, b.st, eps, dt);
+    });
+}
+
+// ----------------------------------------------------------------------
+// init_fiber_bond_state -- начальное eps_prev неупругих связей. Связь, созданная
+// при l != l0 (предварительное натяжение, сцена со сдвигом бусин), иначе дала бы
+// на первом шаге фиктивное приращение Δε = ε - 0 и огромные w_v / вязкую силу.
+// Выставляет eps_prev = текущей ε = l/l0 - 1 для связей неупругих материалов
+// (остальные поля состояния не трогает: eps_p = q = 0 -- мгновенная упругая
+// нагрузка). Упругие связи НЕ меняются (их st остаётся нулевым). Вызывается
+// один раз перед первым шагом (run_time_integration в начале; драйверы тестов --
+// сами); повторный вызов безвреден, если x не менялись после последнего шага.
+// ----------------------------------------------------------------------
+inline void init_fiber_bond_state(const fiber::FiberState& state, fiber::FiberTopology& topology,
+                                  const std::vector<fiber::FiberMaterial>& materials)
+{
+    for (fiber::FiberBond& b : topology.bonds)
+    {
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        if (!mat.inelastic()) continue;
+        b.st.eps_prev = fiber_bond_length(state, b) / b.l0 - 1.0;
+    }
+}
+
 // ----------------------------------------------------------------------
 // Разрыв связей Fiber-Bond (fiber/SPH.md, «Fiber-Bond», «Разрыв связи»;
 // fiber/PLAN.md §3.8): критерий по расстоянию l_ij > l_break = (1+eps_b)*l0,
@@ -150,19 +223,32 @@ inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem&
 //      rhs/contributions.hpp);
 //   2. apply_fiber_break_events -- строго последовательно.
 // ----------------------------------------------------------------------
+// Причина разрыва (только диагностика; на применение разрыва не влияет).
+// Если сработало несколько критериев, берётся первый по порядку перечисления.
+enum class FiberBreakReason : std::int64_t
+{
+    Strain = 0,  // l > l_break (eps_break, прежний критерий)
+    PlasticStrain, // eps_p >= FAILURE.EPS_P
+    Stress         // sigma_ep = E(eps - eps_p) >= FAILURE.SIGMA_U
+};
+
 struct FiberBreakEvent
 {
     std::size_t bond_index = 0;
+    FiberBreakReason reason = FiberBreakReason::Strain;
 };
 
 // find_fiber_break_events -- READONLY: читает ТЕКУЩИЕ (после шага ODESolver)
 // координаты бусин state.x[][] и l_break каждой связи, ничего не
 // мутирует. thread_buffers переиспользуется между вызовами ("память только
 // растёт", как и другие per-thread буферы Ф1-Ф6).
-inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecutor& exec,
-                                                              const fiber::FiberState& state,
-                                                              const fiber::FiberTopology& topology,
-                                                              std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
+namespace detail
+{
+// Общая реализация поиска. materials == nullptr => только прежний критерий
+// l > l_break (побитово прежнее поведение).
+inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
+    const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
+    const std::vector<fiber::FiberMaterial>* materials, std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
@@ -171,20 +257,43 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
     const std::size_t nbonds = topology.bonds.size();
     if (nbonds == 0) return {};
 
+    const bool any_failure = materials && std::any_of(materials->begin(), materials->end(),
+                                                      [](const fiber::FiberMaterial& m) { return m.has_failure(); });
+
     exec.parallel_for(nbonds, [&](std::size_t k) {
         const fiber::FiberBond& b = topology.bonds[k];
-        double l2 = 0.0;
-        for (std::size_t d = 0; d < dim; ++d)
-        {
-            const double dx = state.x[d][b.j] - state.x[d][b.i];
-            l2 += dx * dx;
-        }
-        const double l = std::sqrt(l2);
+        const double l = fiber_bond_length(state, b);
+        bool broken = false;
+        FiberBreakReason reason = FiberBreakReason::Strain;
         if (l > b.l_break)
+        {
+            broken = true;
+        }
+        else if (any_failure)
+        {
+            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(state.material_id[b.i])];
+            if (mat.failure.eps_p > 0.0 && b.st.eps_p >= mat.failure.eps_p)
+            {
+                broken = true;
+                reason = FiberBreakReason::PlasticStrain;
+            }
+            else if (mat.failure.sigma_u > 0.0)
+            {
+                // Конечное состояние шага (после возврата). У материала без
+                // неупругости st нулевой => sigma_ep = E*eps.
+                const double eps = l / b.l0 - 1.0;
+                if (mat.E * (eps - b.st.eps_p) >= mat.failure.sigma_u)
+                {
+                    broken = true;
+                    reason = FiberBreakReason::Stress;
+                }
+            }
+        }
+        if (broken)
         {
             int w = rhs::CpuExecutor::worker_id();
             if (w < 0 || static_cast<std::size_t>(w) >= thread_buffers.size()) w = 0;
-            thread_buffers[static_cast<std::size_t>(w)].push_back(FiberBreakEvent{k});
+            thread_buffers[static_cast<std::size_t>(w)].push_back(FiberBreakEvent{k, reason});
         }
     });
 
@@ -193,7 +302,36 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
     std::vector<FiberBreakEvent> merged;
     merged.reserve(total);
     for (const auto& buf : thread_buffers) merged.insert(merged.end(), buf.begin(), buf.end());
+    // Порядок не должен зависеть от числа потоков и распределения связей по буферам.
+    std::sort(merged.begin(), merged.end(),
+              [](const FiberBreakEvent& a, const FiberBreakEvent& b) { return a.bond_index < b.bond_index; });
     return merged;
+}
+} // namespace detail
+
+// Прежний критерий (l > l_break) без материалов.
+// ТОЛЬКО критерий l > l_break; FAILURE (EPS_P, SIGMA_U) здесь игнорируется.
+// НЕ для боевого пути -- используйте перегрузку с materials / run_fiber_topology_postprocessing.
+// Оставлена для драйверов, которым нужен только геометрический критерий
+// (tests/test_fiber_break.cpp, tests/fiber_t0_dump.cpp).
+inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecutor& exec,
+                                                              const fiber::FiberState& state,
+                                                              const fiber::FiberTopology& topology,
+                                                              std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
+{
+    return detail::find_fiber_break_events_impl(exec, state, topology, nullptr, thread_buffers);
+}
+
+// С критериями FAILURE (раздел 7 дизайна): l > l_break ИЛИ eps_p >= EPS_P ИЛИ
+// E(eps - eps_p) >= SIGMA_U по состоянию b.st ПОСЛЕ apply_fiber_bond_constitutive.
+// Для материалов без FAILURE результат идентичен перегрузке без материалов.
+inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecutor& exec,
+                                                              const fiber::FiberState& state,
+                                                              const fiber::FiberTopology& topology,
+                                                              const std::vector<fiber::FiberMaterial>& materials,
+                                                              std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
+{
+    return detail::find_fiber_break_events_impl(exec, state, topology, &materials, thread_buffers);
 }
 
 // apply_fiber_break_events -- строго последовательное применение,
@@ -295,13 +433,24 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
     ++topology.version;
 }
 
-// run_fiber_topology_postprocessing -- удобная обёртка: поиск + применение
-// за один вызов (по образцу compute_fiber_bond в interactions/fiber_bond.hpp).
+// run_fiber_topology_postprocessing -- полный проход Postprocessing нитей за
+// один вызов: (1) apply_fiber_bond_constitutive (внутренние переменные связей,
+// с dt шага, по x^{n+1}), (2) поиск и применение разрывов (по образцу
+// compute_fiber_bond в interactions/fiber_bond.hpp). Конститутивный проход
+// ВСТРОЕН сюда, чтобы любой драйвер, вызывающий обёртку (боевой цикл,
+// tests/fiber_t0_dump), автоматически обновлял eps_p/q/w_p/w_v и не мог его
+// забыть. Драйверы, вызывающие find_fiber_break_events/apply_fiber_break_events
+// напрямую (tests/test_fiber_break.cpp), конститутивный проход пропускают --
+// им нужен явный вызов apply_fiber_bond_constitutive (для упругих материалов он
+// и так no-op). Для упругих материалов поведение обёртки прежнее побитово.
 inline void run_fiber_topology_postprocessing(const rhs::CpuExecutor& exec, fiber::FiberState& state,
                                                fiber::FiberTopology& topology,
+                                               const std::vector<fiber::FiberMaterial>& materials, double dt,
                                                std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
 {
-    const std::vector<FiberBreakEvent> events = find_fiber_break_events(exec, state, topology, thread_buffers);
+    apply_fiber_bond_constitutive(exec, state, topology, materials, dt);
+    const std::vector<FiberBreakEvent> events =
+        find_fiber_break_events(exec, state, topology, materials, thread_buffers);
     apply_fiber_break_events(state, topology, events);
 }
 
