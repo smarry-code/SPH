@@ -122,6 +122,13 @@
 //    его). Слот active только при contact && mu>0, поэтому при mu_ff=0 у всех
 //    материалов стадия трения не выполняется и результат побитово прежний.
 //    dt_limit трением не затрагивается.
+//
+// 5. Закон нормальной силы (fiber/plan-fiber-contact-types.md, этап 2;
+//    interactions/fiber_contact_law.hpp): ключ fiber_fiber_contact_type,
+//    0 = Герц (прежний код, побитово), 1-3 -- contact::penalty_force на g, pr
+//    из fiber_fiber_pair_inputs (одна функция для ядра, предела шага и
+//    диагностики). Геометрия не менялась. Предел шага типов 1-3 -- минимум
+//    res.dt_limit по слотам FiberContactSearchResult::pair_dt_limit.
 // ============================================================================
 #include <algorithm>
 #include <array>
@@ -129,10 +136,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
+#include "contact_force.hpp"
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_contact_common.hpp" // kFiberContactSnapEta, fiber_max_current_bond_length
+#include "interactions/fiber_contact_law.hpp"    // FiberContactStepParams, fiber_penalty_force
 #include "param.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
@@ -239,6 +249,9 @@ struct FiberContactSearchResult
     // растёт).
     rhs::SpatialIndex<dim> index;
     std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
+    // Предел шага на primitive (законы 1-3, FiberContactStepParams::pair_dt_limit):
+    // заполняет ядро, минимум берёт compute_fiber_contact_dt_limit.
+    std::vector<double> pair_dt_limit;
 };
 
 inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -642,9 +655,85 @@ struct FiberFrictionContact
     double s = 0.0;
     double t = 0.0;
     double n[dim] = {}; // нормаль от B к A
-    double N = 0.0;     // нормальная сила Герца (geom.F), >=0
+    double N = 0.0;     // нормальная сила (Герц geom.F или закон 1-3), >=0
     double mu = 0.0;
 };
+
+// ----------------------------------------------------------------------
+// fiber_fiber_pair_inputs -- g, pr пары для законов 1-3
+// (fiber/plan-fiber-contact-types.md, §2; fiber/SPH.md, Fiber-Fiber-Contact,
+// «Законы нормальной силы»). ЕДИНСТВЕННАЯ сборка входов: ею пользуются ядро,
+// предел шага и диагностика (одна формула на одном множестве контактов).
+//   n от B к A (geom.n; при D = 0 -- из e_A x e_B, уже в геометрии);
+//   g.p = delta = r_a + r_b - D; v_A = (1-s) v_a0 + s v_a1 (a1 = -1: v_a0),
+//   v_B аналогично; g.pdot = -n.(v_A - v_B); g.v_rel = |v_A - v_B|;
+//   g.r = r_a + r_b (> 0 и при пересечении осей D = 0, где Swegle иначе
+//   отключился бы); m_red по эффективным массам точек
+//   (fiber_contact_side_inv_mass); g_eff = G_a G_b/(G_a+G_b) по a0, b0;
+//   r_eff = R_star; c_pair = min(c_a, c_b); dt_ref = min(dt_ref_A, dt_ref_B).
+// Скорости -- фаза предиктора (solver.predict до RHS).
+// ----------------------------------------------------------------------
+inline void fiber_fiber_pair_inputs(const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
+                                    const FiberContactPrimitive& prim, const FiberContactGeometry& geom,
+                                    const FiberContactStepParams& params, contact::PairGeom& g,
+                                    contact::PairProps& pr)
+{
+    const fiber::FiberMaterial& mat_a = materials[static_cast<std::size_t>(state.material_id[prim.a0])];
+    const fiber::FiberMaterial& mat_b = materials[static_cast<std::size_t>(state.material_id[prim.b0])];
+    const double ra = 0.5 * mat_a.d;
+    const double rb = 0.5 * mat_b.d;
+
+    double pdot = 0.0, v2 = 0.0;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        const double vA = (prim.a1 == -1)
+                              ? state.vx[d][prim.a0]
+                              : (1.0 - geom.s) * state.vx[d][prim.a0] +
+                                    geom.s * state.vx[d][static_cast<rhs::index_t>(prim.a1)];
+        const double vB = (prim.b1 == -1)
+                              ? state.vx[d][prim.b0]
+                              : (1.0 - geom.t) * state.vx[d][prim.b0] +
+                                    geom.t * state.vx[d][static_cast<rhs::index_t>(prim.b1)];
+        const double vrel = vA - vB;
+        pdot -= geom.n[d] * vrel;
+        v2 += vrel * vrel;
+    }
+    g.p = geom.delta;
+    g.pdot = pdot;
+    g.v_rel = std::sqrt(v2);
+    g.r = ra + rb;
+
+    const double m_A = 1.0 / fiber_contact_side_inv_mass(state, prim.a0, prim.a1, geom.s);
+    const double m_B = 1.0 / fiber_contact_side_inv_mass(state, prim.b0, prim.b1, geom.t);
+    pr.m_red = (m_A * m_B) / (m_A + m_B);
+    pr.g_eff = fiber_contact_g_eff(fiber_shear_modulus(mat_a), fiber_shear_modulus(mat_b));
+    pr.r_eff = (ra > 0.0 && rb > 0.0) ? (ra * rb) / (ra + rb) : 0.0;
+    pr.c_pair = std::min(fiber_sound_speed(mat_a), fiber_sound_speed(mat_b));
+    pr.dt_ref = std::min(fiber_side_dt_ref(*params.bead_dt_ref, prim.a0, prim.a1),
+                         fiber_side_dt_ref(*params.bead_dt_ref, prim.b0, prim.b1));
+}
+
+// Сила и предел шага закона 1-3 для принятого контакта (geom.contact).
+inline contact::Result fiber_fiber_contact_penalty(const fiber::FiberState& state,
+                                                   const std::vector<fiber::FiberMaterial>& materials,
+                                                   const FiberContactPrimitive& prim, const FiberContactGeometry& geom,
+                                                   const FiberContactStepParams& params)
+{
+    contact::PairGeom g;
+    contact::PairProps pr;
+    fiber_fiber_pair_inputs(state, materials, prim, geom, params, g, pr);
+    return fiber_penalty_force(params, g, pr);
+}
+
+// Проверка входов законов 1-3 до parallel_for.
+inline void fiber_fiber_check_params(const FiberContactStepParams& params, const fiber::FiberState& state)
+{
+    if (params.law.type == 0) return;
+    if (params.law.type < 0 || params.law.type > 3)
+        throw std::invalid_argument("Fiber-Fiber: тип закона вне 0..3");
+    if (params.bead_dt_ref == nullptr || params.bead_dt_ref->size() != state.size())
+        throw std::invalid_argument("Fiber-Fiber: тип 1-3 требует bead_dt_ref размера state.size()");
+}
 
 // ----------------------------------------------------------------------
 // compute_fiber_contact_contributions -- kernel: для каждого primitive с
@@ -670,14 +759,18 @@ inline bool compute_fiber_contact_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
     const std::vector<FiberContactPrimitive>& primitives,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers,
-    std::vector<FiberFrictionContact>& friction_contacts)
+    std::vector<FiberFrictionContact>& friction_contacts, const FiberContactStepParams& params = {})
 {
+    fiber_fiber_check_params(params, state);
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
     const std::size_t n = primitives.size();
     friction_contacts.resize(n);
+    const bool penalty = params.law.type != 0;
+    std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
+    if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
     if (n == 0) return false;
 
     exec.parallel_for(n, [&](std::size_t k) {
@@ -685,6 +778,16 @@ inline bool compute_fiber_contact_contributions(
         const FiberContactPrimitive& prim = primitives[k];
         const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Нормальная сила: тип 0 -- Герц из геометрии, 1-3 -- закон ---------
+        double F = geom.F;
+        if (penalty)
+        {
+            const contact::Result res = fiber_fiber_contact_penalty(state, materials, prim, geom, params);
+            if (pair_dt) (*pair_dt)[k] = res.dt_limit;
+            F = res.fn;
+            if (!(F > 0.0)) return; // покой/разлёт: ни вкладов, ни слота трения
+        }
 
         // --- Слот для стадии трения --------------------------------------------
         const double mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
@@ -700,7 +803,7 @@ inline bool compute_fiber_contact_contributions(
             slot.s = geom.s;
             slot.t = geom.t;
             for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
-            slot.N = geom.F;
+            slot.N = F;
             slot.mu = mu;
         }
 
@@ -715,7 +818,7 @@ inline bool compute_fiber_contact_contributions(
             const double m = state.mass[prim.a0];
             const double wA = 1.0 - geom.s;
             fiber::FiberDelta d{};
-            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * geom.F * geom.n[dd] / m;
+            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * F * geom.n[dd] / m;
             writer.emit(prim.a0, d, static_cast<std::uint64_t>(k), 0);
         }
         if (prim.a1 != -1 && geom.s > 0.0)
@@ -724,7 +827,7 @@ inline bool compute_fiber_contact_contributions(
             const double m = state.mass[a1];
             const double wA = geom.s;
             fiber::FiberDelta d{};
-            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * geom.F * geom.n[dd] / m;
+            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = wA * F * geom.n[dd] / m;
             writer.emit(a1, d, static_cast<std::uint64_t>(k), 1);
         }
 
@@ -734,7 +837,7 @@ inline bool compute_fiber_contact_contributions(
             const double m = state.mass[prim.b0];
             const double wB = 1.0 - geom.t;
             fiber::FiberDelta d{};
-            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * geom.F * geom.n[dd] / m;
+            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * F * geom.n[dd] / m;
             writer.emit(prim.b0, d, static_cast<std::uint64_t>(k), 2);
         }
         if (prim.b1 != -1 && geom.t > 0.0)
@@ -743,7 +846,7 @@ inline bool compute_fiber_contact_contributions(
             const double m = state.mass[b1];
             const double wB = geom.t;
             fiber::FiberDelta d{};
-            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * geom.F * geom.n[dd] / m;
+            for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = -wB * F * geom.n[dd] / m;
             writer.emit(b1, d, static_cast<std::uint64_t>(k), 3);
         }
     });
@@ -759,10 +862,11 @@ inline bool compute_fiber_contact_contributions(
 inline void compute_fiber_contact_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
     const std::vector<FiberContactPrimitive>& primitives,
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers, const FiberContactStepParams& params = {})
 {
     std::vector<FiberFrictionContact> unused_slots;
-    (void)compute_fiber_contact_contributions(exec, state, materials, primitives, thread_buffers, unused_slots);
+    (void)compute_fiber_contact_contributions(exec, state, materials, primitives, thread_buffers, unused_slots,
+                                              params);
 }
 
 // compute_fiber_contact -- удобная обёртка: search + contributions + reduce
@@ -770,11 +874,11 @@ inline void compute_fiber_contact_contributions(
 inline std::vector<fiber::FiberDelta> compute_fiber_contact(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers, const FiberContactStepParams& params = {})
 {
     FiberContactSearchResult search;
     build_fiber_contact_search(exec, state, topology, materials, search);
-    compute_fiber_contact_contributions(exec, state, materials, search.primitives, thread_buffers);
+    compute_fiber_contact_contributions(exec, state, materials, search.primitives, thread_buffers, params);
     return rhs::reduce_contributions(exec, thread_buffers, state.size());
 }
 
@@ -809,13 +913,37 @@ inline double fiber_contact_pair_dt_limit(const fiber::FiberState& state, const 
     return 0.8 / std::sqrt(k_eff / m_red);
 }
 
+// Законы 1-3: минимум res.dt_limit. Если params.pair_dt_limit заполнен ядром
+// на тех же primitives (размер совпадает) -- редукция по слотам; иначе тот же
+// расчёт (fiber_fiber_contact_penalty) повторяется по primitive. Тип 0 --
+// прежний fiber_contact_pair_dt_limit.
 inline double compute_fiber_contact_dt_limit(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                               const std::vector<fiber::FiberMaterial>& materials,
-                                              const std::vector<FiberContactPrimitive>& primitives)
+                                              const std::vector<FiberContactPrimitive>& primitives,
+                                              const FiberContactStepParams& params = {})
 {
     const double kInf = std::numeric_limits<double>::max();
     const std::size_t n = primitives.size();
     if (n == 0) return kInf;
+
+    if (params.law.type != 0)
+    {
+        const std::vector<double>* slots = params.pair_dt_limit;
+        if (slots != nullptr && slots->size() == n)
+            return exec.parallel_reduce(
+                n, kInf, [&](std::size_t k) -> double { return (*slots)[k]; },
+                [](double a, double b) { return std::min(a, b); });
+        fiber_fiber_check_params(params, state);
+        return exec.parallel_reduce(
+            n, kInf,
+            [&](std::size_t k) -> double {
+                const FiberContactPrimitive& prim = primitives[k];
+                const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
+                if (!geom.contact) return kInf;
+                return fiber_fiber_contact_penalty(state, materials, prim, geom, params).dt_limit;
+            },
+            [](double a, double b) { return std::min(a, b); });
+    }
 
     return exec.parallel_reduce(
         n, kInf,
@@ -864,8 +992,10 @@ struct FiberContactDiagnostics
 inline FiberContactDiagnostics compute_fiber_contact_diagnostics(const rhs::CpuExecutor& exec,
                                                                    const fiber::FiberState& state,
                                                                    const std::vector<fiber::FiberMaterial>& materials,
-                                                                   const FiberContactSearchResult& search)
+                                                                   const FiberContactSearchResult& search,
+                                                                   const FiberContactStepParams& params = {})
 {
+    fiber_fiber_check_params(params, state);
     FiberContactDiagnostics result;
     result.pair_count = search.pair_count;
     result.segment_pair_count = search.primitives.size();
@@ -904,7 +1034,10 @@ inline FiberContactDiagnostics compute_fiber_contact_diagnostics(const rhs::CpuE
             {
                 d1.contact_count = 1;
                 d1.max_penetration = geom.delta;
-                d1.min_dt = fiber_contact_pair_dt_limit(state, prim, geom);
+                // min_dt -- той же формулой, что настоящий предел шага.
+                d1.min_dt = (params.law.type == 0)
+                                ? fiber_contact_pair_dt_limit(state, prim, geom)
+                                : fiber_fiber_contact_penalty(state, materials, prim, geom, params).dt_limit;
             }
             return d1;
         },

@@ -527,6 +527,24 @@ endif()
 add_test(NAME fiber_solid_test COMMAND test_fiber_solid)
 set_tests_properties(fiber_solid_test PROPERTIES LABELS "3d")
 
+# --- Законы pinball/Swegle/импульсный для Fiber-Fiber (fiber/plan-fiber-contact-types.md, этап 2):
+#     ядро fiber_contact.hpp, предел шага и диагностика.
+add_executable(test_fiber_contact_types tests/test_fiber_contact_types.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_contact_types PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_contact_types PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_types PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_contact_types PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_contact_types PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_types PRIVATE -fopenmp)
+    target_link_options(test_fiber_contact_types PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_contact_types_test COMMAND test_fiber_contact_types)
+set_tests_properties(fiber_contact_types_test PROPERTIES LABELS "3d")
+
 # --- Законы pinball/Swegle/импульсный для Fiber-Solid (fiber/plan-fiber-contact-types.md, этап 1):
 #     include/interactions/fiber_contact_law.hpp, ядро fiber_solid_contact.hpp.
 add_executable(test_fiber_solid_types tests/test_fiber_solid_types.cpp ${SPH_PIPELINE_SOURCES})

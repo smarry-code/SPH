@@ -355,14 +355,6 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         }
     }
     in.close();
-    // Этап 1 (fiber/plan-fiber-contact-types.md): законы 1-3 подключены только
-    // к Fiber-Solid.
-    if (cfg.fiber_fiber_contact_type != 0)
-    {
-        std::cerr << "Fiber-Fiber: тип " << cfg.fiber_fiber_contact_type
-                  << " пока не реализован, используется Герц\n";
-        cfg.fiber_fiber_contact_type = 0;
-    }
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)

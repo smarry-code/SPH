@@ -104,6 +104,10 @@ struct Options
     int threads = 0; // 0 -- как в cfg по умолчанию
     int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
+    // Законы нормальной силы контактов нитей (fiber_contact_law.hpp): -1 -- как в
+    // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
+    int fs_contact = -1;
+    int ff_contact = -1;
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -141,7 +145,8 @@ void print_usage()
                 "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
                 "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
-                "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n");
+                "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
+                "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n");
 }
 
 // 0 -- разобрано, 1 -- справка, 2 -- ошибка
@@ -248,6 +253,16 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--plate-nz="), n) || n < 1 || n > 64) return bad("--plate-nz");
             o.plate_nz = static_cast<int>(n);
+        }
+        else if (a.rfind("--fs-contact=", 0) == 0)
+        {
+            if (!parse_ll(val("--fs-contact="), n) || n < 0 || n > 3) return bad("--fs-contact");
+            o.fs_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--ff-contact=", 0) == 0)
+        {
+            if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 3) return bad("--ff-contact");
+            o.ff_contact = static_cast<int>(n);
         }
         else if (a == "--probe-frame") o.probe_frame = 1;
         else if (a == "--no-probe-frame") o.probe_frame = 0;
@@ -382,6 +397,8 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
 
         const double t_max = opt.t_max > 0.0 ? opt.t_max : default_t_max(opt.config, opt.level);
         sc.cfg.t_total = t_max;
+        if (opt.fs_contact >= 0) sc.cfg.fiber_solid_contact_type = opt.fs_contact;
+        if (opt.ff_contact >= 0) sc.cfg.fiber_fiber_contact_type = opt.ff_contact;
         // Кадр на шаге 0 пишется всегда (next_output_time стартует с 0), поэтому при frames=off
         // save_t огромен: после него кадров больше не будет.
         sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);

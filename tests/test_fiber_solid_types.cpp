@@ -446,9 +446,13 @@ void test_parser()
     check(cfg.fiber_solid_contact_type == 0 && cfg.fiber_fiber_contact_type == 0 && !e.empty(),
           "вне диапазона -> сброс в 0 с сообщением");
 
-    e = parse("fiber_fiber_contact_type = 1\n", cfg);
-    check(cfg.fiber_fiber_contact_type == 0 && e.find("не реализован") != std::string::npos,
-          "fiber_fiber_contact_type = 1 (этап 1) -> предупреждение «не реализован», Герц");
+    all_ok = true;
+    for (int t = 0; t <= 3; ++t)
+    {
+        e = parse("fiber_fiber_contact_type = " + std::to_string(t) + "\n", cfg);
+        all_ok = all_ok && cfg.fiber_fiber_contact_type == t && e.empty();
+    }
+    check(all_ok, "fiber_fiber_contact_type 0..3 принимаются без предупреждений");
 
     e = parse("fiber_solid_contact_penalty_scale = 2.5\nfiber_fiber_contact_penalty_scale = 0.5\n", cfg);
     check(cfg.fiber_solid_contact_penalty_scale == 2.5 && cfg.fiber_fiber_contact_penalty_scale == 0.5,
