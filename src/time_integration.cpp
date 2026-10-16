@@ -16,6 +16,10 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#ifdef SPH_CONTACT_STATS
+#include "interactions/fiber_contact_stats.hpp"
+#include <memory>
+#endif
 #ifdef SPH_ENERGY_LOG
 #include "energy_log.hpp"
 #include <memory>
@@ -220,6 +224,15 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     }
 #endif
 
+#ifdef SPH_CONTACT_STATS
+    // Диагностика контактов нитей (interactions/fiber_contact_stats.hpp): без
+    // contact_hold_n только читает состояние; сводка пишется в деструкторе.
+    std::unique_ptr<interactions::contact_stats::Collector> cstats;
+    if (cfg.contact_stats_every > 0 && nfiber > 0)
+        cstats = std::make_unique<interactions::contact_stats::Collector>(
+            cfg, cfg.contact_stats_every, cfg.contact_stats_file, cfg.contact_stats_summary, cfg.contact_hold_n);
+#endif
+
     // Основной цикл по времени
     while (time < t_total)
     {
@@ -339,6 +352,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
                 fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives, fiber_solid_params);
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
+#ifdef SPH_CONTACT_STATS
+            if (cstats)
+                cstats->after_rhs(static_cast<long long>(current_ts), cfg.mats, sys, fb, topology, materials,
+                                  fiber_contact_search, friction_contacts, fiber_fiber_law, fiber_solid_search,
+                                  friction_solid_contacts, fiber_solid_law, dt, has_active_friction_contacts,
+                                  has_active_solid_friction_contacts);
+#endif
         }
 
         // [1] Закрепление: RHS шага полностью сведён (все Reduce и сложения
@@ -494,6 +514,9 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // v/x с правилами, специфичными для Solid (u>=0, XSPH), — внутри
         // решателя, fiber/PLAN.md §3.9; Fiber: только x, v).
         solver.advance(sys, ntotal, fb, nfiber, dt);
+#ifdef SPH_CONTACT_STATS
+        if (cstats) cstats->after_advance(time + dt, dt, fb, sys, friction_contacts, friction_solid_contacts);
+#endif
 
         // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8) -- ПОСЛЕ шага
         // ODESolver (predictor-corrector/Euler Solid И Fiber уже завершены

@@ -117,6 +117,17 @@ struct SimulationConfig
     std::string energy_log_file = "energy_log.csv";
 #endif
 
+#ifdef SPH_CONTACT_STATS
+    // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
+    // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
+    // строка CSV каждые k шагов и сводка в конце; contact_hold_n -- контрфакт
+    // «удержание N» (меняет физику, только для диагностики).
+    size_t contact_stats_every = 0;
+    std::string contact_stats_file = "contact_stats.csv";
+    std::string contact_stats_summary = "contact_stats_summary.txt";
+    bool contact_hold_n = false;
+#endif
+
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
     // Вызывается из main ДО parse_sph_config: явно фиксирует контракт
     // инициализации конфига (независимо от default member initializers).

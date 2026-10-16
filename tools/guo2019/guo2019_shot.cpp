@@ -124,6 +124,8 @@ struct Options
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
     int fs_contact = -1;
     int ff_contact = -1;
+    std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
+    bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -164,6 +166,7 @@ void print_usage()
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
                 "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n"
+                "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
@@ -295,6 +298,21 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 3) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")
+        {
+#ifndef SPH_CONTACT_STATS
+            std::fprintf(stderr, "%s: сборка без SPH_CONTACT_STATS (cmake -DSPH_CONTACT_STATS=ON)\n", a.c_str());
+            return 2;
+#else
+            if (a == "--hold-n")
+                o.hold_n = true;
+            else
+            {
+                if (!parse_ll(val("--contact-stats="), n) || n < 1) return bad("--contact-stats");
+                o.contact_stats = static_cast<std::size_t>(n);
+            }
+#endif
         }
         else if (a.rfind("--fiber-inelastic=", 0) == 0)
         {
@@ -529,6 +547,11 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         sc.cfg.t_total = t_max;
         if (opt.fs_contact >= 0) sc.cfg.fiber_solid_contact_type = opt.fs_contact;
         if (opt.ff_contact >= 0) sc.cfg.fiber_fiber_contact_type = opt.ff_contact;
+#ifdef SPH_CONTACT_STATS
+        // Статистика контактов -- в подкаталог выстрела (CWD).
+        sc.cfg.contact_stats_every = opt.contact_stats;
+        sc.cfg.contact_hold_n = opt.hold_n;
+#endif
         // Кадр на шаге 0 пишется всегда (next_output_time стартует с 0), поэтому при frames=off
         // save_t огромен: после него кадров больше не будет.
         sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);

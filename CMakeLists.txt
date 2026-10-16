@@ -38,6 +38,7 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+option(SPH_CONTACT_STATS "Диагностика контактов нитей (#ifdef SPH_CONTACT_STATS, include/interactions/fiber_contact_stats.hpp)" OFF)
 option(SPH_ENERGY_LOG  "Лог механической энергии (#ifdef SPH_ENERGY_LOG, include/energy_log.hpp)" OFF)  # OFF: кода лога в сборке нет
 # Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
 # SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
@@ -1325,6 +1326,12 @@ if(SPH_ENERGY_LOG)
     target_compile_definitions(SPH PRIVATE SPH_ENERGY_LOG)
     target_compile_definitions(guo2019_shot PRIVATE SPH_ENERGY_LOG)
     target_compile_definitions(fabric_checks PRIVATE SPH_ENERGY_LOG)
+endif()
+
+# --- Диагностика контактов нитей: блоки #ifdef SPH_CONTACT_STATS и ключи
+#     guo2019_shot --contact-stats/--hold-n. Без опции кода статистики нет.
+if(SPH_CONTACT_STATS)
+    target_compile_definitions(guo2019_shot PRIVATE SPH_CONTACT_STATS)
 endif()
 
 # --- Каталоги include: заголовки — в include/, исходники — в src/ ------------
