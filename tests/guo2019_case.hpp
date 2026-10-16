@@ -2,7 +2,8 @@
 // guo2019_case.hpp
 // ВСЕ числа постановки опытов Guo et al., IJIE 127 (2019) 1-16: удар стального
 // шара по мишеням A (Al-пластина), 1T (один слой ткани Twaron CT 717), 1T/A
-// (ткань спереди, Al сзади), A/1T (Al спереди, ткань сзади).
+// (ткань спереди, Al сзади), A/1T (Al спереди, ткань сзади), 2T и 4T (два и
+// четыре несклеенных слоя ткани; ТЗ Guo 2019 2T/4T, fiber/TZ_GUO2019_2T_4T.md).
 // Постановка: ТЗ Guo 2019 §3 (геометрия и материалы), §7 (уровни разрешения),
 // §8 (серии выстрелов), §9 (допуски smoke).
 //
@@ -34,7 +35,9 @@ enum class Config
     A,    // одна Al-пластина (опорная конфигурация для нормировки e/(e_A + e_1T))
     T1,   // один слой ткани, имя "1T"
     T1_A, // ткань спереди, Al сзади, имя "1T_A" (в статье 1T/A)
-    A_T1  // Al спереди, ткань сзади, имя "A_1T" (в статье A/1T)
+    A_T1, // Al спереди, ткань сзади, имя "A_1T" (в статье A/1T)
+    T2,   // два слоя ткани без пластины, имя "2T"
+    T4    // четыре слоя ткани без пластины, имя "4T"
 };
 
 inline const char* config_name(Config c)
@@ -45,23 +48,42 @@ inline const char* config_name(Config c)
     case Config::T1: return "1T";
     case Config::T1_A: return "1T_A";
     case Config::A_T1: return "A_1T";
+    case Config::T2: return "2T";
+    case Config::T4: return "4T";
     }
     return "?";
 }
 
-// true -- имя распознано (A, 1T, 1T_A, A_1T; также допускаются 1T/A и A/1T).
+// true -- имя распознано (A, 1T, 1T_A, A_1T, 2T, 4T; также допускаются 1T/A и A/1T).
 inline bool parse_config(const std::string& s, Config& out)
 {
     if (s == "A") out = Config::A;
     else if (s == "1T") out = Config::T1;
     else if (s == "1T_A" || s == "1T/A") out = Config::T1_A;
     else if (s == "A_1T" || s == "A/1T") out = Config::A_T1;
+    else if (s == "2T") out = Config::T2;
+    else if (s == "4T") out = Config::T4;
     else return false;
     return true;
 }
 
-inline bool config_has_fabric(Config c) { return c != Config::A; }
-inline bool config_has_plate(Config c) { return c != Config::T1; }
+// Число слоёв ткани в мишени: 0 у A, 1 у 1T, 1T_A, A_1T, 2 у 2T, 4 у 4T.
+inline int fabric_plies(Config c)
+{
+    switch (c)
+    {
+    case Config::A: return 0;
+    case Config::T1:
+    case Config::T1_A:
+    case Config::A_T1: return 1;
+    case Config::T2: return 2;
+    case Config::T4: return 4;
+    }
+    return 0;
+}
+
+inline bool config_has_fabric(Config c) { return fabric_plies(c) > 0; }
+inline bool config_has_plate(Config c) { return c != Config::T1 && c != Config::T2 && c != Config::T4; }
 
 enum class Level
 {
@@ -228,6 +250,9 @@ inline constexpr double kPlateDxMismatchWarn = 0.02; // 2 %
 // ===========================================================================
 inline constexpr double kEpsG = 1.0e-6; // eps_g = 1 мкм: добавочный зазор ткань--пластина (страховка от округления), оценка
 inline constexpr double kZFront = 0.0;  // z_f: лицевая поверхность мишени
+// Зазор между соседними слоями пакета ткани (2T, 4T): отдельное имя, чтобы менять независимо от kEpsG;
+// значение то же, 1 мкм, оценка (решение 2T/4T §12 п.2).
+inline constexpr double kEpsPly = kEpsG;
 
 // ===========================================================================
 // Описатель уровня
@@ -323,6 +348,8 @@ inline double default_t_max(Config c)
     case Config::T1: return 1000.0e-6;  // 1000 мкс
     case Config::T1_A:
     case Config::A_T1: return 800.0e-6; // 800 мкс
+    case Config::T2: return 800.0e-6;   // 800 мкс, оценка (2T 4T §3: V_BL в 1.9 раза выше, чем у 1T)
+    case Config::T4: return 600.0e-6;   // 600 мкс, оценка (в Fig. 9 4T при 269 м/с прорван примерно к 200 мкс)
     }
     return 800.0e-6;
 }
@@ -369,6 +396,12 @@ inline std::vector<PaperShot> paper_shots(Config c)
                 {183, true, 67}, {184, false, 0}, {192, true, 60}};
     case Config::A_T1:
         return {{120, false, 0}, {145, false, 0}, {151, true, 29}, {152, true, 25}, {171, true, 72}};
+    // 2T и 4T: рис. 10, векторная разметка PDF, +-0.3 м/с (ТЗ 2T/4T §3.1)
+    case Config::T2:
+        return {{137.6, false, 0}, {143.7, false, 0}, {147.7, true, 29.0}, {148.6, true, 10.2}, {153.5, true, 41.6}};
+    case Config::T4:
+        return {{247.4, false, 0}, {252.4, false, 0}, {257.7, false, 0}, {264.5, false, 0},
+                {265.8, true, 83.0}, {267.2, true, 27.7}, {268.7, true, 86.2}};
     }
     return {};
 }
@@ -387,9 +420,40 @@ inline PaperVBL paper_vbl(Config c)
     case Config::T1: return {76.0, 3.0, 3.0};
     case Config::T1_A: return {178.0, 6.0, 8.0};
     case Config::A_T1: return {148.0, 3.0, 3.0};
+    case Config::T2: return {147.0, 3.0, 3.0};
+    case Config::T4: return {258.0, 8.0, 5.0};
     }
     return {0, 0, 0};
 }
+
+// Поглощённая энергия при V_BL статьи, Дж (статья, §4.2.2): 1T 20.2, 2T 75.6, 4T 233.0; для остальных 0 (не задана).
+inline double paper_e_bl(Config c)
+{
+    switch (c)
+    {
+    case Config::T1: return 20.2;
+    case Config::T2: return 75.6;
+    case Config::T4: return 233.0;
+    default: return 0.0;
+    }
+}
+
+// Нормировки на 1T и механизм для 2T, 4T (статья §4.2.2-§4.2.3, Fig. 12-17); только для печати, не проверки.
+inline constexpr double kPaperVblRatio2T = 1.9;    // V_BL(2T)/V_BL(1T), статья
+inline constexpr double kPaperVblRatio4T = 3.4;    // V_BL(4T)/V_BL(1T), статья
+inline constexpr double kPaperERatio2T = 3.7;      // e(2T)/e(1T) при V_BL, статья
+inline constexpr double kPaperERatio4T = 11.5;     // e(4T)/e(1T) при V_BL, статья
+inline constexpr double kPaperSpecific2T = 1.87;   // (e/n)(2T)/e(1T), статья, Fig. 13
+inline constexpr double kPaperSpecific4T = 2.88;   // (e/n)(4T)/e(1T), статья, Fig. 13
+inline constexpr double kPaperVblExp = 0.887;      // V_BL ~ n^0.887, подгонка статьи, Fig. 12a
+inline constexpr double kPaperEExp = 1.773;        // e ~ n^1.773, подгонка статьи, Fig. 12b
+// Порванные вертикальные (зажатые) нити по слоям, слой 1 -- лицевой, статья Fig. 16.
+inline constexpr int kPaperBrokenV4T[4] = {5, 6, 7, 18};
+inline constexpr int kPaperBrokenV1T[1] = {3};
+inline constexpr int kPaperUnravel1T = 3;          // распущенные вертикальные нити у свободных кромок, 1T, статья Fig. 17
+inline constexpr int kPaperUnravel4TPly1 = 9;      // то же, слой 1 у 4T, статья Fig. 17
+inline constexpr double kPaperDeflMinM = 25.0e-3;  // максимальный прогиб перед разрушением 25-27 мм (1T, 2T, 4T), статья Fig. 14
+inline constexpr double kPaperDeflMaxM = 27.0e-3;
 
 // Нормировка e/(e_A + e_1T), статья: 1.43 для 1T/A, 0.99 для A/1T; для A и 1T -- 0 (не определена).
 inline constexpr double kPaperNormT1_A = 1.43;

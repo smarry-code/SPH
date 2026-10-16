@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "fiber/fiber_plasticity.hpp"
 #include "param.hpp"
 
 namespace fiber
@@ -91,6 +92,17 @@ struct FiberBond
     std::size_t j = 0;
     double l0 = 0.0;
     double l_break = 0.0;
+    // Внутренние переменные определяющего закона (fiber/fiber-plasticity-design.md,
+    // раздел 2): eps_p, q, eps_prev, w_p, w_v. ЛЕЖАТ В КОНЦЕ структуры, чтобы
+    // агрегатная инициализация FiberBond{i, j, l0, l_break} продолжала
+    // компилироваться. Хранятся внутри связи, а не в отдельном массиве:
+    // apply_fiber_break_events пересобирает topology.bonds копированием связей,
+    // и состояние оставшихся связей переезжает вместе с ними. RHS-ядро
+    // (interactions/fiber_bond.hpp) состояние только читает; пишет его проход
+    // Postprocessing interactions::apply_fiber_bond_constitutive. Энергии w_p,
+    // w_v -- Дж/м^3 (энергия связи = w·A·l0). Нулевое состояние -- упругая
+    // ненагруженная связь.
+    BondState st{};
 };
 
 // prev[]/next[] — соседи по нити, -1 на конце (частица — конец нити, если
@@ -163,6 +175,33 @@ struct FiberMaterial
     double eps_break = 0.0;
     double mu_ff = 0.0;
     double mu_fs = 0.0; // трение этой нити о любое Solid-тело; статический и кинематический одновременно
+    // Неупругость связи (fiber/fiber-plasticity-design.md, раздел 6): пластика,
+    // скоростная зависимость, вязкоупругость, критерии разрыва. ПОСЛЕ mu_fs --
+    // агрегатная инициализация FiberMaterial{E, nu, d, rho, eps_break, mu_ff,
+    // mu_fs} не ломается. По умолчанию всё выключено (упругий материал).
+    PlasticParams plastic{};
+    RateParams rate{};
+    ViscoParams visco{};
+    FailureParams failure{};
+
+    // Включена ли у материала хоть одна неупругая составляющая связи (пластика,
+    // ветвь Максвелла, демпфер Кельвина через eta или xi). false => RHS-ядро и
+    // dt-лимит идут по прежней упругой формуле побитово, проход Postprocessing
+    // apply_fiber_bond_constitutive связь не трогает.
+    bool inelastic() const
+    {
+        return plastic.enabled() || (visco.E1 > 0.0 && visco.tau > 0.0) || visco.eta != 0.0 || visco.xi != 0.0;
+    }
+
+    // Включён ли хоть один критерий разрыва FAILURE (EPS_P > 0 или SIGMA_U > 0).
+    // Независим от inelastic(): FAILURE без PLASTIC/VISCO оставляет ядро и
+    // dt-лимит на упругой быстрой ветке (st нулевой, sigma_ep = E*eps), а
+    // проход разрыва проверяет только SIGMA_U (EPS_P без пластики не сработает:
+    // eps_p == 0).
+    bool has_failure() const
+    {
+        return failure.eps_p > 0.0 || failure.sigma_u > 0.0;
+    }
 };
 
 } // namespace fiber

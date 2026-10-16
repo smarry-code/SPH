@@ -1,0 +1,21 @@
+config=1T level=scaled V0=76 t_max=0.0005 SY=5.1e+08 H=8.5e+09 E=8.5e+10 eps_break=0.06
+metric elastic plastic
+steps 12998 15167
+t_end_s 0.00016678866 0.00019485756
+wall_s 258.45752 303.5929
+v_z_end_mps -59.072595 -58.49092
+V_R_mps 59.072595 58.49092
+z_c_end_m -0.0079541949 -0.0097140477
+ke_ball_0_J 5.054 5.054
+ke_ball_end_J 3.0533757 2.9935393
+ke_ball_lost_J 2.0006243 2.0604607
+bonds_broken 8 4
+eps_max 0.029998009 0.059995907
+sigma_ep_max_Pa 2.5498308e+09 9.272411e+08
+eps_p_max 0 0.049087188
+W_p_J 0 0.67709819
+W_v_J 0 0
+F_clamp_fiber_z_max_N 1204.841 711.73031
+F_clamp_solid_z_max_N 0 0
+w_f_max_m 0.0089307143 0.011333708
+outcome perforated perforated

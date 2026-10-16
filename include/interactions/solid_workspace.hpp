@@ -40,6 +40,9 @@ struct SolidStepWorkspace
     std::vector<SolidDelta> reduced;
     rhs::ReduceScratch reduce_scratch;
     std::vector<SolidFinal> finalres;
+#ifdef SPH_ENERGY_LOG
+    std::vector<SolidDelta> contact_reduced; // только вклады контакта (лог энергии)
+#endif
 };
 
 } // namespace interactions

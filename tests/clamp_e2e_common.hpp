@@ -153,7 +153,8 @@ inline double internal_solid(const ParticleSystem& s, std::size_t n)
     return e;
 }
 
-// Упругая энергия связей sum 1/2 (EA/l0)(l - l0)^2 [l > l0] (связь работает только на растяжение).
+// Упругая энергия связей sum 1/2 (EA/l0)(l - l0)^2 [l > l0] (связь работает только на растяжение);
+// для неупругих материалов -- с вычетом eps_p и пружиной Максвелла (см. ниже).
 inline double bond_energy(const fiber::Model& m)
 {
     double e = 0.0;
@@ -167,7 +168,16 @@ inline double bond_energy(const fiber::Model& m)
             l2 += r * r;
         }
         const double l = std::sqrt(l2);
-        if (l > b.l0)
+        if (mat.inelastic())
+        {
+            // Упруго-пластичная связь: запасённая энергия 0.5·E·(ε-ε_p)²·A·l0 (ε > ε_p) плюс энергия пружины
+            // ветви Максвелла 0.5·q²/E1·A·l0. Пластическая работа W_p и вязкая W_v в U_b НЕ входят (см. fiber_system).
+            const double A = interactions::fiber_cross_section_area(mat);
+            const double eps = (l - b.l0) / b.l0;
+            if (eps > b.st.eps_p) e += 0.5 * mat.E * (eps - b.st.eps_p) * (eps - b.st.eps_p) * A * b.l0;
+            if (mat.visco.E1 > 0.0) e += 0.5 * b.st.q * b.st.q / mat.visco.E1 * A * b.l0;
+        }
+        else if (l > b.l0)
         {
             const double k = mat.E * interactions::fiber_cross_section_area(mat) / b.l0;
             e += 0.5 * k * (l - b.l0) * (l - b.l0);

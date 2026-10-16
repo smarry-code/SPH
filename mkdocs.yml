@@ -104,6 +104,7 @@ nav:
           - Опции CMake: 03-reference/config/cmake-options.md
       - Форматы файлов:
           - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
+          - Файл нитей (.fib) и вывод нитей: 03-reference/file-formats/fib-file.md
           - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
           - Таблица деталей для .k: 03-reference/file-formats/k-parts.md
       - Материалы:

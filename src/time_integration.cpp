@@ -16,6 +16,10 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#ifdef SPH_ENERGY_LOG
+#include "energy_log.hpp"
+#include <memory>
+#endif
 
 #ifdef _WIN32
 #define NOMINMAX // std::min/std::max (rhs/contributions.hpp, interactions/fiber_bond.hpp) конфликтуют с макросами min/max windows.h
@@ -66,7 +70,7 @@ namespace detail
 // [1] проекция закрепления -> dt -> единая стадия трения нить-нить и Fiber-Solid
 // (fiber/fiber_friction_projection.md, fiber/fiber_solid_friction_implementation.md;
 // внутри неё [2] c_k = c_s = 0 у полностью зажатых и [3] повторная проекция
-// после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, разрыв
+// после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, apply_fiber_bond_constitutive, разрыв
 // связей Fiber-Bond) -> вывод. update_smoothing_length -- ИСКЛЮЧЕНИЕ, см.
 // большой комментарий в include/interactions/postprocessing.hpp (шапка
 // файла) -- почему он остаётся МЕЖДУ RHS и вычислением нового dt, а не после
@@ -164,8 +168,46 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         if (clamp_report != nullptr) interactions::clamp_report_counts(clamp_ws, sys, *clamp_report);
     }
 
+    // Начальное eps_prev неупругих связей = текущая деформация (иначе связь,
+    // созданная при l != l0, даёт на первом шаге фиктивный скачок Δε и w_v).
+    // Для упругих материалов no-op.
+    if (nfiber > 0) interactions::init_fiber_bond_state(fb, topology, materials);
+
     size_t current_ts = 0;
     double next_output_time = 0.0;
+
+#ifdef SPH_ENERGY_LOG
+    // Лог механической энергии (include/energy_log.hpp): запасы -- каждые
+    // energy_log_every шагов, каналы потерь -- накапливаются на КАЖДОМ шаге.
+    // При energy_log_every == 0 elog пуст, и все врезки ниже -- одна ветка.
+    // Врезки только читают состояние: траектория побитово та же, что без лога.
+    std::unique_ptr<energy::EnergyLogger> elog;
+    energy::EnergyChannels echan;
+    interactions::FiberEnergyTap ftap; // приращения энергии нитей (postprocessing.hpp)
+    std::vector<double> sigma_clip;    // σ_m < 0 на отсечке по связям шага (RHS-ядро -> clip_loss)
+    if (cfg.energy_log_every > 0)
+    {
+        elog = std::make_unique<energy::EnergyLogger>(cfg.energy_log_file, cfg.energy_log_every);
+        solver.u_clamp_acc = &echan.u_clamp;
+        ftap.w_p = &echan.w_p_fiber;
+        ftap.w_v = &echan.w_v_fiber;
+        ftap.brk = &echan.brk;
+        ftap.brk_contact = &echan.brk_contact;
+        ftap.clip = &echan.clip;
+        ftap.sigma_clip = &sigma_clip;
+        ftap.contact_potential = [&]() {
+            double uff = 0.0, ufs = 0.0;
+            energy::compute_hertz_potential(fiber_exec, cfg, sys, ntotal, fb, topology, materials, elog->workspace(),
+                                            uff, ufs);
+            return uff + ufs;
+        };
+        wb.energy_log = true;
+        elog->write_row(0, time, dt,
+                        energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
+                                                      elog->workspace()),
+                        echan);
+    }
+#endif
 
     // Основной цикл по времени
     while (time < t_total)
@@ -220,8 +262,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         bool has_active_solid_friction_contacts = false; // Fiber-Solid
         if (nfiber > 0)
         {
+#ifdef SPH_ENERGY_LOG
+            interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers,
+                                             fiber_bond_delta, fiber_reduce_scratch, elog ? &sigma_clip : nullptr);
+#else
             interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers,
                                              fiber_bond_delta, fiber_reduce_scratch);
+#endif
 
             interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search);
             // Только нормальная сила; заполняет слоты трения friction_contacts.
@@ -278,6 +325,17 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
                                                  static_cast<std::vector<std::vector<double>>*>(nullptr), clamp_ws,
                                                  clamp_fiber_force);
+#ifdef SPH_ENERGY_LOG
+            // Ускорение контакта в зажатых компонентах тоже обнуляется -- иначе
+            // в канале контакта появилась бы работа неподвижной опоры.
+            if (wb.has_contact_dv)
+            {
+                double unused_force[dim] = {};
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, wb.contact_dv,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, unused_force);
+            }
+#endif
         }
 
         // Общий шаг (fiber/SPH.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).
@@ -298,6 +356,21 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         {
             const auto fupd = solver.fiber_velocity_update(fb, dt);
             const auto supd = solver.solid_velocity_update(sys, dt);
+#ifdef SPH_ENERGY_LOG
+            // Трение: снимок ускорений до стадии; после неё (с повторной
+            // проекцией зажимов [3]) разность -- фактически применённое
+            // ускорение трения, его работа считается перед advance().
+            if (elog)
+            {
+                for (size_t d = 0; d < dim; ++d)
+                    elog->friction_fiber[d].assign(solver.fiber_rhs.dv[d].begin(),
+                                                   solver.fiber_rhs.dv[d].begin() + static_cast<std::ptrdiff_t>(nfiber));
+                elog->friction_solid.resize(dim);
+                for (size_t d = 0; d < dim; ++d)
+                    elog->friction_solid[d].assign(solver.solid_rhs.dvx[d].begin(),
+                                                   solver.solid_rhs.dvx[d].begin() + static_cast<std::ptrdiff_t>(ntotal));
+            }
+#endif
             interactions::compute_friction_counts(fiber_exec, nfiber, ntotal, friction_contacts,
                                                    friction_solid_contacts, fiber_friction_count_buffers,
                                                    solid_friction_count_buffers, fiber_friction_bead_count,
@@ -336,6 +409,18 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                                      static_cast<std::vector<std::vector<double>>*>(nullptr),
                                                      clamp_ws, clamp_fiber_force);
             }
+#ifdef SPH_ENERGY_LOG
+            if (elog)
+            {
+                for (size_t d = 0; d < dim; ++d)
+                    for (size_t i = 0; i < nfiber; ++i)
+                        elog->friction_fiber[d][i] = solver.fiber_rhs.dv[d][i] - elog->friction_fiber[d][i];
+                for (size_t d = 0; d < dim; ++d)
+                    for (size_t i = 0; i < ntotal; ++i)
+                        elog->friction_solid[d][i] = solver.solid_rhs.dvx[d][i] - elog->friction_solid[d][i];
+                elog->has_friction = true;
+            }
+#endif
         }
 
         // Реакция опоры шага ([1] + [3], в этом порядке) -- в отчёт сцене.
@@ -348,6 +433,34 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             }
         }
 
+#ifdef SPH_ENERGY_LOG
+        // Каналы шага: работа вклада на средней скорости шага (energy_log.hpp,
+        // work_mid_*), потеря = -работа:
+        //   трение -- ускорение трения шага (Fiber и Solid);
+        //   контакт Solid-Solid -- его ускорение (после проекции зажимов);
+        //   XSPH -- поправка av (у Эйлера av нет);
+        //   тепло ИВ -- sum m*du_av*h (справочно, уже в U_int).
+        if (elog)
+        {
+            const auto supd = solver.solid_velocity_update(sys, dt);
+            if (elog->has_friction)
+            {
+                const auto fupd = solver.fiber_velocity_update(fb, dt);
+                echan.friction -= energy::work_mid_fiber(fiber_exec, fb, fupd, solver.fiber_rhs.dv,
+                                                         elog->friction_fiber, nfiber) +
+                                  energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal,
+                                                         elog->friction_solid, false);
+                elog->has_friction = false;
+            }
+            if (wb.has_contact_dv && ntotal > 0)
+                echan.contact_ss -=
+                    energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, wb.contact_dv, false);
+            if (supd.av != nullptr && ntotal > 0)
+                echan.xsph -= energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, *supd.av, true);
+            if (wb.du_av.size() >= ntotal)
+                echan.q_av += energy::mass_weighted_sum(fiber_exec, sys.mass, wb.du_av, ntotal) * supd.h;
+        }
+#endif
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/
         // v/x с правилами, специфичными для Solid (u>=0, XSPH), — внутри
         // решателя, fiber/PLAN.md §3.9; Fiber: только x, v).
@@ -368,15 +481,31 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         //      из topology/object_id на КАЖДОМ вызове RHS -- отдельной
         //      инвалидации кэша не требуется (fiber/SPH.md, «Postprocessing и
         //      изменение topology»).
+#ifdef SPH_ENERGY_LOG
+        // Лог энергии: пластическая работа Мизеса (Solid) и каналы нитей --
+        // пластическая/вязкая работа связей и запас порвавшихся связей (FiberEnergyTap).
+        interactions::apply_material_strength(cfg, sys, ntotal, dt, solver.solid_rhs.drho,
+                                              elog ? &echan.w_plastic : nullptr);
+        if (nfiber > 0)
+        {
+            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, materials, dt,
+                                                            fiber_break_thread_buffers, elog ? &ftap : nullptr);
+        }
+#else
         interactions::apply_material_strength(cfg, sys, ntotal, dt, solver.solid_rhs.drho);
         if (nfiber > 0)
         {
-            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, fiber_break_thread_buffers);
+            // Внутренние переменные связей (пластика/Максвелл/диссипация) --
+            // с dt этого шага, по x^{n+1}, ПЕРЕД поиском разрыва: внутри обёртки
+            // (apply_fiber_bond_constitutive). Для упругих материалов no-op.
+            interactions::run_fiber_topology_postprocessing(fiber_exec, fb, topology, materials, dt,
+                                                            fiber_break_thread_buffers);
         }
+#endif
         if (time >= next_output_time)
         {
             output(sys, ntotal, time, current_ts, dt);
-            if (nfiber > 0) fiber::fiber_output(fb, topology, current_ts, time);
+            if (nfiber > 0) fiber::fiber_output(fb, topology, materials, current_ts, time);
             next_output_time += save_t;
         }
         time += dt;
@@ -388,6 +517,14 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // z в 3D, z (ось симметрии) в осесимметричном 2D, x в 1D.
         const size_t moni_axis = dim - 1;
         log_file << time << " " << sys.vx[moni_axis][moni_particle] << " " << sys.itype[moni_particle] << std::endl;
+
+#ifdef SPH_ENERGY_LOG
+        if (elog && elog->due(current_ts))
+            elog->write_row(current_ts, time, dt,
+                            energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
+                                                          elog->workspace()),
+                            echan);
+#endif
 
         // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе
         // шага крутится бесконечно: время задачи практически не растёт, а
