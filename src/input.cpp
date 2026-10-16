@@ -353,6 +353,22 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             }
             cfg.k_solid_elements = value;
         }
+#ifdef SPH_ENERGY_LOG
+        else if (key == "energy_log_every")
+        {
+            cfg.energy_log_every = static_cast<size_t>(std::stoull(value));
+        }
+        else if (key == "energy_log_file")
+        {
+            cfg.energy_log_file = value;
+        }
+#else
+        else if (key == "energy_log_every" || key == "energy_log_file")
+        {
+            // Ключ лога энергии без кода лога: молча не игнорируем.
+            std::cerr << key << ": сборка без SPH_ENERGY_LOG (cmake -DSPH_ENERGY_LOG=ON), лог энергии не пишется\n";
+        }
+#endif
     }
     in.close();
 }

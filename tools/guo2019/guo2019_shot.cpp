@@ -4,12 +4,21 @@
 // и замер стоимости (ТЗ Guo 2019 §7). Не тест: add_test() не добавлен.
 //
 // Использование:
-//   guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled
+//   guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled
 //                (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)
 //                --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]
-//                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--repeat=N]
+//                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--mu-ff=<x>] [--mu-fs=<x>] [--repeat=N]
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
-//                [--probe-frame] [--plate-nz=N]
+//                [--probe-frame] [--plate-nz=N] [--save-t=<с>]
+//                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
+//   --mu задаёт ОБА коэффициента (μ_ff нить-нить и μ_fs нить-Solid); --mu-ff / --mu-fs переопределяют только свой
+//   коэффициент и имеют приоритет над --mu независимо от порядка ключей. Не заданный из пары берётся из --mu
+//   (по умолчанию kMuDefault). Без новых ключей поведение прежнее. Значения пишутся в shot.txt (mu_ff=, mu_fs=).
+//   --energy-log=N -- energy_log.csv каждые N шагов в подкаталоге выстрела (только сборка с -DSPH_ENERGY_LOG=ON;
+//   include/energy_log.hpp).
+//   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
+//   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
+//   (и l_break всех связей = (1+eps_break) l0).
 //
 // Каждый выстрел -- свежая сцена (build_guo_scene) в своём подкаталоге
 // <out>/<config>_<level>[_nz<N>]_v<V0>_r<i>/; файлы конвейера (log.txt, кадры) пишутся в CWD,
@@ -20,7 +29,9 @@
 
 #include "e2e_harness.hpp"
 
+#include "fiber/fiber_input.hpp"
 #include "fiber/fiber_output.hpp"
+#include "fiber/fiber_plasticity.hpp"
 #include "output.hpp"
 #include "run_guard.hpp"
 #include "time_integration.hpp"
@@ -97,6 +108,8 @@ struct Options
     std::size_t max_steps = 0;
     bool body_isolation = true;
     double mu = kMuDefault;
+    double mu_ff = -1.0; // < 0 -- не задан, берётся mu
+    double mu_fs = -1.0; // < 0 -- не задан, берётся mu
     int repeat = 1;
     bool repeat_set = false;
     int bracket = -1; // -1 -- по умолчанию (включён с --paper-shots), 0 -- выкл., 1 -- вкл.
@@ -104,6 +117,9 @@ struct Options
     int threads = 0; // 0 -- как в cfg по умолчанию
     int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
+    fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
+    double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
+    std::size_t energy_log = 0; // > 0 -- energy_log.csv каждые N шагов (только сборка с SPH_ENERGY_LOG)
     // Законы нормальной силы контактов нитей (fiber_contact_law.hpp): -1 -- как в
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
     int fs_contact = -1;
@@ -140,13 +156,19 @@ bool parse_ll(const std::string& s, long long& out)
 
 void print_usage()
 {
-    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled\n"
+    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled\n"
                 "                   (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)\n"
                 "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
-                "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--repeat=N]\n"
+                "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--mu-ff=<μ>] [--mu-fs=<μ>]\n"
+                "                   [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
-                "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n");
+                "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n"
+                "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>]\n"
+                "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
+                "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
+                "  свой и имеют приоритет над --mu независимо от порядка ключей; не заданный из пары берётся из --mu\n"
+                "  (по умолчанию %g).\n", kMuDefault);
 }
 
 // 0 -- разобрано, 1 -- справка, 2 -- ошибка
@@ -226,6 +248,16 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_double(val("--mu="), d) || d < 0.0) return bad("--mu");
             o.mu = d;
         }
+        else if (a.rfind("--mu-ff=", 0) == 0)
+        {
+            if (!parse_double(val("--mu-ff="), d) || d < 0.0) return bad("--mu-ff");
+            o.mu_ff = d;
+        }
+        else if (a.rfind("--mu-fs=", 0) == 0)
+        {
+            if (!parse_double(val("--mu-fs="), d) || d < 0.0) return bad("--mu-fs");
+            o.mu_fs = d;
+        }
         else if (a.rfind("--repeat=", 0) == 0)
         {
             if (!parse_ll(val("--repeat="), n) || n < 1 || n > 100) return bad("--repeat");
@@ -264,6 +296,27 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 3) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
         }
+        else if (a.rfind("--fiber-inelastic=", 0) == 0)
+        {
+            o.fiber_inelastic = val("--fiber-inelastic=");
+            if (o.fiber_inelastic.empty() || !fs::exists(o.fiber_inelastic)) return bad("--fiber-inelastic (файл не найден)");
+            o.fiber_inelastic = fs::absolute(o.fiber_inelastic);
+        }
+        else if (a.rfind("--eps-break=", 0) == 0)
+        {
+            if (!parse_double(val("--eps-break="), d) || !(d > 0.0)) return bad("--eps-break");
+            o.eps_break = d;
+        }
+        else if (a.rfind("--energy-log=", 0) == 0)
+        {
+            if (!parse_ll(val("--energy-log="), n) || n < 1) return bad("--energy-log");
+#ifndef SPH_ENERGY_LOG
+            std::fprintf(stderr, "--energy-log: сборка без SPH_ENERGY_LOG (cmake -DSPH_ENERGY_LOG=ON)\n");
+            return 2;
+#else
+            o.energy_log = static_cast<std::size_t>(n);
+#endif
+        }
         else if (a == "--probe-frame") o.probe_frame = 1;
         else if (a == "--no-probe-frame") o.probe_frame = 0;
         else
@@ -272,7 +325,7 @@ int parse_args(int argc, char** argv, Options& o)
             return 2;
         }
     }
-    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T\n"); return 2; }
+    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T|2T|4T\n"); return 2; }
     if (!o.have_level) { std::fprintf(stderr, "Нужен --level=base|fine|smoke|scaled\n"); return 2; }
     if (o.out.empty()) { std::fprintf(stderr, "Нужен --out=<каталог>\n"); return 2; }
     const int modes = (o.have_v0 ? 1 : 0) + (o.paper_shots ? 1 : 0) + (o.have_list ? 1 : 0);
@@ -364,6 +417,66 @@ std::string kv_get(const KV& kv, const std::string& key)
 
 bool g_first_scene_printed = false;
 
+// Неупругость нити и eps_break (после build_guo_scene). Возвращает пары ключ=значение для shot.txt.
+// Файл директив разбирается штатным load_fiber_file: временный .fib = MATERIAL 0 сцены + директивы файла + заглушка FIBER
+// (парсер требует хотя бы одну нить); plastic/rate/visco/failure копируются во все материалы сцены.
+KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workdir)
+{
+    KV info;
+    if (!opt.fiber_inelastic.empty())
+    {
+        std::ifstream in(opt.fiber_inelastic);
+        if (!in) throw std::runtime_error("не открыть " + opt.fiber_inelastic.string());
+        std::string body, ln;
+        while (std::getline(in, ln))
+        {
+            if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+            const std::size_t k = ln.find_first_not_of(" \t");
+            if (k != std::string::npos && (ln.compare(k, 8, "MATERIAL") == 0 || ln.compare(k, 5, "FIBER") == 0))
+                throw std::runtime_error("--fiber-inelastic: файл должен содержать только директивы PLASTIC/RATE/VISCO/FAILURE "
+                                         "(без MATERIAL/FIBER): " + ln);
+            body += ln + "\n";
+        }
+        const fiber::FiberMaterial& m0 = sc.model.materials.at(0);
+        char buf[512];
+        const fs::path p = workdir / "fiber_inelastic_material.fib";
+        {
+            std::ofstream f(p);
+            std::snprintf(buf, sizeof buf, "MATERIAL 0 %.17g %.17g %.17g %.17g %.17g\n", m0.E, m0.nu, m0.d, m0.rho,
+                          m0.eps_break);
+            f << buf << body << "FIBER 0 2\n0 0 0\n1e-3 0 0\n";
+        }
+        fiber::Model tmp;
+        fiber::load_fiber_file(p.string(), tmp);
+        if (tmp.materials.empty() || !(tmp.materials.at(0).inelastic() || tmp.materials.at(0).has_failure()))
+            throw std::runtime_error("--fiber-inelastic: директивы не включили неупругость/критерий разрыва материала 0");
+        for (fiber::FiberMaterial& m : sc.model.materials)
+        {
+            m.plastic = tmp.materials[0].plastic;
+            m.rate = tmp.materials[0].rate;
+            m.visco = tmp.materials[0].visco;
+            m.failure = tmp.materials[0].failure;
+        }
+        const fiber::FiberMaterial& m = sc.model.materials.at(0);
+        info.emplace_back("fiber_inelastic", opt.fiber_inelastic.filename().string());
+        info.emplace_back("pl_sy", fmtg(m.plastic.sy));
+        info.emplace_back("pl_H", fmtg(m.plastic.H));
+        info.emplace_back("rate_model", std::to_string(static_cast<long long>(m.rate.model)));
+        info.emplace_back("visco_eta", fmtg(m.visco.eta));
+        info.emplace_back("fail_eps_p", fmtg(m.failure.eps_p));
+        info.emplace_back("fail_sigma_u", fmtg(m.failure.sigma_u));
+    }
+    if (opt.eps_break > 0.0)
+    {
+        for (fiber::FiberMaterial& m : sc.model.materials) m.eps_break = opt.eps_break;
+        // l_break лежит в связи: (1 + eps_break) l0, как при загрузке .fib
+        for (fiber::FiberBond& b : sc.model.topology.bonds) b.l_break = (1.0 + opt.eps_break) * b.l0;
+    }
+    info.emplace_back("fiber_eps_break", fmtg(sc.model.materials.at(0).eps_break));
+    info.emplace_back("fiber_E", fmtg(sc.model.materials.at(0).E));
+    return info;
+}
+
 ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& note)
 {
     ShotRecord rec;
@@ -389,6 +502,23 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
+        // Раздельное трение: сцена построена с --mu для обоих; --mu-ff/--mu-fs переопределяют материалы ткани.
+        const double mu_ff = opt.mu_ff >= 0.0 ? opt.mu_ff : opt.mu;
+        const double mu_fs = opt.mu_fs >= 0.0 ? opt.mu_fs : opt.mu;
+        if (sc.has_fabric && (opt.mu_ff >= 0.0 || opt.mu_fs >= 0.0))
+            for (fiber::FiberMaterial& m : sc.model.materials)
+            {
+                m.mu_ff = mu_ff;
+                m.mu_fs = mu_fs;
+            }
+        KV fiber_info;
+        if (sc.has_fabric && (!opt.fiber_inelastic.empty() || opt.eps_break > 0.0))
+        {
+            fiber_info = apply_fiber_overrides(opt, sc, sub);
+            std::printf("[нить] неупругость/eps_break:");
+            for (const auto& kvp : fiber_info) std::printf(" %s=%s", kvp.first.c_str(), kvp.second.c_str());
+            std::printf("\n");
+        }
         if (!g_first_scene_printed)
         {
             g_first_scene_printed = true;
@@ -403,6 +533,10 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         // save_t огромен: после него кадров больше не будет.
         sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);
         sc.cfg.print_step = 1000000000;
+#ifdef SPH_ENERGY_LOG
+        // Лог энергии -- в подкаталог выстрела (CWD), include/energy_log.hpp.
+        sc.cfg.energy_log_every = opt.energy_log;
+#endif
         // cfg.num_threads конвейер не читает (его применяет только main.cpp), поэтому
         // число потоков задаётся напрямую: CpuExecutor берёт omp_get_max_threads().
         if (opt.threads > 0)
@@ -505,6 +639,9 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         add("frames_bytes_total", std::to_string(fz.bytes_sph + fz.bytes_fiber));
         add("frame_sph_bytes", fmtg(frame_sph, 10));
         add("frame_fiber_bytes", fmtg(frame_fiber, 10));
+        for (const auto& kvp : fiber_info) add(kvp.first, kvp.second);
+        add("mu_ff", fmtg(mu_ff));
+        add("mu_fs", fmtg(mu_fs));
         {
             std::ofstream outf(sub / "shot.txt");
             outf << line << "\n";
@@ -621,6 +758,9 @@ void write_vbl(const Options& opt, const std::vector<ShotRecord>& recs, std::FIL
                          !v.has_p ? "нет пробитых выстрелов"
                          : !v.has_n ? "нет непробитых выстрелов"
                                     : "нет пробитых выстрелов в пределах 15 м/с над наибольшей «н»");
+        // 2T/4T: V_BL и e_BL статьи (ТЗ 2T/4T §4.5); для остальных конфигураций формат vbl.txt прежний
+        if (opt.config == Config::T2 || opt.config == Config::T4)
+            std::fprintf(f, "V_BL статьи = %.0f м/с, e_BL статьи = %.1f Дж\n", pv.value, paper_e_bl(opt.config));
     };
     std::FILE* f = std::fopen((fs::absolute(opt.out) / "vbl.txt").string().c_str(), "w");
     if (f)
@@ -821,6 +961,29 @@ int main(int argc, char** argv)
     std::printf("\n=== Итог: %s %s ===\n", config_name(opt.config), level_name(opt.level));
     write_shots_csv(opt, recs);
     write_vbl(opt, recs, stdout);
+    // Послойные разрывы последнего пробивного выстрела (ТЗ 2T/4T §4.5), только для пакета из >= 2 слоёв
+    if (fabric_plies(opt.config) >= 2)
+    {
+        const ShotRecord* last = nullptr;
+        for (const auto& s : recs)
+            if (s.ok && s.outcome == Outcome::Perforated) last = &s;
+        if (!last)
+            std::printf("\nПослойные разрывы: пробивных выстрелов в серии нет\n");
+        else
+        {
+            const int np = std::atoi(kv_get(last->kv, "n_plies").c_str());
+            std::printf("\nПослойные разрывы последнего пробивного выстрела (V0=%.1f м/с, r=%d; слой 1 -- лицевой):\n", last->V0,
+                        last->rep);
+            for (int k = 1; k <= np; ++k)
+            {
+                const std::string q = "_p" + std::to_string(k);
+                std::printf("  слой %d: порвано вдоль y (зажатые) %s, вдоль x (свободные) %s, t_первого разрыва %s с, прогиб "
+                            "слоя при нём %s м\n",
+                            k, kv_get(last->kv, "n_broken_v" + q).c_str(), kv_get(last->kv, "n_broken_h" + q).c_str(),
+                            kv_get(last->kv, "t_first_break" + q).c_str(), kv_get(last->kv, "w_f_at_first_break" + q).c_str());
+            }
+        }
+    }
     std::printf("shots.csv и vbl.txt: %s\n", fs::absolute(opt.out).string().c_str());
     if (n_err > 0) std::printf("ВНИМАНИЕ: выстрелов с исключением: %d\n", n_err);
     return 0;

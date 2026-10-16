@@ -34,6 +34,18 @@
 //       Несколько директив объединяются по «или». Может появиться в файле
 //       в любом месте (до/после блоков FIBER).
 //
+//   - Неупругость связи (fiber/fiber-plasticity-design.md, раздел 6; все
+//     директивы необязательны, ключи КЛЮЧ=значение в любом порядке, регистр
+//     ключей не важен; могут стоять до или после MATERIAL/FIBER, материал с
+//     этим id должен быть объявлен где-нибудь в файле):
+//       PLASTIC <id> SY=.. [H=..] | SY=.. K=.. N=..
+//       PLASTIC_TABLE <id> <N>  + N строк "eps_p sigma_s" (eps_p от 0, строго
+//                               возрастает; sigma_s > 0, не убывает)
+//       RATE <id> CS C=.. P=.. | JC C=.. EDOT0=.. | PERZYNA ETA=.. M=..
+//       VISCO <id> [ETA=..] [XI=..] [E1=.. TAU=..]
+//       FAILURE <id> [EPS_P=..] [SIGMA_U=..]
+//     Правила и диапазоны -- docs/03-reference/file-formats/fib-file.md.
+//
 // Пример:
 //   # Нить из капрона, две прямые ломаные по 3 и 2 точки, концы закреплены
 //   MATERIAL 0 2.0e9 0.35 1.0e-4 1140.0 0.02
@@ -56,15 +68,18 @@
 //   A = pi*d^2/4, для концевой бусины берётся только один прилежащий
 //   сегмент (второе слагаемое отсутствует, а не делится пополам дважды).
 #include "fiber/fiber_input.hpp"
-#include "fiber/fiber_build.hpp"
 
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <fstream>
+#include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
 
+#include "fiber/fiber_build.hpp"
 #include "interactions/clamp.hpp"
 #include "param.hpp"
 #include "rhs/cpu_executor.hpp"
@@ -83,6 +98,313 @@ bool strip_comment_nonblank(std::string& line)
     if (hash != std::string::npos) line.erase(hash);
     const std::size_t b = line.find_first_not_of(" \t\r\n");
     return b != std::string::npos;
+}
+
+// ----------------------------------------------------------------------
+// Директивы неупругости связи (fiber/fiber-plasticity-design.md, раздел 6):
+// PLASTIC, PLASTIC_TABLE, RATE, VISCO, FAILURE. Разбираются в промежуточную
+// структуру по id материала и применяются к материалам ПОСЛЕ чтения всего
+// файла (директива может стоять и до, и после MATERIAL/FIBER; повторный
+// MATERIAL с тем же id не затирает неупругие параметры).
+// ----------------------------------------------------------------------
+struct PendingInelastic
+{
+    std::size_t line_plastic = 0; // номер строки директивы; 0 = не было
+    std::size_t line_table = 0;
+    std::size_t line_rate = 0;
+    std::size_t line_visco = 0;
+    std::size_t line_failure = 0;
+    std::size_t first_line = 0; // строка первой директивы (для ошибки "нет материала")
+    PlasticParams plastic{};
+    RateParams rate{};
+    ViscoParams visco{};
+    FailureParams failure{};
+};
+
+[[noreturn]] void inelastic_fail(const char* dir, std::size_t line_no, const std::string& msg)
+{
+    throw std::runtime_error(std::string("fiber::load_fiber_file: ") + dir + ": " + msg + " в строке " +
+                             std::to_string(line_no));
+}
+
+std::string upper_copy(std::string s)
+{
+    for (char& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// Целое число из токена целиком.
+bool parse_whole_ll(const std::string& tok, long long& v)
+{
+    std::istringstream t(tok);
+    return static_cast<bool>(t >> v) && (t >> std::ws).eof();
+}
+
+// Конечное double из токена целиком (поток с классической локалью).
+bool parse_whole_double(const std::string& tok, double& v)
+{
+    std::istringstream t(tok);
+    return static_cast<bool>(t >> v) && (t >> std::ws).eof() && std::isfinite(v);
+}
+
+// Читает id материала (целое >= 0) из потока.
+std::size_t read_material_id(std::istringstream& iss, const char* dir, std::size_t line_no)
+{
+    std::string tok;
+    long long id = -1;
+    if (!(iss >> tok) || !parse_whole_ll(tok, id) || id < 0)
+        inelastic_fail(dir, line_no, "ожидался id материала (целое >= 0)");
+    return static_cast<std::size_t>(id);
+}
+
+using KeyValues = std::map<std::string, double>;
+
+// Читает до конца строки токены КЛЮЧ=значение (ключ без учёта регистра).
+// Неизвестный ключ, повтор, токен без '=', нечисловое/неконечное значение --
+// std::runtime_error.
+KeyValues read_key_values(std::istringstream& iss, const char* dir, std::size_t line_no,
+                          const std::vector<std::string>& allowed)
+{
+    KeyValues kv;
+    std::string tok;
+    while (iss >> tok)
+    {
+        const std::size_t eq = tok.find('=');
+        if (eq == std::string::npos || eq == 0 || eq + 1 == tok.size())
+            inelastic_fail(dir, line_no, "ожидалось КЛЮЧ=значение, получено '" + tok + "'");
+        const std::string key = upper_copy(tok.substr(0, eq));
+        bool ok = false;
+        for (const auto& a : allowed) ok = ok || (a == key);
+        if (!ok) inelastic_fail(dir, line_no, "неизвестный ключ '" + key + "'");
+        double v = 0.0;
+        if (!parse_whole_double(tok.substr(eq + 1), v))
+            inelastic_fail(dir, line_no,
+                           "значение ключа " + key + " не конечное число: '" + tok.substr(eq + 1) + "'");
+        if (!kv.emplace(key, v).second) inelastic_fail(dir, line_no, "ключ " + key + " повторяется");
+    }
+    return kv;
+}
+
+double require_key(const KeyValues& kv, const char* key, const char* dir, std::size_t line_no)
+{
+    const auto it = kv.find(key);
+    if (it == kv.end()) inelastic_fail(dir, line_no, std::string("не задан обязательный ключ ") + key);
+    return it->second;
+}
+
+bool opt_key(const KeyValues& kv, const char* key, double& v)
+{
+    const auto it = kv.find(key);
+    if (it == kv.end()) return false;
+    v = it->second;
+    return true;
+}
+
+std::string repeat_msg(std::size_t first_line)
+{
+    return "повторная директива для этого материала (первая в строке " + std::to_string(first_line) + ")";
+}
+
+void parse_plastic_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
+{
+    static const char* dir = "PLASTIC";
+    const KeyValues kv = read_key_values(iss, dir, line_no, {"SY", "H", "K", "N"});
+    if (pi.line_plastic) inelastic_fail(dir, line_no, repeat_msg(pi.line_plastic));
+    if (pi.line_table) inelastic_fail(dir, line_no, "PLASTIC и PLASTIC_TABLE для одного материала несовместимы");
+    const double sy = require_key(kv, "SY", dir, line_no);
+    if (!(sy > 0.0)) inelastic_fail(dir, line_no, "SY должен быть > 0");
+    double H = 0.0, K = 0.0, n = 1.0;
+    const bool hasH = opt_key(kv, "H", H);
+    const bool hasK = opt_key(kv, "K", K);
+    const bool hasN = opt_key(kv, "N", n);
+    if (hasH && (hasK || hasN)) inelastic_fail(dir, line_no, "линейное (H) и степенное (K, N) упрочнение несовместимы");
+    if (hasK != hasN) inelastic_fail(dir, line_no, "степенное упрочнение требует оба ключа K и N");
+    if (hasH && !(H >= 0.0)) inelastic_fail(dir, line_no, "H должен быть >= 0");
+    PlasticParams p;
+    p.sy = sy;
+    if (hasK)
+    {
+        if (!(K >= 0.0)) inelastic_fail(dir, line_no, "K должен быть >= 0");
+        if (!(n > 0.0 && n <= 1.0)) inelastic_fail(dir, line_no, "N должен быть в (0, 1]");
+        p.type = HardeningType::Power;
+        p.K = K;
+        p.n = n;
+    }
+    else
+    {
+        p.type = HardeningType::Linear;
+        p.H = H;
+    }
+    pi.plastic = p;
+    pi.line_plastic = line_no;
+}
+
+void parse_plastic_table_directive(std::istringstream& iss, std::ifstream& in, std::size_t& line_no,
+                                   PendingInelastic& pi)
+{
+    static const char* dir = "PLASTIC_TABLE";
+    const std::size_t head_line = line_no;
+    std::string tok;
+    long long cnt = 0;
+    if (!(iss >> tok) || !parse_whole_ll(tok, cnt)) inelastic_fail(dir, head_line, "ожидалось число строк таблицы N");
+    if (cnt < 2) inelastic_fail(dir, head_line, "число строк таблицы должно быть >= 2");
+    if (iss >> tok) inelastic_fail(dir, head_line, "лишний токен '" + tok + "' после числа строк");
+    if (pi.line_table) inelastic_fail(dir, head_line, repeat_msg(pi.line_table));
+    if (pi.line_plastic) inelastic_fail(dir, head_line, "PLASTIC и PLASTIC_TABLE для одного материала несовместимы");
+
+    PlasticParams p;
+    p.type = HardeningType::Table;
+    std::string line;
+    for (long long r = 0; r < cnt; ++r)
+    {
+        bool got = false;
+        while (std::getline(in, line))
+        {
+            ++line_no;
+            if (strip_comment_nonblank(line))
+            {
+                got = true;
+                break;
+            }
+        }
+        if (!got)
+            inelastic_fail(dir, line_no,
+                           "неожиданный конец файла: ожидалось " + std::to_string(cnt) + " строк таблицы, прочитано " +
+                               std::to_string(r));
+        std::istringstream row(line);
+        std::string a, b, extra;
+        double e = 0.0, s = 0.0;
+        if (!(row >> a >> b) || !parse_whole_double(a, e) || !parse_whole_double(b, s))
+            inelastic_fail(dir, line_no,
+                           "строка таблицы " + std::to_string(r + 1) + " из " + std::to_string(cnt) +
+                               ": ожидалось 'eps_p sigma_s'");
+        if (row >> extra) inelastic_fail(dir, line_no, "лишний токен '" + extra + "' в строке таблицы");
+        if (r == 0 && e != 0.0) inelastic_fail(dir, line_no, "первая точка таблицы должна иметь eps_p = 0");
+        if (!(s > 0.0)) inelastic_fail(dir, line_no, "sigma_s должен быть > 0");
+        if (r > 0)
+        {
+            if (!(e > p.table_eps.back())) inelastic_fail(dir, line_no, "eps_p должен строго возрастать");
+            if (!(s >= p.table_sigma.back())) inelastic_fail(dir, line_no, "sigma_s не должен убывать");
+        }
+        p.table_eps.push_back(e);
+        p.table_sigma.push_back(s);
+    }
+    p.sy = p.table_sigma.front();
+    pi.plastic = p;
+    pi.line_table = head_line;
+}
+
+void parse_rate_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
+{
+    static const char* dir = "RATE";
+    std::string model_tok;
+    if (!(iss >> model_tok)) inelastic_fail(dir, line_no, "ожидалась модель CS, JC или PERZYNA");
+    const std::string model = upper_copy(model_tok);
+    RateParams r;
+    if (model == "CS")
+    {
+        const KeyValues kv = read_key_values(iss, dir, line_no, {"C", "P"});
+        r.model = RateModel::CowperSymonds;
+        r.a = require_key(kv, "C", dir, line_no);
+        r.b = require_key(kv, "P", dir, line_no);
+        if (!(r.a > 0.0)) inelastic_fail(dir, line_no, "C должен быть > 0");
+        if (!(r.b >= 1.0)) inelastic_fail(dir, line_no, "P должен быть >= 1");
+    }
+    else if (model == "JC")
+    {
+        const KeyValues kv = read_key_values(iss, dir, line_no, {"C", "EDOT0"});
+        r.model = RateModel::JohnsonCook;
+        r.a = require_key(kv, "C", dir, line_no);
+        r.b = require_key(kv, "EDOT0", dir, line_no);
+        if (!(r.a > 0.0)) inelastic_fail(dir, line_no, "C должен быть > 0");
+        if (!(r.b > 0.0)) inelastic_fail(dir, line_no, "EDOT0 должен быть > 0");
+    }
+    else if (model == "PERZYNA")
+    {
+        const KeyValues kv = read_key_values(iss, dir, line_no, {"ETA", "M"});
+        r.model = RateModel::Perzyna;
+        r.a = require_key(kv, "ETA", dir, line_no);
+        r.b = require_key(kv, "M", dir, line_no);
+        if (!(r.a > 0.0)) inelastic_fail(dir, line_no, "ETA должен быть > 0");
+        if (!(r.b > 0.0)) inelastic_fail(dir, line_no, "M должен быть > 0");
+    }
+    else
+    {
+        inelastic_fail(dir, line_no, "неизвестная модель '" + model_tok + "' (допустимы CS, JC, PERZYNA)");
+    }
+    if (pi.line_rate) inelastic_fail(dir, line_no, repeat_msg(pi.line_rate));
+    pi.rate = r;
+    pi.line_rate = line_no;
+}
+
+void parse_visco_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
+{
+    static const char* dir = "VISCO";
+    const KeyValues kv = read_key_values(iss, dir, line_no, {"ETA", "XI", "E1", "TAU"});
+    if (kv.empty()) inelastic_fail(dir, line_no, "не задан ни один ключ (ETA, XI, E1, TAU)");
+    if (pi.line_visco) inelastic_fail(dir, line_no, repeat_msg(pi.line_visco));
+    ViscoParams v;
+    const bool hasEta = opt_key(kv, "ETA", v.eta);
+    const bool hasXi = opt_key(kv, "XI", v.xi);
+    const bool hasE1 = opt_key(kv, "E1", v.E1);
+    const bool hasTau = opt_key(kv, "TAU", v.tau);
+    if (hasEta && !(v.eta >= 0.0)) inelastic_fail(dir, line_no, "ETA должен быть >= 0");
+    if (hasXi && !(v.xi >= 0.0)) inelastic_fail(dir, line_no, "XI должен быть >= 0");
+    if (hasE1 && !(v.E1 >= 0.0)) inelastic_fail(dir, line_no, "E1 должен быть >= 0");
+    if (hasTau && !(v.tau > 0.0)) inelastic_fail(dir, line_no, "TAU должен быть > 0");
+    if (v.eta > 0.0 && v.xi > 0.0) inelastic_fail(dir, line_no, "ETA и XI одновременно задавать нельзя (выберите одно)");
+    if (v.E1 > 0.0 && !hasTau) inelastic_fail(dir, line_no, "E1 > 0 требует TAU");
+    if (hasTau && !(v.E1 > 0.0)) inelastic_fail(dir, line_no, "TAU задан без E1 > 0");
+    pi.visco = v;
+    pi.line_visco = line_no;
+}
+
+void parse_failure_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
+{
+    static const char* dir = "FAILURE";
+    const KeyValues kv = read_key_values(iss, dir, line_no, {"EPS_P", "SIGMA_U"});
+    if (kv.empty()) inelastic_fail(dir, line_no, "не задан ни один ключ (EPS_P, SIGMA_U)");
+    if (pi.line_failure) inelastic_fail(dir, line_no, repeat_msg(pi.line_failure));
+    FailureParams f;
+    if (opt_key(kv, "EPS_P", f.eps_p) && !(f.eps_p > 0.0)) inelastic_fail(dir, line_no, "EPS_P должен быть > 0");
+    if (opt_key(kv, "SIGMA_U", f.sigma_u) && !(f.sigma_u > 0.0))
+        inelastic_fail(dir, line_no, "SIGMA_U должен быть > 0");
+    pi.failure = f;
+    pi.line_failure = line_no;
+}
+
+// Проверки "после всего файла" и перенос параметров в материалы.
+void apply_inelastic(const std::map<std::size_t, PendingInelastic>& pending, std::vector<FiberMaterial>& materials,
+                     const std::vector<char>& material_defined)
+{
+    for (const auto& entry : pending)
+    {
+        const std::size_t id = entry.first;
+        const PendingInelastic& pi = entry.second;
+        if (id >= materials.size() || !material_defined[id])
+        {
+            throw std::runtime_error("fiber::load_fiber_file: директива неупругости (строка " +
+                                     std::to_string(pi.first_line) + ") ссылается на неопределённый материал " +
+                                     std::to_string(id));
+        }
+        if (pi.line_rate && !pi.line_plastic && !pi.line_table)
+        {
+            throw std::runtime_error("fiber::load_fiber_file: RATE (строка " + std::to_string(pi.line_rate) +
+                                     ") для материала " + std::to_string(id) + " требует PLASTIC или PLASTIC_TABLE");
+        }
+        // FAILURE EPS_P проверяет eps_p связи; без PLASTIC/PLASTIC_TABLE eps_p == 0
+        // и критерий никогда не сработает. Это не ошибка -- только предупреждение.
+        if (pi.line_failure && pi.failure.eps_p > 0.0 && !pi.line_plastic && !pi.line_table)
+        {
+            std::cerr << "Предупреждение: FAILURE EPS_P (строка " << pi.line_failure << ") для материала "
+                      << id << " задан без PLASTIC/PLASTIC_TABLE: критерий EPS_P никогда не сработает\n";
+        }
+        FiberMaterial& m = materials[id];
+        if (pi.line_plastic || pi.line_table) m.plastic = pi.plastic;
+        if (pi.line_rate) m.rate = pi.rate;
+        if (pi.line_visco) m.visco = pi.visco;
+        if (pi.line_failure) m.failure = pi.failure;
+    }
 }
 
 } // namespace
@@ -265,6 +587,7 @@ void load_fiber_file(const std::string& filename, Model& model)
     std::vector<char> material_defined;
     std::vector<PolylineSpec> fibers;
     std::vector<ClampBoxSpec> boxes;
+    std::map<std::size_t, PendingInelastic> pending; // PLASTIC/RATE/VISCO/FAILURE по id
 
     std::string line;
     std::size_t line_no = 0;
@@ -322,6 +645,17 @@ void load_fiber_file(const std::string& filename, Model& model)
                 rf.points.push_back(pt);
             }
             fibers.push_back(std::move(rf));
+        }
+        else if (kw == "PLASTIC" || kw == "PLASTIC_TABLE" || kw == "RATE" || kw == "VISCO" || kw == "FAILURE")
+        {
+            const std::size_t mid = read_material_id(iss, kw.c_str(), line_no);
+            PendingInelastic& pi = pending[mid];
+            if (pi.first_line == 0) pi.first_line = line_no;
+            if (kw == "PLASTIC") parse_plastic_directive(iss, line_no, pi);
+            else if (kw == "PLASTIC_TABLE") parse_plastic_table_directive(iss, in, line_no, pi);
+            else if (kw == "RATE") parse_rate_directive(iss, line_no, pi);
+            else if (kw == "VISCO") parse_visco_directive(iss, line_no, pi);
+            else parse_failure_directive(iss, line_no, pi);
         }
         else if (kw == "CLAMP_BOX")
         {
@@ -428,6 +762,8 @@ void load_fiber_file(const std::string& filename, Model& model)
     {
         throw std::runtime_error("fiber::load_fiber_file: файл '" + filename + "' не содержит ни одной нити (FIBER)");
     }
+
+    apply_inelastic(pending, materials, material_defined);
 
     build_model_from_polylines(fibers, materials, boxes, model);
 }
