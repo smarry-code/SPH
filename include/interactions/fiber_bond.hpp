@@ -140,6 +140,17 @@ inline std::vector<fiber::FiberDelta> compute_fiber_bond(
     return output;
 }
 
+// Член минимума compute_fiber_bond_dt_limit для одной связи: 0.8/sqrt(k_eff/m_red),
+// k_eff = E*A/l0, m_red = m_i*m_j/(m_i+m_j). Общий с dt_ref нити в законах
+// контакта (interactions/fiber_contact_law.hpp, compute_fiber_bead_dt_ref).
+inline double fiber_bond_pair_dt(const fiber::FiberMaterial& mat, double l0, double mi, double mj)
+{
+    const double A = fiber_cross_section_area(mat);
+    const double k_eff = mat.E * A / l0;
+    const double m_red = (mi * mj) / (mi + mj);
+    return 0.8 / std::sqrt(k_eff / m_red);
+}
+
 // ----------------------------------------------------------------------
 // compute_fiber_bond_dt_limit — dt_limit связей (fiber/SPH.md, "Шаг по
 // времени"; fiber/PLAN.md §3.7):
@@ -164,12 +175,7 @@ inline double compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fi
         [&](std::size_t k) -> double {
             const fiber::FiberBond& b = topology.bonds[k];
             const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
-            const double A = fiber_cross_section_area(mat);
-            const double k_eff = mat.E * A / b.l0;
-            const double mi = state.mass[b.i];
-            const double mj = state.mass[b.j];
-            const double m_red = (mi * mj) / (mi + mj);
-            return 0.8 / std::sqrt(k_eff / m_red);
+            return fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
         },
         [](double a, double b2) { return std::min(a, b2); });
 }

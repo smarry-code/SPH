@@ -41,6 +41,16 @@ contact_force_type = 1
 * (у BC6 ключ закомментирован по той же причине: на результат не влияет).
 contact_penalty_scale = 1.0
 
+* --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы нормальной силы») ---
+* 0 = Герц (по умолчанию), НЕ «выключено» (в отличие от contact_force_type);
+* 1 - пинбол, 2 - Свигл, 3 - импульсный. Kp - типы 1-2, gamma - тип 3, (0; 1.6].
+* fiber_solid_contact_type = 0
+* fiber_solid_contact_penalty_scale = 1.0
+* fiber_solid_contact_impulse_gamma = 1.0
+* fiber_fiber_contact_type = 0
+* fiber_fiber_contact_penalty_scale = 1.0
+* fiber_fiber_contact_impulse_gamma = 1.0
+
 * Решатель по времени: 0 = предиктор-корректор (PC).
 ode_solver = 0
 

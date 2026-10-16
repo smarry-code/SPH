@@ -148,6 +148,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // Поиск Fiber-Solid-Contact текущего шага: primitives читаются dt_limit,
     // рядом живёт рабочая память поиска (индекс, пары, копии координат).
     interactions::FiberSolidContactSearchResult fiber_solid_search;
+    // Законы нормальной силы контактов нитей (interactions/fiber_contact_law.hpp):
+    // 0 = Герц (прежний путь); dt_bead нужен только при типе != 0.
+    const interactions::FiberContactLaw fiber_solid_law{cfg.fiber_solid_contact_type,
+                                                        cfg.fiber_solid_contact_penalty_scale,
+                                                        cfg.fiber_solid_contact_impulse_gamma};
+    const bool fiber_need_bead_dt_ref = interactions::fiber_contact_law_is_penalty(fiber_solid_law);
+    std::vector<double> fiber_bead_dt_ref;
 
     // Файл мониторинга открывается ОДИН раз (дозапись; до цикла log.txt уже
     // содержит строки main.cpp/input.cpp); std::endl сбрасывает буфер каждый шаг.
@@ -222,6 +229,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         {
             interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers,
                                              fiber_bond_delta, fiber_reduce_scratch);
+            if (fiber_need_bead_dt_ref)
+                interactions::compute_fiber_bead_dt_ref(fb, topology, materials, fiber_bead_dt_ref);
 
             interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search);
             // Только нормальная сила; заполняет слоты трения friction_contacts.
@@ -248,10 +257,18 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             // (interactions/fiber_solid_contact.hpp, шапка файла, решения 1-6).
             // Вклад в Fiber складывается с Fiber-Bond/Fiber-Fiber-Contact в тот
             // же dv, как и они между собой.
+            // dt здесь ещё шаг ПРОШЛОГО цикла (новый считается после RHS) --
+            // тип 3 строит силу по нему, как Solid-Solid.
+            interactions::FiberContactStepParams fiber_solid_params;
+            fiber_solid_params.law = fiber_solid_law;
+            fiber_solid_params.dt_prev = dt;
+            fiber_solid_params.cfg = &cfg;
+            fiber_solid_params.bead_dt_ref = &fiber_bead_dt_ref;
+            fiber_solid_params.pair_dt_limit = &fiber_solid_search.pair_dt_limit;
             has_active_solid_friction_contacts = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
                 fiber_solid_solid_buffers, fiber_solid_search, fiber_solid_fiber_delta, fiber_solid_solid_delta,
-                fiber_reduce_scratch, &friction_solid_contacts);
+                fiber_reduce_scratch, &friction_solid_contacts, fiber_solid_params);
 
             for (size_t d = 0; d < dim; ++d)
                 for (size_t i = 0; i < nfiber; ++i)
@@ -261,7 +278,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                     solver.solid_rhs.dvx[d][i] += fiber_solid_solid_delta[i].dv[d];
 
             const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
-                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives);
+                fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives, fiber_solid_params);
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
         }
 

@@ -75,6 +75,38 @@ static double parse_k_positive(const char* key, const std::string& value)
     }
     return v;
 }
+// Закон нормальной силы контакта нитей (fiber_*_contact_type): 0..3,
+// 0 = Герц (НЕ «выключено», в отличие от contact_force_type). Вне диапазона
+// -- сообщение и откат к 0.
+static int parse_fiber_contact_type(const std::string& key, const std::string& value)
+{
+    const int v = std::stoi(value);
+    if (v < 0 || v > 3)
+    {
+        std::cerr << key << " вне диапазона 0..3: " << v << ", откат к 0 (Герц)\n";
+        return 0;
+    }
+    return v;
+}
+
+// gamma типа 3 контакта нитей: те же границы и сообщения, что у
+// contact_impulse_gamma.
+static double parse_fiber_contact_gamma(const std::string& key, const std::string& value)
+{
+    const double v = std::stod(value);
+    if (!(v > 0.0))
+    {
+        std::cerr << key << " = " << v << " <= 0: тип 3 фактически выключен\n";
+    }
+    else if (v > 1.6)
+    {
+        std::cerr << key << " = " << v
+                  << " > 1.6: включается ограничитель шага контакта,"
+                     " возможен коллапс dt\n";
+    }
+    return v;
+}
+
 void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 {
     std::ifstream in(filename);
@@ -200,6 +232,30 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             }
             cfg.contact_impulse_gamma = v;
         }
+        else if (key == "fiber_solid_contact_type")
+        {
+            cfg.fiber_solid_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_solid_contact_penalty_scale")
+        {
+            cfg.fiber_solid_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_solid_contact_impulse_gamma")
+        {
+            cfg.fiber_solid_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
+        else if (key == "fiber_fiber_contact_type")
+        {
+            cfg.fiber_fiber_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_fiber_contact_penalty_scale")
+        {
+            cfg.fiber_fiber_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_gamma")
+        {
+            cfg.fiber_fiber_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
         else if (key == "ode_solver")
         {
             const int v = std::stoi(value);
@@ -299,6 +355,14 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         }
     }
     in.close();
+    // Этап 1 (fiber/plan-fiber-contact-types.md): законы 1-3 подключены только
+    // к Fiber-Solid.
+    if (cfg.fiber_fiber_contact_type != 0)
+    {
+        std::cerr << "Fiber-Fiber: тип " << cfg.fiber_fiber_contact_type
+                  << " пока не реализован, используется Герц\n";
+        cfg.fiber_fiber_contact_type = 0;
+    }
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)

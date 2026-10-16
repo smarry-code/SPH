@@ -49,6 +49,17 @@ struct SimulationConfig
     // меньше — оставлять паре (1-gamma)*pdot. Рабочий диапазон (0; 1.6].
     double contact_impulse_gamma = 1.0;
 
+    // --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы
+    //     нормальной силы»; include/interactions/fiber_contact_law.hpp) ---
+    // 0 = ГЕРЦ (прежнее поведение), НЕ «выключено» -- в отличие от
+    // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный.
+    int    fiber_solid_contact_type          = 0;   // Fiber-Solid; 0 = Герц, не выключено
+    int    fiber_fiber_contact_type          = 0;   // Fiber-Fiber; 0 = Герц, не выключено
+    double fiber_solid_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_solid_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    double fiber_fiber_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_fiber_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+
     // --- Изоляция SPH-сумм Solid по телам ---
     // При true SPH-пары реальных частиц разных тел (sys.body) отвергаются;
     // тела взаимодействуют только через Solid-Solid-Contact
@@ -113,6 +124,9 @@ inline void SimulationConfig::apply_defaults()
     ode_solver = 0;
     sph_same_body_only = false;
     contact_force_type = 0;  contact_penalty_scale = 1.0;  contact_impulse_gamma = 1.0;
+    // Контакты нитей: 0 = Герц (не «выключено»).
+    fiber_solid_contact_type = 0;  fiber_solid_contact_penalty_scale = 1.0;  fiber_solid_contact_impulse_gamma = 1.0;
+    fiber_fiber_contact_type = 0;  fiber_fiber_contact_penalty_scale = 1.0;  fiber_fiber_contact_impulse_gamma = 1.0;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;
