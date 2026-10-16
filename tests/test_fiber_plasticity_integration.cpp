@@ -697,6 +697,16 @@ void test_t9_dt_limit()
         const double got_e1 = interactions::compute_fiber_bond_dt_limit(exec, c.state, c.topology, c.materials);
         const double want_e1 = 0.8 / std::sqrt((4.0 * E) * A / l0 / (m / 2.0));
         check(std::fabs(got_e1 / want_e1 - 1.0) < 1.0e-14, "E_inst = E + E1 в лимите шага");
+        { // материал twaron_plastic_visco_rate.fib: E1 = 0.1 E, tau, xi = 0.05 => лимит в sqrt(E/(E+E1)) раз меньше упругого
+            fiber::FiberMaterial mv = make_material(E, d, rho);
+            mv.visco.E1 = 0.1 * E;
+            mv.visco.tau = 20.0e-6;
+            mv.visco.xi = 0.05;
+            c.materials[0] = mv;
+            const double got_v = interactions::compute_fiber_bond_dt_limit(exec, c.state, c.topology, c.materials);
+            const double want_v = 0.8 / omega * std::sqrt(E / (1.1 * E));
+            check(std::fabs(got_v / want_v - 1.0) < 1.0e-12, "E1 = 0.1E, xi = 0.05: лимит = упругий * sqrt(E/(E+E1)) = 0.9535 (Кельвин не ослабляет)");
+        }
         fiber::FiberMaterial mp = make_material(E, d, rho);
         mp.plastic.sy = 1.0e7;
         c.materials[0] = mp;
@@ -1243,7 +1253,7 @@ void test_full_loop()
 
 // ----------------------------------------------------------------------
 // Т14. Критерии разрыва (раздел 7 дизайна): ε > eps_break (прежний), ε_p >=
-// FAILURE.EPS_P, σ_ep = E(ε - ε_p) >= FAILURE.SIGMA_U -- по КОНЕЧНОМУ состоянию
+// FAILURE.EPS_P, σ_full = E(ε - ε_p) + q >= FAILURE.SIGMA_U -- по КОНЕЧНОМУ состоянию
 // шага (после apply_fiber_bond_constitutive). Цепочка из 4 бусин (3 связи):
 // бусина 0 закреплена, бусина 3 тянется с постоянной скоростью; материал связи
 // k -- материал бусины k (связь 0 -- "слабая", связи 1, 2 -- уцелевшие).
@@ -1362,7 +1372,7 @@ void test_t14_failure_criteria()
         weak.failure.sigma_u = 70.0e6;
         run_t14("Т14b: разрыв по FAILURE.SIGMA_U (с пластикой)", {weak, strong},
                 [](const fiber::FiberBond& b, const fiber::FiberMaterial& m, double eps) {
-                    return m.failure.sigma_u > 0.0 && m.E * (eps - b.st.eps_p) >= m.failure.sigma_u;
+                    return m.failure.sigma_u > 0.0 && m.E * (eps - b.st.eps_p) + b.st.q >= m.failure.sigma_u;
                 },
                 Reason::Stress, true);
     }
@@ -1534,6 +1544,34 @@ void test_break_unit_cases()
         const auto above = run(4.01e7); // порог чуть выше 4.0e7 -- не рвётся
         check(below.size() == 1 && below[0].reason == R::Stress, "SIGMA_U = 3.99e7 < 4.0e7: рвётся, reason = Stress");
         check(above.empty(), "SIGMA_U = 4.01e7 > 4.0e7: не рвётся");
+    }
+
+    std::printf("Unit (f): SIGMA_U по полному напряжению E(eps - eps_p) + q, q != 0:\n");
+    {
+        // E = 2e9, eps = 0.03, eps_p = 0.01 => E(eps - eps_p) = 4.0e7; q = 1.0e7 (ветвь Максвелла)
+        // => sigma_full = 5.0e7 Па (на бумаге). Кельвин (eta*eps_dot) в критерий не входит.
+        const double eps_p = 0.01, q = 1.0e7;
+        auto run = [&](double sigma_u, double E1, double qv, double eta) {
+            fiber::FiberMaterial m = t14_plastic(60.0e6);
+            m.failure.eps_p = 0.5;
+            m.visco.E1 = E1;
+            m.visco.eta = eta;
+            m.failure.sigma_u = sigma_u;
+            Chain c = manual_chain({0.0, 1.03 * l0}, l0, {m}, 1.5);
+            c.topology.bonds[0].st.eps_p = eps_p;
+            c.topology.bonds[0].st.q = qv;
+            c.topology.bonds[0].st.eps_prev = 0.0; // большой "eps_dot" -- не должен влиять
+            return find_with_threads(c, 1);
+        };
+        const auto below = run(4.99e7, 0.5e9, q, 0.0); // чуть ниже 4.0e7 + 1.0e7 -- рвётся
+        const auto above = run(5.01e7, 0.5e9, q, 0.0); // чуть выше -- не рвётся
+        check(below.size() == 1 && below[0].reason == R::Stress, "SIGMA_U = 4.99e7 < E(eps-eps_p)+q = 5.0e7: рвётся, reason = Stress");
+        check(above.empty(), "SIGMA_U = 5.01e7 > 5.0e7: не рвётся");
+        check(run(4.5e7, 0.5e9, q, 0.0).size() == 1, "SIGMA_U = 4.5e7: с q рвётся (без q: 4.0e7 < 4.5e7 не рвалась бы)");
+        check(run(4.5e7, 0.5e9, 0.0, 0.0).empty(), "q = 0 (Максвелл не нагружен): прежнее поведение, 4.0e7 < 4.5e7 не рвётся");
+        check(run(4.5e7, 0.0, 0.0, 0.0).empty() && run(3.99e7, 0.0, 0.0, 0.0).size() == 1,
+              "без Максвелла (E1 = 0, q = 0): прежнее поведение E(eps-eps_p) vs SIGMA_U");
+        check(run(5.01e7, 0.5e9, q, 1.0e3).empty(), "член Кельвина (eta > 0) в критерий не входит");
     }
 }
 

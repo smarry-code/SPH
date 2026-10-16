@@ -222,6 +222,9 @@ class PredictorCorrectorSolver
 public:
     SolidRhsBuffers solid_rhs;
     FiberRhsBuffers fiber_rhs;
+#ifdef SPH_ENERGY_LOG
+    double* u_clamp_acc = nullptr; // накопитель энергии, внесённой обрезкой u>=0 (SPH_ENERGY_LOG)
+#endif
 
     // nbuf -- размер Solid RHS-буферов (>= ntotal, покрывает виртуальные
     // частицы, как раньше: max(cfg.maxn, ntotal)); ntotal/nfiber -- число
@@ -302,7 +305,15 @@ public:
                 sys.u[i] += (dt / 2.0) * (solid_rhs.du[i] + temp_u);
             else
                 sys.u[i] = u_min_[i] + dt * (solid_rhs.du[i] + temp_u);
+#ifdef SPH_ENERGY_LOG
+            if (sys.u[i] < 0)
+            {
+                if (u_clamp_acc) *u_clamp_acc += sys.mass[i] * (-sys.u[i]);
+                sys.u[i] = 0.0;
+            }
+#else
             if (sys.u[i] < 0) sys.u[i] = 0.0;
+#endif
 
             if (!summation_density)
             {
@@ -428,6 +439,9 @@ class EulerSolver
 public:
     SolidRhsBuffers solid_rhs;
     FiberRhsBuffers fiber_rhs;
+#ifdef SPH_ENERGY_LOG
+    double* u_clamp_acc = nullptr; // накопитель энергии, внесённой обрезкой u>=0 (SPH_ENERGY_LOG)
+#endif
 
     // Сигнатура reset() намеренно совпадает с PredictorCorrectorSolver::reset
     // (nbuf, ntotal, nfiber) -- обе используются одним и тем же шаблонным
@@ -447,7 +461,15 @@ public:
             double temp_u = 0.0;
             if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
             sys.u[i] += dt * (solid_rhs.du[i] + temp_u);
+#ifdef SPH_ENERGY_LOG
+            if (sys.u[i] < 0)
+            {
+                if (u_clamp_acc) *u_clamp_acc += sys.mass[i] * (-sys.u[i]);
+                sys.u[i] = 0.0;
+            }
+#else
             if (sys.u[i] < 0) sys.u[i] = 0.0;
+#endif
 
             if (!summation_density)
             {

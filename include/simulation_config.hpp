@@ -98,6 +98,14 @@ struct SimulationConfig
     long long k_monitor_nid = -1;           // NID мониторной частицы; < 0 -- не задан
     std::string k_solid_elements = "skip";  // "skip" | "particles" (*ELEMENT_SOLID)
 
+#ifdef SPH_ENERGY_LOG
+    // --- Лог механической энергии (include/energy_log.hpp) ---
+    // Только в сборке с -DSPH_ENERGY_LOG=ON. energy_log_every = k > 0 -- строка
+    // лога каждые k шагов (после шага интегратора), 0 -- лог выключен.
+    size_t energy_log_every = 0;
+    std::string energy_log_file = "energy_log.csv";
+#endif
+
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
     // Вызывается из main ДО parse_sph_config: явно фиксирует контракт
     // инициализации конфига (независимо от default member initializers).
@@ -121,4 +129,7 @@ inline void SimulationConfig::apply_defaults()
     k_file.clear();  k_mode = "solid";  k_parts_file.clear();
     k_length_scale = 1.0;  k_mass_scale = 1.0;  k_monitor_nid = -1;
     k_solid_elements = "skip";
+#ifdef SPH_ENERGY_LOG
+    energy_log_every = 0;  energy_log_file = "energy_log.csv";
+#endif
 }

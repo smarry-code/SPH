@@ -108,13 +108,23 @@ inline double fiber_kelvin_h_crit(double xi)
 inline void compute_fiber_bond_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
     const std::vector<fiber::FiberMaterial>& materials,
-    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers
+#ifdef SPH_ENERGY_LOG
+    ,
+    // Лог энергии: напряжение модели σ_m [Па] по связям там, где отсечка σ >= 0 сработала
+    // при ε > ε_p (σ_m < 0), иначе 0; индекс = индекс связи. Только запись (по k, без гонок).
+    std::vector<double>* sigma_clip = nullptr
+#endif
+)
 {
     const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
     const std::size_t nbonds = topology.bonds.size();
+#ifdef SPH_ENERGY_LOG
+    if (sigma_clip) sigma_clip->assign(nbonds, 0.0);
+#endif
     if (nbonds == 0) return;
 
     exec.parallel_for(nbonds, [&](std::size_t k) {
@@ -155,6 +165,13 @@ inline void compute_fiber_bond_contributions(
                 }
                 const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
                 const double sigma = fiber::bond_stress(law, b.st, strain, eps_dot);
+#ifdef SPH_ENERGY_LOG
+                if (sigma_clip && strain > b.st.eps_p)
+                {
+                    const double sigma_m = law.E * (strain - b.st.eps_p) + b.st.q + (vp.eta != 0.0 ? vp.eta * eps_dot : 0.0);
+                    if (sigma_m < 0.0) (*sigma_clip)[k] = sigma_m;
+                }
+#endif
                 coeff = A * sigma / l;
                 active = true;
             }
@@ -193,9 +210,18 @@ inline void compute_fiber_bond(const rhs::CpuExecutor& exec, const fiber::FiberS
                                const fiber::FiberTopology& topology,
                                const std::vector<fiber::FiberMaterial>& materials,
                                std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers,
-                               std::vector<fiber::FiberDelta>& output, rhs::ReduceScratch& scratch)
+                               std::vector<fiber::FiberDelta>& output, rhs::ReduceScratch& scratch
+#ifdef SPH_ENERGY_LOG
+                               ,
+                               std::vector<double>* sigma_clip = nullptr
+#endif
+)
 {
+#ifdef SPH_ENERGY_LOG
+    compute_fiber_bond_contributions(exec, state, topology, materials, thread_buffers, sigma_clip);
+#else
     compute_fiber_bond_contributions(exec, state, topology, materials, thread_buffers);
+#endif
     rhs::reduce_contributions_into(exec, thread_buffers, state.size(), output, scratch);
 }
 

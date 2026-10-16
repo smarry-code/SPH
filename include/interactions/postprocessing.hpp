@@ -64,6 +64,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <stdexcept>
 #include <vector>
 
@@ -93,14 +94,39 @@ namespace interactions
 // §Ф7, пункт 5 обоснования координатора).
 // ----------------------------------------------------------------------
 inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem& sys, std::size_t ntotal, double dt,
-                                     const std::vector<double>& drho)
+                                     const std::vector<double>& drho
+#ifdef SPH_ENERGY_LOG
+                                     ,
+                                     double* plastic_acc = nullptr
+#endif
+)
 {
     for (std::size_t i = 0; i < ntotal; ++i)
     {
         if (sys.itype[i] >= 3 && sys.itype[i] <= 9)
         {
+#ifdef SPH_ENERGY_LOG
+            double ss_before = 0.0;
+            if (plastic_acc)
+                ss_before = sys.sxx[i] * sys.sxx[i] + sys.syy[i] * sys.syy[i] + sys.szz[i] * sys.szz[i] +
+                            2.0 * (sys.sxy[i] * sys.sxy[i] + sys.syz[i] * sys.syz[i] + sys.sxz[i] * sys.sxz[i]);
+#endif
             prochnost_mises(cfg.mats, static_cast<size_t>(sys.itype[i]), sys.sxx[i], sys.syy[i], sys.szz[i],
                              sys.sxy[i], sys.syz[i], sys.sxz[i]);
+#ifdef SPH_ENERGY_LOG
+            // Радиальный возврат Мизеса: упругая энергия сдвига (s:s)/(4G rho)
+            // переходит в тепло. Она уже входит в Σm·u (справочная величина,
+            // в баланс не добавляется). JH-2 (itype 10-11) не учитывается.
+            if (plastic_acc)
+            {
+                const double ss_after =
+                    sys.sxx[i] * sys.sxx[i] + sys.syy[i] * sys.syy[i] + sys.szz[i] * sys.szz[i] +
+                    2.0 * (sys.sxy[i] * sys.sxy[i] + sys.syz[i] * sys.syz[i] + sys.sxz[i] * sys.sxz[i]);
+                const double G = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
+                if (G > 0.0 && sys.rho[i] > 0.0)
+                    *plastic_acc += sys.mass[i] * (ss_before - ss_after) / (4.0 * G * sys.rho[i]);
+            }
+#endif
         }
         else if (sys.itype[i] == 10 || sys.itype[i] == 11)
         {
@@ -165,9 +191,66 @@ inline double fiber_bond_length(const fiber::FiberState& state, const fiber::Fib
 // остаётся нулевым, проход ничего не меняет. Если неупругого материала нет
 // вовсе, проход выходит сразу после одного обхода списка материалов.
 // ----------------------------------------------------------------------
+#ifdef SPH_ENERGY_LOG
+// Приёмник энергетических каналов нитей для лога энергии (SPH_ENERGY_LOG):
+// накопители (указатели в EnergyChannels) + рабочая память приращений по связям.
+//   w_p -- Σ Δw_p·A·l0 за шаг (пластическая работа связей, Дж), включая связи,
+//          рвущиеся на этом же шаге (приращение берётся ДО удаления связи);
+//   w_v -- то же для w_v (Максвелл + Кельвин);
+//   brk -- запасённая энергия порвавшихся связей (fiber_bond_stored_energy).
+// Приращения пишутся в dwp/dwv по индексу связи и суммируются последовательно:
+// результат не зависит от числа потоков.
+struct FiberEnergyTap
+{
+    double* w_p = nullptr;
+    double* w_v = nullptr;
+    double* brk = nullptr;
+    // Потенциал Герца (ff + fs) по ТЕКУЩЕЙ топологии, Дж, и накопитель brk_contact.
+    // Удаление связи убирает из контактного поиска её сегмент и меняет object_id
+    // j-стороны (фильтр соседей одной нити), поэтому потенциал Герца скачет без
+    // работы: run_fiber_topology_postprocessing считает его до и после разрывов
+    // и добавляет (U_до - U_после) в brk_contact (может быть < 0, если после
+    // разрыва открылись контакты бывших соседей). Пустой функтор -- не считается.
+    std::function<double()> contact_potential;
+    double* brk_contact = nullptr;
+    // Потеря на отсечке σ >= 0 (clip_loss): sigma_clip -- σ_m < 0 по связям из RHS-ядра этого шага
+    // (compute_fiber_bond_contributions), clip -- накопитель Σ σ_m·Δε·A·l0.
+    const std::vector<double>* sigma_clip = nullptr;
+    double* clip = nullptr;
+    std::vector<double> dwp, dwv, dclip;
+};
+
+// Запасённая (возвратная) энергия связи длиной l, Дж: то, что исчезает из модели
+// при удалении связи.
+//   упругий материал:  0.5·(E·A/l0)·(l-l0)² при l > l0 (прежнее выражение);
+//   неупругий:         0.5·E·(ε-ε_p)²·A·l0 при ε > ε_p
+//                      + 0.5·q²/E1·A·l0 при E1 > 0 (пружина ветви Максвелла).
+// Пластическая работа w_p и вязкая w_v в запас не входят (они накопленные потери).
+inline double fiber_bond_stored_energy(const fiber::FiberMaterial& mat, const fiber::FiberBond& b, double l)
+{
+    if (mat.inelastic())
+    {
+        const double A = fiber_cross_section_area(mat);
+        const double eps = (l - b.l0) / b.l0;
+        double e = 0.0;
+        if (eps > b.st.eps_p) e += 0.5 * mat.E * (eps - b.st.eps_p) * (eps - b.st.eps_p) * A * b.l0;
+        if (mat.visco.E1 > 0.0) e += 0.5 * b.st.q * b.st.q / mat.visco.E1 * A * b.l0;
+        return e;
+    }
+    if (!(l > b.l0)) return 0.0;
+    const double k = mat.E * fiber_cross_section_area(mat) / b.l0;
+    return 0.5 * k * (l - b.l0) * (l - b.l0);
+}
+#endif
+
 inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                           fiber::FiberTopology& topology,
-                                          const std::vector<fiber::FiberMaterial>& materials, double dt)
+                                          const std::vector<fiber::FiberMaterial>& materials, double dt
+#ifdef SPH_ENERGY_LOG
+                                          ,
+                                          FiberEnergyTap* tap = nullptr
+#endif
+)
 {
     if (!(dt > 0.0)) return;
     const std::size_t nbonds = topology.bonds.size();
@@ -176,6 +259,14 @@ inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fi
                                            [](const fiber::FiberMaterial& m) { return m.inelastic(); });
     if (!any_inelastic) return;
 
+#ifdef SPH_ENERGY_LOG
+    if (tap)
+    {
+        tap->dwp.assign(nbonds, 0.0);
+        tap->dwv.assign(nbonds, 0.0);
+        tap->dclip.assign(nbonds, 0.0);
+    }
+#endif
     exec.parallel_for(nbonds, [&](std::size_t k) {
         fiber::FiberBond& b = topology.bonds[k];
         const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
@@ -184,8 +275,35 @@ inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fi
         const double A = fiber_cross_section_area(mat);
         const fiber::ViscoParams vp = fiber_bond_visco(mat, A, b.l0, state.mass[b.i], state.mass[b.j]);
         const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+#ifdef SPH_ENERGY_LOG
+        const double wp0 = b.st.w_p, wv0 = b.st.w_v, eps_prev0 = b.st.eps_prev;
+#endif
         b.st = fiber::bond_constitutive_update(law, b.st, eps, dt);
+#ifdef SPH_ENERGY_LOG
+        if (tap)
+        {
+            tap->dwp[k] = (b.st.w_p - wp0) * A * b.l0;
+            tap->dwv[k] = (b.st.w_v - wv0) * A * b.l0;
+            if (tap->sigma_clip && k < tap->sigma_clip->size() && (*tap->sigma_clip)[k] != 0.0)
+                tap->dclip[k] = (*tap->sigma_clip)[k] * (eps - eps_prev0) * A * b.l0;
+        }
+#endif
     });
+#ifdef SPH_ENERGY_LOG
+    if (tap)
+    {
+        double sp = 0.0, sv = 0.0, sc = 0.0;
+        for (std::size_t k = 0; k < nbonds; ++k)
+        {
+            sp += tap->dwp[k];
+            sv += tap->dwv[k];
+            sc += tap->dclip[k];
+        }
+        if (tap->clip) *tap->clip += sc;
+        if (tap->w_p) *tap->w_p += sp;
+        if (tap->w_v) *tap->w_v += sv;
+    }
+#endif
 }
 
 // ----------------------------------------------------------------------
@@ -229,7 +347,7 @@ enum class FiberBreakReason : std::int64_t
 {
     Strain = 0,  // l > l_break (eps_break, прежний критерий)
     PlasticStrain, // eps_p >= FAILURE.EPS_P
-    Stress         // sigma_ep = E(eps - eps_p) >= FAILURE.SIGMA_U
+    Stress         // sigma_full = E(eps - eps_p) + q >= FAILURE.SIGMA_U
 };
 
 struct FiberBreakEvent
@@ -280,9 +398,11 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
             else if (mat.failure.sigma_u > 0.0)
             {
                 // Конечное состояние шага (после возврата). У материала без
-                // неупругости st нулевой => sigma_ep = E*eps.
+                // неупругости st нулевой => sigma_full = E*eps. Полное напряжение:
+                // упругая ветвь с пластикой + ветвь Максвелла (q = 0 без VISCO E1>0).
+                // Член Кельвина eta*eps_dot НЕ включается (численное демпфирование).
                 const double eps = l / b.l0 - 1.0;
-                if (mat.E * (eps - b.st.eps_p) >= mat.failure.sigma_u)
+                if (mat.E * (eps - b.st.eps_p) + b.st.q >= mat.failure.sigma_u)
                 {
                     broken = true;
                     reason = FiberBreakReason::Stress;
@@ -323,7 +443,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 }
 
 // С критериями FAILURE (раздел 7 дизайна): l > l_break ИЛИ eps_p >= EPS_P ИЛИ
-// E(eps - eps_p) >= SIGMA_U по состоянию b.st ПОСЛЕ apply_fiber_bond_constitutive.
+// E(eps - eps_p) + q >= SIGMA_U по состоянию b.st ПОСЛЕ apply_fiber_bond_constitutive.
 // Для материалов без FAILURE результат идентичен перегрузке без материалов.
 inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecutor& exec,
                                                               const fiber::FiberState& state,
@@ -383,7 +503,13 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 //     в проекте пока нет (задел на будущее кеширование), поэтому выбор не
 //     наблюдаем ни одним тестом -- документируется как осознанный.
 inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopology& topology,
-                                      const std::vector<FiberBreakEvent>& events)
+                                      const std::vector<FiberBreakEvent>& events
+#ifdef SPH_ENERGY_LOG
+                                      ,
+                                      const std::vector<fiber::FiberMaterial>* materials = nullptr,
+                                      double* break_acc = nullptr
+#endif
+)
 {
     if (events.empty()) return;
 
@@ -392,6 +518,23 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
     for (const auto& e : events) break_indices.push_back(e.bond_index);
     std::sort(break_indices.begin(), break_indices.end());
     break_indices.erase(std::unique(break_indices.begin(), break_indices.end()), break_indices.end());
+
+#ifdef SPH_ENERGY_LOG
+    // Запасённая энергия порвавшихся связей: она исчезает из модели при удалении
+    // связи (упругая: 0.5*k*(l-l0)^2; неупругая: 0.5*E*(eps-eps_p)^2*A*l0 + Максвелл,
+    // fiber_bond_stored_energy). Считается по дедуплицированным индексам ДО любой
+    // мутации topology.bonds (индексы ещё валидны). Пластическая и вязкая работа
+    // этой связи за её последний шаг уже учтена в FiberEnergyTap (перед разрывом).
+    if (materials && break_acc)
+    {
+        for (std::size_t bidx : break_indices)
+        {
+            const fiber::FiberBond& b = topology.bonds[bidx];
+            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(state.material_id[b.i])];
+            *break_acc += fiber_bond_stored_energy(mat, b, fiber_bond_length(state, b));
+        }
+    }
+#endif
 
     int next_object_id = 0;
     for (int id : state.object_id) next_object_id = std::max(next_object_id, id);
@@ -446,12 +589,27 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
 inline void run_fiber_topology_postprocessing(const rhs::CpuExecutor& exec, fiber::FiberState& state,
                                                fiber::FiberTopology& topology,
                                                const std::vector<fiber::FiberMaterial>& materials, double dt,
-                                               std::vector<std::vector<FiberBreakEvent>>& thread_buffers)
+                                               std::vector<std::vector<FiberBreakEvent>>& thread_buffers
+#ifdef SPH_ENERGY_LOG
+                                               ,
+                                               FiberEnergyTap* tap = nullptr
+#endif
+)
 {
+#ifdef SPH_ENERGY_LOG
+    apply_fiber_bond_constitutive(exec, state, topology, materials, dt, tap);
+    const std::vector<FiberBreakEvent> events =
+        find_fiber_break_events(exec, state, topology, materials, thread_buffers);
+    const bool track_contact = tap && tap->contact_potential && tap->brk_contact && !events.empty();
+    const double u_hertz_before = track_contact ? tap->contact_potential() : 0.0;
+    apply_fiber_break_events(state, topology, events, tap ? &materials : nullptr, tap ? tap->brk : nullptr);
+    if (track_contact) *tap->brk_contact += u_hertz_before - tap->contact_potential();
+#else
     apply_fiber_bond_constitutive(exec, state, topology, materials, dt);
     const std::vector<FiberBreakEvent> events =
         find_fiber_break_events(exec, state, topology, materials, thread_buffers);
     apply_fiber_break_events(state, topology, events);
+#endif
 }
 
 } // namespace interactions

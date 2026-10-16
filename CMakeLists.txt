@@ -38,6 +38,7 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+option(SPH_ENERGY_LOG  "Лог механической энергии (#ifdef SPH_ENERGY_LOG, include/energy_log.hpp)" OFF)  # OFF: кода лога в сборке нет
 # Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
 # SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
 # solid_fiber требуют 3.
@@ -692,7 +693,7 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(test_e2e_guo2019 PRIVATE -fopenmp)
     target_link_options(test_e2e_guo2019 PRIVATE -fopenmp)
 endif()
-foreach(_guo_cfg A 1T 1T_A A_1T)
+foreach(_guo_cfg A 1T 1T_A A_1T 2T 4T)
     add_test(NAME e2e_guo2019_smoke_${_guo_cfg}
         COMMAND test_e2e_guo2019 --config=${_guo_cfg} --time-limit=100)
     # 2 потока: при ctest -jN 8 потоков на тест переподписывают ядра, и
@@ -718,6 +719,28 @@ if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(fiber_t0_dump PRIVATE -fopenmp)
 endif()
 
+# --- Лог механической энергии (include/energy_log.hpp) на smoke Guo 2019:
+#     формат CSV, сверка запасов, замыкание баланса, лог не возмущает расчёт.
+#     Собирается с SPH_ENERGY_LOG всегда, независимо от опции.
+add_executable(test_energy_log tests/test_energy_log.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_energy_log PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_energy_log PRIVATE
+    SPH_DIM=3
+    SPH_ENERGY_LOG
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_energy_log PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_energy_log PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_energy_log PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_energy_log PRIVATE -fopenmp)
+    target_link_options(test_energy_log PRIVATE -fopenmp)
+endif()
+add_test(NAME energy_log_test COMMAND test_energy_log --time-limit=200)
+set_tests_properties(energy_log_test PROPERTIES LABELS "3d;e2e" TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=2")
+
 # --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
 add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(guo2019_shot PRIVATE
@@ -736,6 +759,35 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(guo2019_shot PRIVATE -fopenmp)
     target_link_options(guo2019_shot PRIVATE -fopenmp)
 endif()
+
+# --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
+#     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
+add_executable(fabric_checks tools/fabric_checks/fabric_checks.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(fabric_checks PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_compile_definitions(fabric_checks PRIVATE
+    SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(fabric_checks PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(fabric_checks PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(fabric_checks PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(fabric_checks PRIVATE -fopenmp)
+    target_link_options(fabric_checks PRIVATE -fopenmp)
+endif()
+# Короткие smoke-прогоны (секунды): полоска прямых нитей и капстан на 10 мкс -- сцены собираются и считаются без исключений.
+add_test(NAME fabric_checks_smoke_strip
+    COMMAND fabric_checks strip --kind=straight --material=elastic --rate=300 --eps-max=0.004
+            --out=${CMAKE_CURRENT_BINARY_DIR}/fabric_checks_smoke --tag=strip --threads=2)
+add_test(NAME fabric_checks_smoke_capstan
+    COMMAND fabric_checks capstan --drum=solid --theta-deg=90 --mu=0.3 --t-settle=1e-5 --t-end=1e-5
+            --out=${CMAKE_CURRENT_BINARY_DIR}/fabric_checks_smoke --tag=capstan --threads=2)
+set_tests_properties(fabric_checks_smoke_strip fabric_checks_smoke_capstan PROPERTIES LABELS "3d;e2e" TIMEOUT 120
+    ENVIRONMENT "OMP_NUM_THREADS=2")
 
 # --- Генератор полотняного переплетения (weave/TZ_PLAIN_WEAVE_GENERATOR.md):
 #     include/fiber/plain_weave.hpp (header-only), проверки геометрии.
@@ -1229,6 +1281,14 @@ endif()
 #     в force_timing.csv) ----
 if(SPH_PROFILE)
     target_compile_definitions(SPH PRIVATE SPH_PROFILE)
+endif()
+
+# --- Лог механической энергии: включает блоки #ifdef SPH_ENERGY_LOG и ключи
+#     конфига energy_log_every/energy_log_file. Без опции кода лога в сборке нет.
+if(SPH_ENERGY_LOG)
+    target_compile_definitions(SPH PRIVATE SPH_ENERGY_LOG)
+    target_compile_definitions(guo2019_shot PRIVATE SPH_ENERGY_LOG)
+    target_compile_definitions(fabric_checks PRIVATE SPH_ENERGY_LOG)
 endif()
 
 # --- Каталоги include: заголовки — в include/, исходники — в src/ ------------

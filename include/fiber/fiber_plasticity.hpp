@@ -89,7 +89,7 @@ struct ViscoParams
 struct FailureParams
 {
     double eps_p = 0.0;    // предельная ε_p; 0 => критерий выключен
-    double sigma_u = 0.0;  // предельное σ_ep; 0 => критерий выключен
+    double sigma_u = 0.0;  // предельное полное σ = E(ε-ε_p)+q (без Кельвина); 0 => критерий выключен
 };
 
 inline const PlasticParams kNoPlastic{};
