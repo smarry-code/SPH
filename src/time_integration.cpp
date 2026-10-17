@@ -200,6 +200,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     energy::EnergyChannels echan;
     interactions::FiberEnergyTap ftap; // приращения энергии нитей (postprocessing.hpp)
     std::vector<double> sigma_clip;    // σ_m < 0 на отсечке по связям шага (RHS-ядро -> clip_loss)
+    // Проход «только демпфер» закона 4 для канала D_contact_fiber (рабочая память).
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> elog_damp_ff_buffers, elog_damp_fs_fbuf;
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> elog_damp_fs_sbuf;
+    std::vector<interactions::FiberFrictionContact> elog_damp_ff_slots;
+    std::vector<interactions::FiberSolidFrictionContact> elog_damp_fs_slots;
+    std::vector<fiber::FiberDelta> elog_damp_ff_delta, elog_damp_fs_fdelta;
+    std::vector<interactions::SolidDelta> elog_damp_fs_sdelta;
     if (cfg.energy_log_every > 0)
     {
         elog = std::make_unique<energy::EnergyLogger>(cfg.energy_log_file, cfg.energy_log_every);
@@ -353,24 +360,56 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives, fiber_solid_params);
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
 #ifdef SPH_ENERGY_LOG
-            // Ускорение контактов нитей с законом 1-3 -- для канала D_contact_fiber
-            // (у Герца энергия контакта -- в запасе U_hertz_*, канал не нужен).
+            // Ускорение непотенциальной части контактов нитей -- для канала
+            // D_contact_fiber: законы 1-3 -- вся сила; закон 4 -- только демпфер
+            // (отдельный проход ядра с damper_only; упругая часть -- в U_hertz_*);
+            // у Герца (0) канал не нужен.
             if (elog && (fiber_fiber_law.type != 0 || fiber_solid_law.type != 0))
             {
-                const bool ff = fiber_fiber_law.type != 0, fs = fiber_solid_law.type != 0;
+                const int tff = fiber_fiber_law.type, tfs = fiber_solid_law.type;
+                const bool d4ff = tff == interactions::kFiberLawHertzDamped;
+                const bool d4fs = tfs == interactions::kFiberLawHertzDamped;
+                if (d4ff)
+                {
+                    interactions::FiberContactStepParams p = fiber_fiber_params;
+                    p.damper_only = true;
+                    p.pair_dt_limit = nullptr;
+                    interactions::compute_fiber_contact_contributions(fiber_exec, fb, materials,
+                                                                      fiber_contact_search.primitives,
+                                                                      elog_damp_ff_buffers, elog_damp_ff_slots, p);
+                    rhs::reduce_contributions_into(fiber_exec, elog_damp_ff_buffers, fb.size(), elog_damp_ff_delta,
+                                                   fiber_reduce_scratch);
+                }
+                if (d4fs)
+                {
+                    interactions::FiberContactStepParams p = fiber_solid_params;
+                    p.damper_only = true;
+                    p.pair_dt_limit = nullptr;
+                    interactions::compute_fiber_solid_contact_contributions(
+                        fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives, elog_damp_fs_fbuf,
+                        elog_damp_fs_sbuf, elog_damp_fs_slots, p);
+                    rhs::reduce_contributions_into(fiber_exec, elog_damp_fs_fbuf, fb.size(), elog_damp_fs_fdelta,
+                                                   fiber_reduce_scratch);
+                    rhs::reduce_contributions_into(fiber_exec, elog_damp_fs_sbuf, ntotal, elog_damp_fs_sdelta,
+                                                   fiber_reduce_scratch);
+                }
+                const bool ff = tff != 0, fs = tfs != 0;
                 for (size_t d = 0; d < dim; ++d)
                 {
                     elog->contact_fiber_acc[d].assign(nfiber, 0.0);
                     for (size_t i = 0; i < nfiber; ++i)
-                        elog->contact_fiber_acc[d][i] = (ff ? fiber_contact_delta[i].dv[d] : 0.0) +
-                                                        (fs ? fiber_solid_fiber_delta[i].dv[d] : 0.0);
+                        elog->contact_fiber_acc[d][i] =
+                            (ff ? (d4ff ? elog_damp_ff_delta[i].dv[d] : fiber_contact_delta[i].dv[d]) : 0.0) +
+                            (fs ? (d4fs ? elog_damp_fs_fdelta[i].dv[d] : fiber_solid_fiber_delta[i].dv[d]) : 0.0);
                 }
                 elog->contact_solid_acc.resize(dim);
                 for (size_t d = 0; d < dim; ++d)
                 {
                     elog->contact_solid_acc[d].assign(ntotal, 0.0);
                     if (fs)
-                        for (size_t i = 0; i < ntotal; ++i) elog->contact_solid_acc[d][i] = fiber_solid_solid_delta[i].dv[d];
+                        for (size_t i = 0; i < ntotal; ++i)
+                            elog->contact_solid_acc[d][i] =
+                                d4fs ? elog_damp_fs_sdelta[i].dv[d] : fiber_solid_solid_delta[i].dv[d];
                 }
                 elog->has_contact_fiber = true;
             }

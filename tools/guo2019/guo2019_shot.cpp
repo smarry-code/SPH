@@ -166,7 +166,7 @@ void print_usage()
                 "                   [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
-                "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n"
+                "                   [--fs-contact=0..4] [--ff-contact=0..4]  (закон контакта нитей, 0 = Герц, 4 = Герц + демпфер)\n"
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
@@ -292,12 +292,12 @@ int parse_args(int argc, char** argv, Options& o)
         }
         else if (a.rfind("--fs-contact=", 0) == 0)
         {
-            if (!parse_ll(val("--fs-contact="), n) || n < 0 || n > 3) return bad("--fs-contact");
+            if (!parse_ll(val("--fs-contact="), n) || n < 0 || n > 4) return bad("--fs-contact");
             o.fs_contact = static_cast<int>(n);
         }
         else if (a.rfind("--ff-contact=", 0) == 0)
         {
-            if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 3) return bad("--ff-contact");
+            if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 4) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
         }
         else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")

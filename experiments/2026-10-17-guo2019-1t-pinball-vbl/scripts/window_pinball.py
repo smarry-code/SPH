@@ -186,7 +186,8 @@ def process_mu(args, mu, rec, save):
 
 
 def write_window(args, records, final):
-    lines = ["# Подбор окна 1T base, pinball (fs = ff = 1)", "",
+    law = {0: "Герц", 1: "pinball", 2: "Swegle", 3: "импульсный", 4: "Герц + демпфер"}.get(args.contact, "?")
+    lines = ["# Подбор окна 1T base, закон контакта нитей %s (fs = ff = %d)" % (law, args.contact), "",
              "Нить: %s, E = %g Па, eps_break = %g; уровень %s; t_max = %g (повтор %g)." % (
                  os.path.basename(args.fib), args.fiber_E, args.eps_break, args.level, args.t_max, args.t_max_long),
              "Критерий «не пробит»: not_perforated, V_R = 0, верт. <= %d, гориз. = 0." % MAX_BROKEN_V, ""]

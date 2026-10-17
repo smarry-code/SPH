@@ -52,7 +52,8 @@ struct SimulationConfig
     // --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы
     //     нормальной силы»; include/interactions/fiber_contact_law.hpp) ---
     // 0 = ГЕРЦ (прежнее поведение), НЕ «выключено» -- в отличие от
-    // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный.
+    // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный, 4 - Герц + демпфер
+    // (Kp -- масштаб демпфера).
     int    fiber_solid_contact_type          = 0;   // Fiber-Solid; 0 = Герц, не выключено
     int    fiber_fiber_contact_type          = 0;   // Fiber-Fiber; 0 = Герц, не выключено
     double fiber_solid_contact_penalty_scale = 1.0; // Kp (типы 1, 2)

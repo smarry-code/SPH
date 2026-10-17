@@ -49,6 +49,7 @@ const char* type_name(int t)
         case 1: return "pinball";
         case 2: return "Swegle";
         case 3: return "impulse";
+        case 4: return "Hertz+damper";
         default: return "?";
     }
 }
@@ -349,6 +350,43 @@ void test_consistency_and_friction()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Тип 4 (Герц + демпфер) на кресте: F = F_H + c*max(pdot, 0); в покое и при
+// разлёте F = F_H; D = 0 -- тоже F > 0; импульс; согласованность ядра,
+// предела шага и диагностики.
+void test_type4_hertz_damped()
+{
+    std::printf("test_type4_hertz_damped:\n");
+    rhs::CpuExecutor exec{1};
+    for (const double vz : {-0.6, 0.0, 0.6})
+    {
+        const Cross c = make_cross(0.3, 0.6, 0.97 * kD, vz, -0.5 * vz, false, false, 0.2);
+        auto p = make_params(c, interactions::kFiberLawHertzDamped);
+        contact::PairGeom g;
+        contact::PairProps pr;
+        manual_inputs(c, 0.3, 0.6, g, pr);
+        const auto geom = interactions::compute_fiber_contact_geometry(c.state, c.materials, c.prim);
+        const double c_d = p.law.kp * pr.m_red / pr.dt_ref;
+        const double f_ref = geom.F + (g.pdot > 0.0 ? c_d * g.pdot : 0.0);
+        const KernelOut k = run_kernel(c, {c.prim}, p);
+        const std::string mode = vz < 0.0 ? "сближение" : (vz == 0.0 ? "покой" : "разлёт");
+        check(geom.F > 0.0 && near_rel(force_on_a(c, k), f_ref, 1e-12), "Hertz+damper, " + mode + ": F = F_H + c*max(pdot,0)");
+        check(k.slots[0].active && near_rel(k.slots[0].N, f_ref, 1e-12), "Hertz+damper, " + mode + ": слот трения активен");
+        double pz = 0.0;
+        for (std::size_t i = 0; i < c.state.size(); ++i) pz += c.state.mass[i] * k.dv[i].dv[2];
+        check(std::fabs(pz) <= 1e-12 * f_ref, "Hertz+damper, " + mode + ": импульс сохраняется");
+        p.pair_dt_limit = nullptr;
+        const double lim = interactions::compute_fiber_contact_dt_limit(exec, c.state, c.materials, {c.prim}, p);
+        interactions::FiberContactSearchResult search;
+        search.primitives = {c.prim};
+        const double diag = interactions::compute_fiber_contact_diagnostics(exec, c.state, c.materials, search, p).min_dt;
+        check(k.pair_dt[0] == lim && lim == diag, "Hertz+damper, " + mode + ": ядро, предел шага и диагностика согласованы");
+    }
+    const Cross cx = make_cross(0.5, 0.5, 0.0, 0.0, 0.0);
+    const KernelOut kx = run_kernel(cx, {cx.prim}, make_params(cx, interactions::kFiberLawHertzDamped));
+    check(force_on_a(cx, kx) > 0.0, "Hertz+damper: D = 0, покой -> F = F_H > 0");
+}
+
 } // namespace
 
 int main()
@@ -358,6 +396,7 @@ int main()
     test_axes_cross();
     test_momentum();
     test_consistency_and_friction();
+    test_type4_hertz_damped();
     std::printf("\n%s: %d failure(s)\n", failures == 0 ? "PASSED" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
 }

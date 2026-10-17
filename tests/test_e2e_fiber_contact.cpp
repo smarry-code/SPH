@@ -1164,10 +1164,10 @@ CrossTypeMetrics run_cross_type(int type, double mu_ff, double v_t0)
 void test_e2e_cross_types()
 {
     std::printf("test_e2e_cross_types:\n");
-    static const char* names[] = {"Hertz", "pinball", "Swegle", "impulse"};
+    static const char* names[] = {"Hertz", "pinball", "Swegle", "impulse", "Hertz+damp"};
     std::printf("    %-8s %6s %9s %10s %7s %9s %9s %9s %9s %8s %6s\n", "type", "steps", "max d/d", "min dt",
                 "ct-lim", "E_end/E0", "E_max/E0", "vzP_end", "vzQ_end", "dtN/dtP", "sgn");
-    for (int type = 0; type <= 3; ++type)
+    for (int type = 0; type <= 4; ++type)
     {
         const CrossTypeMetrics m = run_cross_type(type, 0.0, 0.0);
         const CrossTypeMetrics mf = run_cross_type(type, 0.2, 0.05); // трение, малая касательная скорость

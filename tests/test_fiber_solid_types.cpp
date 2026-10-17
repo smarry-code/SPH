@@ -59,6 +59,7 @@ const char* type_name(int t)
         case 1: return "pinball";
         case 2: return "Swegle";
         case 3: return "impulse";
+        case 4: return "Hertz+damper";
         default: return "?";
     }
 }
@@ -410,6 +411,44 @@ void test_dt_ref_and_limit()
 }
 
 // ---------------------------------------------------------------------------
+// Тип 4 (Герц + демпфер): F = F_H + c*max(pdot, 0), c = Kp*m_red/dt_ref; в покое
+// и при разлёте сила = F_H (не ноль), слот трения активен; импульс сохраняется;
+// предел шага -- формула fiber_hertz_damped_force.
+void test_type4_hertz_damped()
+{
+    std::printf("test_type4_hertz_damped:\n");
+    for (int seg = 0; seg <= 1; ++seg)
+    {
+        const double lambda = seg ? 0.3 : 0.0;
+        const std::string tag = std::string("Hertz+damper") + (seg ? ", сегмент" : ", точка");
+        for (const double v : {0.9, 0.0, -0.9})
+        {
+            const PairScene sc = make_pair_scene(seg != 0, lambda, 0.03, v, 0.3);
+            const auto p = make_params(sc, interactions::kFiberLawHertzDamped);
+            contact::PairGeom g;
+            contact::PairProps pr;
+            manual_inputs(sc, lambda, g, pr);
+            const auto geom =
+                interactions::compute_fiber_solid_contact_geometry(sc.smats, sc.sys, sc.state, sc.materials, sc.prim);
+            const double c_d = p.law.kp * pr.m_red / pr.dt_ref;
+            const double f_ref = geom.F + (g.pdot > 0.0 ? c_d * g.pdot : 0.0);
+            const KernelOut k = run_kernel(sc, p);
+            const std::string mode = v > 0.0 ? " сближение" : (v == 0.0 ? " покой" : " разлёт");
+            check(geom.F > 0.0 && near_rel(k.sd[0].dv[2] * kMs, f_ref, 1e-12), tag + mode + ": F = F_H + c*max(pdot,0)");
+            check(k.slots[0].active && near_rel(k.slots[0].N, f_ref, 1e-12), tag + mode + ": слот трения активен, N = F");
+            double pz = kMs * k.sd[0].dv[2];
+            for (std::size_t i = 0; i < sc.state.size(); ++i) pz += sc.state.mass[i] * k.fd[i].dv[2];
+            check(std::fabs(pz) <= 1e-12 * f_ref, tag + mode + ": импульс сохраняется");
+            const double k_eff = 1.5 * geom.F / geom.delta;
+            const double om = std::sqrt(k_eff / pr.m_red);
+            const double xi = c_d / (2.0 * std::sqrt(k_eff * pr.m_red));
+            const double dt_ref = std::min(0.8 / om, 1.6 / om * (std::sqrt(1.0 + xi * xi) - xi));
+            check(k.pair_dt.size() == 1 && near_rel(k.pair_dt[0], dt_ref, 1e-12), tag + mode + ": предел шага по формуле");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 void test_parser()
 {
     std::printf("test_parser:\n");
@@ -441,6 +480,10 @@ void test_parser()
         all_ok = all_ok && cfg.fiber_solid_contact_type == t && e.empty();
     }
     check(all_ok, "fiber_solid_contact_type 0..3 принимаются без предупреждений");
+
+    e = parse("fiber_solid_contact_type = 4\nfiber_fiber_contact_type = 4\n", cfg);
+    check(cfg.fiber_solid_contact_type == 4 && cfg.fiber_fiber_contact_type == 4 && e.empty(),
+          "тип 4 (Герц + демпфер) принимается");
 
     e = parse("fiber_solid_contact_type = 5\nfiber_fiber_contact_type = -1\n", cfg);
     check(cfg.fiber_solid_contact_type == 0 && cfg.fiber_fiber_contact_type == 0 && !e.empty(),
@@ -687,7 +730,7 @@ void test_e2e_plate()
     std::printf("test_e2e_plate:\n");
     std::printf("    %-8s %6s %9s %9s %10s %7s %8s %9s %9s %9s %9s\n", "type", "steps", "max d/d", "end d/d",
                 "min dt", "fs-lim", "fn=0", "E_end/E0", "E_max/E0", "vz_end", "dtN/dtP");
-    for (int type = 0; type <= 3; ++type)
+    for (int type = 0; type <= 4; ++type)
     {
         const E2eMetrics m = run_plate(type);
         std::printf("    %-8s %6d %9.3e %9.3e %10.3e %6.1f%% %7.1f%% %9.4f %9.4f %9.4f %9.4f\n", type_name(type),
@@ -716,6 +759,7 @@ int main()
     test_momentum_lambdas();
     test_friction_slot();
     test_dt_ref_and_limit();
+    test_type4_hertz_damped();
     test_parser();
     test_e2e_plate();
     std::printf("\n%s: %d failure(s)\n", failures == 0 ? "PASSED" : "FAILED", failures);

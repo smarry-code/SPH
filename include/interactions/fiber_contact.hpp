@@ -722,6 +722,8 @@ inline contact::Result fiber_fiber_contact_penalty(const fiber::FiberState& stat
     contact::PairGeom g;
     contact::PairProps pr;
     fiber_fiber_pair_inputs(state, materials, prim, geom, params, g, pr);
+    if (params.law.type == kFiberLawHertzDamped)
+        return fiber_hertz_damped_force(geom.F, geom.delta, g, pr, params.law.kp, params.damper_only);
     return fiber_penalty_force(params, g, pr);
 }
 
@@ -729,8 +731,8 @@ inline contact::Result fiber_fiber_contact_penalty(const fiber::FiberState& stat
 inline void fiber_fiber_check_params(const FiberContactStepParams& params, const fiber::FiberState& state)
 {
     if (params.law.type == 0) return;
-    if (params.law.type < 0 || params.law.type > 3)
-        throw std::invalid_argument("Fiber-Fiber: тип закона вне 0..3");
+    if (params.law.type < 0 || params.law.type > kFiberLawHertzDamped)
+        throw std::invalid_argument("Fiber-Fiber: тип закона вне 0..4");
     if (params.bead_dt_ref == nullptr || params.bead_dt_ref->size() != state.size())
         throw std::invalid_argument("Fiber-Fiber: тип 1-3 требует bead_dt_ref размера state.size()");
 }

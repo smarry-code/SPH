@@ -75,15 +75,15 @@ static double parse_k_positive(const char* key, const std::string& value)
     }
     return v;
 }
-// Закон нормальной силы контакта нитей (fiber_*_contact_type): 0..3,
-// 0 = Герц (НЕ «выключено», в отличие от contact_force_type). Вне диапазона
-// -- сообщение и откат к 0.
+// Закон нормальной силы контакта нитей (fiber_*_contact_type): 0..4,
+// 0 = Герц (НЕ «выключено», в отличие от contact_force_type), 4 = Герц +
+// демпфер. Вне диапазона -- сообщение и откат к 0.
 static int parse_fiber_contact_type(const std::string& key, const std::string& value)
 {
     const int v = std::stoi(value);
-    if (v < 0 || v > 3)
+    if (v < 0 || v > 4)
     {
-        std::cerr << key << " вне диапазона 0..3: " << v << ", откат к 0 (Герц)\n";
+        std::cerr << key << " вне диапазона 0..4: " << v << ", откат к 0 (Герц)\n";
         return 0;
     }
     return v;

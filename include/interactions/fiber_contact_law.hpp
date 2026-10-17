@@ -43,11 +43,12 @@ struct SimulationConfig;
 namespace interactions
 {
 
-// Закон нормальной силы. type: 0 Герц, 1 pinball, 2 Swegle, 3 импульсный.
+// Закон нормальной силы. type: 0 Герц, 1 pinball, 2 Swegle, 3 импульсный,
+// 4 Герц + демпфер (fiber_hertz_damped_force).
 struct FiberContactLaw
 {
     int type = 0;       // 0 = Герц (не «выключено»)
-    double kp = 1.0;    // Kp (типы 1, 2)
+    double kp = 1.0;    // Kp (типы 1, 2; у типа 4 -- масштаб демпфера)
     double gamma = 1.0; // доля гашения (тип 3)
 };
 
@@ -68,6 +69,8 @@ struct FiberContactStepParams
     // сила и предел из одного расчёта. Если не задан, *_dt_limit пересчитывает
     // ту же функцию по primitive.
     std::vector<double>* pair_dt_limit = nullptr;
+    // Только для типа 4 и лога энергии: ядро считает лишь вязкую часть силы.
+    bool damper_only = false;
 };
 
 // Есть ли у закона новые (не Герц) типы -- нужен ли dt_bead.
@@ -137,5 +140,54 @@ inline contact::Result fiber_penalty_force(const FiberContactStepParams& params,
 {
     return contact::penalty_force(params.law.type, g, pr, params.law.kp, params.dt_prev, params.law.gamma);
 }
+
+// ----------------------------------------------------------------------
+// Тип 4 -- «Герц + демпфер» (модель Кельвина -- Фойгта / Ханта -- Кроссли):
+//     F = F_H(delta) + c * max(pdot, 0),   c = Kp * m_red / dt_ref,
+// F_H -- сила Герца той же геометрии (geom.F, как у типа 0). В отличие от
+// типов 1-3 упругая часть есть и в покое, и при разлёте: контакт держит
+// нагрузку, слот трения не пропадает. Демпфер действует только на сближении
+// и при pdot -> 0 обращается в ноль непрерывно (без релейного включения).
+// Kp -- ключ fiber_*_contact_penalty_scale (масштаб демпфера).
+//
+// Предел шага (явная схема с демпфером; множитель Белычко):
+//     omega = sqrt(k_eff/m_red), k_eff = 1.5*F_H/delta (как у Герца),
+//     xi    = c / (2 sqrt(k_eff m_red)),
+//     dt    = min(0.8/omega, 1.6/omega * (sqrt(1+xi^2) - xi)).
+// При xi = 0 это прежний предел Герца 0.8/omega; при xi -> inf --
+// предел демпфера 1.6*m_red/c (с тем же запасом 0.8 от 2 m/c).
+//
+// damper_only = true -- только вязкая часть (для канала энергии
+// D_contact_fiber: упругая часть потенциальна и учитывается в U_hertz_*).
+// ----------------------------------------------------------------------
+constexpr int kFiberLawHertzDamped = 4;
+
+inline contact::Result fiber_hertz_damped_force(double f_hertz, double delta, const contact::PairGeom& g,
+                                                const contact::PairProps& pr, double kp, bool damper_only = false)
+{
+    contact::Result out;
+    if (!(delta > 0.0) || !(pr.m_red > 0.0)) return out;
+    const double c = (pr.dt_ref > 0.0 && kp > 0.0) ? kp * pr.m_red / pr.dt_ref : 0.0;
+    const double f_d = (g.pdot > 0.0) ? c * g.pdot : 0.0;
+    out.fn = damper_only ? f_d : f_hertz + f_d;
+    if (!(out.fn > 0.0)) return out;
+
+    const double k_eff = (f_hertz > 0.0) ? 1.5 * f_hertz / delta : 0.0;
+    if (k_eff > 0.0)
+    {
+        const double omega = std::sqrt(k_eff / pr.m_red);
+        const double xi = c / (2.0 * std::sqrt(k_eff * pr.m_red));
+        out.dt_limit = std::min(contact::kOscSafety / omega,
+                                2.0 * contact::kOscSafety / omega * (std::sqrt(1.0 + xi * xi) - xi));
+    }
+    else if (c > 0.0)
+    {
+        out.dt_limit = contact::kOscSafety * 2.0 * pr.m_red / c;
+    }
+    return out;
+}
+
+// Закон типа t имеет упругий потенциал Герца (энергия контакта в U_hertz_*).
+inline bool fiber_contact_law_has_hertz_potential(int type) { return type == 0 || type == kFiberLawHertzDamped; }
 
 } // namespace interactions

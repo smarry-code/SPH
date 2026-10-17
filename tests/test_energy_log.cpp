@@ -300,8 +300,12 @@ BalanceResult test_balance(Config config, double time_limit, double residual_tol
     {
         std::printf("  info : закон %d: D_contact_fiber %s (%s E0), U_hertz_ff %s, U_hertz_fs %s\n", contact_type,
                     g(last[kDCf]).c_str(), g(last[kDCf] / e0).c_str(), g(last[kUHff]).c_str(), g(last[kUHfs]).c_str());
-        check(last[kDCf] > 0.0, "закон 1-3: D_contact_fiber > 0 (сила только на сближении -- рассеяние)");
-        check(last[kUHff] == 0.0 && last[kUHfs] == 0.0, "закон 1-3: потенциала Герца в запасе нет");
+        check(last[kDCf] > 0.0, "закон 1-4: D_contact_fiber > 0 (рассеяние на сближении)");
+        if (contact_type == 4)
+            check(last[kUHff] > 0.0 || last[kUHfs] > 0.0 || last[kKeS] > 0.0,
+                  "закон 4: упругая часть -- в запасе U_hertz_* (потенциал считается)");
+        else
+            check(last[kUHff] == 0.0 && last[kUHfs] == 0.0, "закон 1-3: потенциала Герца в запасе нет");
     }
     if (eps_break > 0.0 && eps_break < 1.0)
     {
@@ -503,7 +507,8 @@ int main(int argc, char** argv)
         test_balance(Config::T1, time_limit, kResidualTolFabric, 0.005, pl);
     }
     // Законы контакта нитей 1-3: энергия контакта -- в канале D_contact_fiber, баланс сходится.
-    for (int ct = 1; ct <= 3; ++ct) test_balance(Config::T1, time_limit, kResidualTolFabric, 0.0, PlasticSetup(), ct);
+    for (int ct = 1; ct <= 4; ++ct) test_balance(Config::T1, time_limit, kResidualTolFabric, 0.0, PlasticSetup(), ct);
+    test_balance(Config::T1, time_limit, kResidualTolFabric, 0.005, PlasticSetup(), 4);
     test_balance(Config::T1, time_limit, kResidualTolFabric, 0.005, PlasticSetup(), 1);
     test_no_perturbation(Config::A_T1);
     std::printf("\n%s: провалов %d\n", e2e::failures == 0 ? "OK" : "FAIL", e2e::failures);

@@ -25,9 +25,9 @@
 //                       eps>eps_p плюс 1/2 q^2/E1 A l0 при E1>0 (пружина
 //                       Максвелла); w_p и w_v в запас не входят (см. W_p_fiber)
 //   U_hertz_ff       -- потенциал Герца Fiber-Fiber, sum 2/5 F delta (F=k delta^1.5);
-//                       только при fiber_fiber_contact_type = 0 (Герц), иначе 0
-//   U_hertz_fs       -- потенциал Герца Fiber-Solid, то же; только при
-//                       fiber_solid_contact_type = 0, иначе 0
+//                       при fiber_fiber_contact_type = 0 (Герц) и 4 (Герц + демпфер), иначе 0
+//   U_hertz_fs       -- потенциал Герца Fiber-Solid, то же; при
+//                       fiber_solid_contact_type = 0 и 4, иначе 0
 //   E_mech           -- KE_solid+KE_fiber+U_int+U_bond+U_hertz_ff+U_hertz_fs
 //   D_friction       -- накопленная диссипация трения (потери, > 0)
 //   D_xsph           -- накопленная диссипация XSPH (потери, > 0)
@@ -69,7 +69,9 @@
 //   D_contact_fiber  -- накопленная работа (со знаком минус) нормальной силы контактов нитей,
 //                       закон которых НЕ Герц (fiber_*_contact_type = 1..3: pinball, Swegle,
 //                       импульсный). Эти силы не потенциальные: запаса энергии у них нет, вся их
-//                       работа -- диссипация (> 0: сила действует только на сближении). Работа --
+//                       работа -- диссипация (> 0: сила действует только на сближении). У закона 4
+//                       (Герц + демпфер) упругая часть потенциальна (в U_hertz_*), сюда идёт только
+//                       работа демпфера (отдельный проход ядра с damper_only). Работа --
 //                       на средней скорости шага (work_mid_fiber/work_mid_solid), по ускорению
 //                       контакта после проекции зажимов. При законе Герц канал нулевой, энергия
 //                       контакта -- в U_hertz_*. Для разных законов у двух контактов каждый
@@ -165,8 +167,8 @@ inline void compute_hertz_potential(const rhs::CpuExecutor& exec, const Simulati
     auto sum = [](double a, double b) { return a + b; };
     // Потенциал есть только у закона Герца (тип 0). Законы 1-3 не потенциальные:
     // их работа идёт в канал D_contact_fiber, а не в запас.
-    const bool hertz_ff = cfg.fiber_fiber_contact_type == 0;
-    const bool hertz_fs = cfg.fiber_solid_contact_type == 0;
+    const bool hertz_ff = interactions::fiber_contact_law_has_hertz_potential(cfg.fiber_fiber_contact_type);
+    const bool hertz_fs = interactions::fiber_contact_law_has_hertz_potential(cfg.fiber_solid_contact_type);
     if (hertz_ff) interactions::build_fiber_contact_search(exec, fb, topology, materials, ws.ff);
     if (hertz_ff && !ws.ff.primitives.empty())
     {
