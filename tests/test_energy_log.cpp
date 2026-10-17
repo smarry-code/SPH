@@ -108,12 +108,12 @@ Csv read_csv(const fs::path& p)
 enum Col
 {
     kStep, kTime, kDt, kKeS, kKeF, kUInt, kUShear, kUBond, kUHff, kUHfs, kEMech,
-    kDFric, kDXsph, kDCss, kDBrk, kSUcl, kQav, kWpl, kResid, kWpF, kWvF, kBrkC, kClip, kNCols
+    kDFric, kDXsph, kDCss, kDBrk, kSUcl, kQav, kWpl, kResid, kWpF, kWvF, kBrkC, kClip, kDCf, kNCols
 };
 
 const char* kHeader = "step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,"
                       "E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,"
-                      "W_p_fiber,W_v_fiber,D_break_contact,clip_loss";
+                      "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber";
 
 bool close_rel(double a, double b, double tol = 1e-12)
 {
@@ -181,14 +181,20 @@ struct BalanceResult
 };
 
 BalanceResult test_balance(Config config, double time_limit, double residual_tol, double eps_break = 0.0,
-                           const PlasticSetup& pl = PlasticSetup())
+                           const PlasticSetup& pl = PlasticSetup(), int contact_type = 0)
 {
     BalanceResult res;
-    std::printf("\n[E1-E3] Лог энергии, Guo 2019 smoke %s%s, k = %zu\n", config_name(config),
-                eps_break > 0.0 ? (", eps_break = " + g(eps_break)).c_str() : "", kEvery);
+    std::printf("\n[E1-E3] Лог энергии, Guo 2019 smoke %s%s%s, k = %zu\n", config_name(config),
+                eps_break > 0.0 ? (", eps_break = " + g(eps_break)).c_str() : "",
+                contact_type != 0 ? (", закон контакта нитей " + std::to_string(contact_type)).c_str() : "", kEvery);
     e2e::ScopedWorkDir wd("sph_energy_log", std::string(config_name(config)) + (eps_break > 0.0 ? "_brk" : "") + (eps_break >= 1.0 ? "_nb" : "") +
-                                                    (pl.on ? (pl.visco ? "_plv" : "_pl") : ""));
+                                                    (pl.on ? (pl.visco ? "_plv" : "_pl") : "") +
+                                                    (contact_type != 0 ? "_ct" + std::to_string(contact_type) : ""));
     GuoScene sc = make_smoke_scene(config, wd.dir());
+    // Закон нормальной силы контактов нитей (оба контакта): 0 -- Герц (запас U_hertz_*),
+    // 1-3 -- работа контакта в канале D_contact_fiber.
+    sc.cfg.fiber_solid_contact_type = contact_type;
+    sc.cfg.fiber_fiber_contact_type = contact_type;
     if (pl.on)
     {
         for (fiber::FiberMaterial& m : sc.model.materials)
@@ -286,6 +292,17 @@ BalanceResult test_balance(Config config, double time_limit, double residual_tol
     check(first[kResid] == 0.0, "residual(0) = 0");
     check(last[kDFric] >= 0.0, "D_friction >= 0");
     check(last[kDCss] >= 0.0, "D_contact_ss >= 0");
+    if (contact_type == 0)
+    {
+        check(last[kDCf] == 0.0, "закон Герц: D_contact_fiber = 0");
+    }
+    else
+    {
+        std::printf("  info : закон %d: D_contact_fiber %s (%s E0), U_hertz_ff %s, U_hertz_fs %s\n", contact_type,
+                    g(last[kDCf]).c_str(), g(last[kDCf] / e0).c_str(), g(last[kUHff]).c_str(), g(last[kUHfs]).c_str());
+        check(last[kDCf] > 0.0, "закон 1-3: D_contact_fiber > 0 (сила только на сближении -- рассеяние)");
+        check(last[kUHff] == 0.0 && last[kUHfs] == 0.0, "закон 1-3: потенциала Герца в запасе нет");
+    }
     if (eps_break > 0.0 && eps_break < 1.0)
     {
         const std::size_t broken = bonds0 - sc.model.topology.bonds.size();
@@ -485,6 +502,9 @@ int main(int argc, char** argv)
         // Максвелл + разрывы: баланс с D_break и W_v при порванных связях.
         test_balance(Config::T1, time_limit, kResidualTolFabric, 0.005, pl);
     }
+    // Законы контакта нитей 1-3: энергия контакта -- в канале D_contact_fiber, баланс сходится.
+    for (int ct = 1; ct <= 3; ++ct) test_balance(Config::T1, time_limit, kResidualTolFabric, 0.0, PlasticSetup(), ct);
+    test_balance(Config::T1, time_limit, kResidualTolFabric, 0.005, PlasticSetup(), 1);
     test_no_perturbation(Config::A_T1);
     std::printf("\n%s: провалов %d\n", e2e::failures == 0 ? "OK" : "FAIL", e2e::failures);
     return e2e::failures == 0 ? 0 : 1;

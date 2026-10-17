@@ -352,6 +352,29 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             const double fiber_solid_dt_limit = interactions::compute_fiber_solid_contact_dt_limit(
                 fiber_exec, cfg.mats, sys, fb, materials, fiber_solid_search.primitives, fiber_solid_params);
             if (fiber_solid_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_solid_dt_limit;
+#ifdef SPH_ENERGY_LOG
+            // Ускорение контактов нитей с законом 1-3 -- для канала D_contact_fiber
+            // (у Герца энергия контакта -- в запасе U_hertz_*, канал не нужен).
+            if (elog && (fiber_fiber_law.type != 0 || fiber_solid_law.type != 0))
+            {
+                const bool ff = fiber_fiber_law.type != 0, fs = fiber_solid_law.type != 0;
+                for (size_t d = 0; d < dim; ++d)
+                {
+                    elog->contact_fiber_acc[d].assign(nfiber, 0.0);
+                    for (size_t i = 0; i < nfiber; ++i)
+                        elog->contact_fiber_acc[d][i] = (ff ? fiber_contact_delta[i].dv[d] : 0.0) +
+                                                        (fs ? fiber_solid_fiber_delta[i].dv[d] : 0.0);
+                }
+                elog->contact_solid_acc.resize(dim);
+                for (size_t d = 0; d < dim; ++d)
+                {
+                    elog->contact_solid_acc[d].assign(ntotal, 0.0);
+                    if (fs)
+                        for (size_t i = 0; i < ntotal; ++i) elog->contact_solid_acc[d][i] = fiber_solid_solid_delta[i].dv[d];
+                }
+                elog->has_contact_fiber = true;
+            }
+#endif
 #ifdef SPH_CONTACT_STATS
             if (cstats)
                 cstats->after_rhs(static_cast<long long>(current_ts), cfg.mats, sys, fb, topology, materials,
@@ -381,6 +404,17 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             {
                 double unused_force[dim] = {};
                 interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, wb.contact_dv,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, unused_force);
+            }
+            // То же для ускорения контактов нитей с законом 1-3 (канал D_contact_fiber).
+            if (elog && elog->has_contact_fiber)
+            {
+                double unused_force[dim] = {};
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, elog->contact_solid_acc,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, unused_force);
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, elog->contact_fiber_acc,
                                                      static_cast<std::vector<std::vector<double>>*>(nullptr),
                                                      clamp_ws, unused_force);
             }
@@ -500,6 +534,15 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                   energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal,
                                                          elog->friction_solid, false);
                 elog->has_friction = false;
+            }
+            if (elog->has_contact_fiber)
+            {
+                const auto fupd = solver.fiber_velocity_update(fb, dt);
+                echan.contact_fiber -= energy::work_mid_fiber(fiber_exec, fb, fupd, solver.fiber_rhs.dv,
+                                                              elog->contact_fiber_acc, nfiber) +
+                                       energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal,
+                                                              elog->contact_solid_acc, false);
+                elog->has_contact_fiber = false;
             }
             if (wb.has_contact_dv && ntotal > 0)
                 echan.contact_ss -=
