@@ -119,6 +119,7 @@ struct Options
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
     fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
     double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
+    double fiber_E = -1.0;    // > 0 -- переопределить модуль Юнга нити, Па (все материалы ткани)
     std::size_t energy_log = 0; // > 0 -- energy_log.csv каждые N шагов (только сборка с SPH_ENERGY_LOG)
     // Законы нормальной силы контактов нитей (fiber_contact_law.hpp): -1 -- как в
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
@@ -167,7 +168,7 @@ void print_usage()
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
                 "                   [--fs-contact=0..3] [--ff-contact=0..3]  (закон контакта нитей, 0 = Герц)\n"
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
-                "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>]\n"
+                "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
                 "  свой и имеют приоритет над --mu независимо от порядка ключей; не заданный из пары берётся из --mu\n"
@@ -320,6 +321,11 @@ int parse_args(int argc, char** argv, Options& o)
             if (o.fiber_inelastic.empty() || !fs::exists(o.fiber_inelastic)) return bad("--fiber-inelastic (файл не найден)");
             o.fiber_inelastic = fs::absolute(o.fiber_inelastic);
         }
+        else if (a.rfind("--fiber-E=", 0) == 0)
+        {
+            if (!parse_double(val("--fiber-E="), d) || !(d > 0.0)) return bad("--fiber-E");
+            o.fiber_E = d;
+        }
         else if (a.rfind("--eps-break=", 0) == 0)
         {
             if (!parse_double(val("--eps-break="), d) || !(d > 0.0)) return bad("--eps-break");
@@ -441,6 +447,10 @@ bool g_first_scene_printed = false;
 KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workdir)
 {
     KV info;
+    // Модуль Юнга -- первым: временный материал директив неупругости ниже строится уже с ним.
+    // Сцена (геометрия, массы, l0) от E не зависит; E читается только в счёте.
+    if (opt.fiber_E > 0.0)
+        for (fiber::FiberMaterial& m : sc.model.materials) m.E = opt.fiber_E;
     if (!opt.fiber_inelastic.empty())
     {
         std::ifstream in(opt.fiber_inelastic);
@@ -530,7 +540,7 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                 m.mu_fs = mu_fs;
             }
         KV fiber_info;
-        if (sc.has_fabric && (!opt.fiber_inelastic.empty() || opt.eps_break > 0.0))
+        if (sc.has_fabric && (!opt.fiber_inelastic.empty() || opt.eps_break > 0.0 || opt.fiber_E > 0.0))
         {
             fiber_info = apply_fiber_overrides(opt, sc, sub);
             std::printf("[нить] неупругость/eps_break:");
