@@ -1,0 +1,1332 @@
+{
+ "_note": "Cards 1..N per keyword; fields in standard (fixed) format. Generated from ansys/pydyna codegen/kwd.json (main, 2026-10-03); NODE added manually from LS-DYNA manual (not in kwd.json).",
+ "keywords": {
+  "ELEMENT_SPH": [
+   [
+    {
+     "name": "NID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "MASS",
+     "offset": 16,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "NEND",
+     "offset": 32,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ]
+  ],
+  "SECTION_SPH": [
+   [
+    {
+     "name": "SECID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "CSLH",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "1.2"
+    },
+    {
+     "name": "HMIN",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.2"
+    },
+    {
+     "name": "HMAX",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "2.0"
+    },
+    {
+     "name": "SPHINI",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DEATH",
+     "offset": 50,
+     "width": 10,
+     "type": "real",
+     "default": "1.0E+20"
+    },
+    {
+     "name": "START",
+     "offset": 60,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "SPHKERN",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ]
+  ],
+  "SECTION_SPH_ELLIPSE": [
+   [
+    {
+     "name": "SECID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "CSLH",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "1.2"
+    },
+    {
+     "name": "HMIN",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.2"
+    },
+    {
+     "name": "HMAX",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "2.0"
+    },
+    {
+     "name": "SPHINI",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DEATH",
+     "offset": 50,
+     "width": 10,
+     "type": "real",
+     "default": "1.0E+20"
+    },
+    {
+     "name": "START",
+     "offset": 60,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "SPHKERN",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ],
+   [
+    {
+     "name": "HXCSLH",
+     "offset": 0,
+     "width": 10,
+     "type": "real",
+     "default": null
+    },
+    {
+     "name": "HYCSLH",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": null
+    },
+    {
+     "name": "HZCSLH",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": null
+    },
+    {
+     "name": "HXINI",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": null
+    },
+    {
+     "name": "HYINI",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": null
+    },
+    {
+     "name": "HZINI",
+     "offset": 50,
+     "width": 10,
+     "type": "real",
+     "default": null
+    }
+   ]
+  ],
+  "ELEMENT_SOLID": [
+   [
+    {
+     "name": "EID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N1",
+     "offset": 16,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N2",
+     "offset": 24,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N3",
+     "offset": 32,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N4",
+     "offset": 40,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N5",
+     "offset": 48,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N6",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N7",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N8",
+     "offset": 72,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "ELEMENT_SOLID (ten nodes format)": [
+   [
+    {
+     "name": "EID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "N1",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N2",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N3",
+     "offset": 16,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N4",
+     "offset": 24,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N5",
+     "offset": 32,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N6",
+     "offset": 40,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N7",
+     "offset": 48,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N8",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N9",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N10",
+     "offset": 72,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "ELEMENT_SHELL": [
+   [
+    {
+     "name": "EID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N1",
+     "offset": 16,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N2",
+     "offset": 24,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N3",
+     "offset": 32,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N4",
+     "offset": 40,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N5",
+     "offset": 48,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N6",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N7",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N8",
+     "offset": 72,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "ELEMENT_BEAM": [
+   [
+    {
+     "name": "EID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N1",
+     "offset": 16,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N2",
+     "offset": 24,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N3",
+     "offset": 32,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "RT1",
+     "offset": 40,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "RR1",
+     "offset": 48,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "RT2",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "RR2",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "LOCAL",
+     "offset": 72,
+     "width": 8,
+     "type": "integer",
+     "default": "2"
+    }
+   ]
+  ],
+  "ELEMENT_TSHELL": [
+   [
+    {
+     "name": "EID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 8,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N1",
+     "offset": 16,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N2",
+     "offset": 24,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N3",
+     "offset": 32,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N4",
+     "offset": 40,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N5",
+     "offset": 48,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N6",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N7",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "N8",
+     "offset": 72,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "ELEMENT_DISCRETE_SPHERE": [
+   [
+    {
+     "name": "NID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "MASS",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "INERTIA",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "RADIUS",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "-",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "IDIST",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "NID2",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "SET_NODE_LIST": [
+   [
+    {
+     "name": "SID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "DA1",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA2",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA3",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA4",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "SOLVER",
+     "offset": 50,
+     "width": 10,
+     "type": "string",
+     "default": "MECH"
+    },
+    {
+     "name": "ITS",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": "1"
+    },
+    {
+     "name": "-",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "NID1",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID2",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID3",
+     "offset": 20,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID4",
+     "offset": 30,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID5",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID6",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID7",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "NID8",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "SET_NODE_LIST_GENERATE": [
+   [
+    {
+     "name": "SID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "DA1",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA2",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA3",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA4",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "SOLVER",
+     "offset": 50,
+     "width": 10,
+     "type": "string",
+     "default": "MECH"
+    },
+    {
+     "name": "ITS",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": "1"
+    },
+    {
+     "name": "-",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "B1BEG",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B1END",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B2BEG",
+     "offset": 20,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B2END",
+     "offset": 30,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B3BEG",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B3END",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B4BEG",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "B4END",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "SET_PART_LIST": [
+   [
+    {
+     "name": "SID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "DA1",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA2",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA3",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "DA4",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "SOLVER",
+     "offset": 50,
+     "width": 10,
+     "type": "string",
+     "default": "MECH"
+    }
+   ],
+   [
+    {
+     "name": "PID1",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID2",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID3",
+     "offset": 20,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID4",
+     "offset": 30,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID5",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID6",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID7",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PID8",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    }
+   ]
+  ],
+  "INCLUDE_PATH": [
+   [
+    {
+     "name": "PATH",
+     "offset": 0,
+     "width": 512,
+     "type": "string",
+     "default": null
+    }
+   ]
+  ],
+  "INCLUDE_TRANSFORM": [
+   [
+    {
+     "name": "FILENAME",
+     "offset": 0,
+     "width": 80,
+     "type": "string",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "IDNOFF",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDEOFF",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDPOFF",
+     "offset": 20,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDMOFF",
+     "offset": 30,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDSOFF",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDFOFF",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IDDOFF",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ],
+   [
+    {
+     "name": "IDROFF",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "-",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "PREFIX",
+     "offset": 20,
+     "width": 10,
+     "type": "string",
+     "default": null
+    },
+    {
+     "name": "SUFFIX",
+     "offset": 30,
+     "width": 10,
+     "type": "string",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "FCTMAS",
+     "offset": 0,
+     "width": 10,
+     "type": "real",
+     "default": "1.0"
+    },
+    {
+     "name": "FCTTIM",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "1.0"
+    },
+    {
+     "name": "FCTLEN",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "1.0"
+    },
+    {
+     "name": "FCTTEM",
+     "offset": 30,
+     "width": 10,
+     "type": "string",
+     "default": null
+    },
+    {
+     "name": "INCOUT1",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": "1"
+    },
+    {
+     "name": "FCTCHG",
+     "offset": 50,
+     "width": 10,
+     "type": "real",
+     "default": null
+    }
+   ],
+   [
+    {
+     "name": "TRANID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ]
+  ],
+  "NODE_RIGID_SURFACE": [
+   [
+    {
+     "name": "NID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "X",
+     "offset": 8,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "Y",
+     "offset": 24,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "Z",
+     "offset": 40,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    }
+   ]
+  ],
+  "DEFINE_BOX_SPH": [
+   [
+    {
+     "name": "BOXID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "XMN",
+     "offset": 10,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "XMX",
+     "offset": 20,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "YMN",
+     "offset": 30,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "YMX",
+     "offset": 40,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "ZMN",
+     "offset": 50,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "ZMX",
+     "offset": 60,
+     "width": 10,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "VID",
+     "offset": 70,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ],
+   [
+    {
+     "name": "LCID",
+     "offset": 0,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "VD",
+     "offset": 10,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "NID",
+     "offset": 20,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IREACT",
+     "offset": 30,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "IBUFF",
+     "offset": 40,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "ISHOW",
+     "offset": 50,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "PID",
+     "offset": 60,
+     "width": 10,
+     "type": "integer",
+     "default": "0"
+    }
+   ]
+  ],
+  "NODE": [
+   [
+    {
+     "name": "NID",
+     "offset": 0,
+     "width": 8,
+     "type": "integer",
+     "default": null
+    },
+    {
+     "name": "X",
+     "offset": 8,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "Y",
+     "offset": 24,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "Z",
+     "offset": 40,
+     "width": 16,
+     "type": "real",
+     "default": "0.0"
+    },
+    {
+     "name": "TC",
+     "offset": 56,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    },
+    {
+     "name": "RC",
+     "offset": 64,
+     "width": 8,
+     "type": "integer",
+     "default": "0"
+    }
+   ]
+  ]
+ }
+}
