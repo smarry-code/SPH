@@ -75,3 +75,5 @@ log.txt
 
 # IDE-generated project state
 *.layout
+# Выходные данные расчётов для примеров ParaView (142 МБ, кадры sph_output_*)
+/ParaviewEx/

@@ -62,13 +62,16 @@ def annotation_expr(fields: list[str]) -> str:
     head = [f"'t = %.2f мкс' % ({v('TIME')}*1e6)" if timed else f"'шаг %d' % {v('STEP')}"]
     if timed:
         head.append(f"'шаг %d' % {v('STEP')}")
+    def has(n: str, expr: str) -> str:
+        # монитор может быть прорежен: в кадре без его строки полей v_z, w_f, ... нет
+        return f"({expr} if '{n}' in dir() else '')"
     parts = []
     if "v_z" in fields:
-        parts.append(f"'v_z = %.1f м/с' % {v('v_z')}")
+        parts.append(has("v_z", f"'v_z = %.1f м/с' % {v('v_z')}"))
     if "w_f" in fields:
-        parts.append(f"'прогиб w_f = %.2f мм' % ({v('w_f')}*1e3)")
+        parts.append(has("w_f", f"'прогиб w_f = %.2f мм' % ({v('w_f')}*1e3)"))
     if "n_broken_v" in fields and "n_broken_h" in fields:
-        parts.append(f"'порвано нитей верт./гориз. = %d/%d' % ({v('n_broken_v')}, {v('n_broken_h')})")
+        parts.append(has("n_broken_h", f"'порвано нитей верт./гориз. = %d/%d' % ({v('n_broken_v')}, {v('n_broken_h')})"))
     def line(xs: list[str]) -> str:
         return "'   '.join([" + ", ".join(xs) + "])"
     return line(head) + (" + chr(10) + " + line(parts) if parts else "")
