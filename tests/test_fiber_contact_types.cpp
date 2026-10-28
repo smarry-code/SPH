@@ -387,6 +387,83 @@ void test_type4_hertz_damped()
     check(force_on_a(cx, kx) > 0.0, "Hertz+damper: D = 0, покой -> F = F_H > 0");
 }
 
+// ---------------------------------------------------------------------------
+// Тип 3 с выталкиванием (FiberContactLaw::push_tau): глубокий крест p = 0.3 d.
+//   - push_tau = 0 -- побитово прежний тип 3;
+//   - мелкое проникание (p < push_depth*r) -- выталкивание не включается;
+//   - глубокое, медленный разлёт: прежний тип 3 даёт 0, с выталкиванием
+//     fn = gamma*m_red*(pdot + excess/tau)/dt_prev > 0, слот трения активен;
+//   - быстрый разлёт (pdot + excess/tau <= 0): fn = 0 (контакт не тянет).
+void test_type3_push()
+{
+    std::printf("test_type3_push:\n");
+    const double tau = 1.0e-6, depth = 0.1;
+    auto with_push = [&](const Cross& c) {
+        auto p = make_params(c, contact::Impulse);
+        p.law.push_tau = tau;
+        p.law.push_depth = depth;
+        return p;
+    };
+    {
+        const Cross c = make_cross(0.3, 0.6, 0.7 * kD, -0.5, 0.4, false, false, 0.2);
+        auto p0 = make_params(c, contact::Impulse);
+        auto p1 = p0;
+        p1.law.push_tau = 0.0;
+        p1.law.push_depth = 0.37;
+        const KernelOut k0 = run_kernel(c, {c.prim}, p0), k1 = run_kernel(c, {c.prim}, p1);
+        bool same = k0.slots[0].N == k1.slots[0].N;
+        for (std::size_t i = 0; i < c.state.size(); ++i)
+            for (std::size_t d = 0; d < dim; ++d) same = same && k0.dv[i].dv[d] == k1.dv[i].dv[d];
+        check(same, "push_tau = 0: побитово прежний тип 3");
+    }
+    {
+        const Cross c = make_cross(0.3, 0.6, 0.97 * kD, -0.5, 0.4);
+        const double f_old = force_on_a(c, run_kernel(c, {c.prim}, make_params(c, contact::Impulse)));
+        const double f_new = force_on_a(c, run_kernel(c, {c.prim}, with_push(c)));
+        check(f_old > 0.0 && f_new == f_old, "p < push_depth*r: сила как у прежнего типа 3");
+    }
+    {
+        const Cross c = make_cross(0.3, 0.6, 0.7 * kD, 0.1, -0.05, false, false, 0.2);
+        contact::PairGeom g;
+        contact::PairProps pr;
+        manual_inputs(c, 0.3, 0.6, g, pr);
+        auto p = with_push(c);
+        const double excess = g.p - depth * g.r;
+        const double f_ref = p.law.gamma * pr.m_red * (g.pdot + excess / tau) / p.dt_prev;
+        const double f_old = force_on_a(c, run_kernel(c, {c.prim}, make_params(c, contact::Impulse)));
+        const KernelOut k = run_kernel(c, {c.prim}, p);
+        check(g.pdot < 0.0 && f_old == 0.0, "глубоко, медленный разлёт: прежний тип 3 даёт 0");
+        check(f_ref > 0.0 && near_rel(force_on_a(c, k), f_ref, 1e-12),
+              "глубоко, медленный разлёт: fn = gamma*m_red*(pdot + excess/tau)/dt_prev");
+        check(k.slots[0].active && near_rel(k.slots[0].N, f_ref, 1e-12), "выталкивание: слот трения активен, N = fn");
+        double pz = 0.0;
+        for (std::size_t i = 0; i < c.state.size(); ++i) pz += c.state.mass[i] * k.dv[i].dv[2];
+        check(std::fabs(pz) <= 1e-12 * f_ref, "выталкивание: импульс сохраняется");
+    }
+    {
+        // Предел скорости выталкивания: excess/tau = 200 м/с, предел 20 м/с ->
+        // fn = gamma*m_red*(pdot + 20)/dt_prev; без предела -- прежняя формула.
+        const Cross c = make_cross(0.3, 0.6, 0.7 * kD, 0.1, -0.05, false, false, 0.2);
+        contact::PairGeom g;
+        contact::PairProps pr;
+        manual_inputs(c, 0.3, 0.6, g, pr);
+        auto p = with_push(c);
+        p.law.push_vmax = 20.0;
+        const double f_ref = p.law.gamma * pr.m_red * (g.pdot + 20.0) / p.dt_prev;
+        check(near_rel(force_on_a(c, run_kernel(c, {c.prim}, p)), f_ref, 1e-12),
+              "push_vmax = 20 м/с: скорость выталкивания ограничена (200 -> 20 м/с)");
+        p.law.push_vmax = 1e9;
+        const double f_free = p.law.gamma * pr.m_red * (g.pdot + (g.p - depth * g.r) / tau) / p.dt_prev;
+        check(near_rel(force_on_a(c, run_kernel(c, {c.prim}, p)), f_free, 1e-12),
+              "push_vmax больше excess/tau: формула без изменений");
+    }
+    {
+        // excess/tau = 0.2e-3/1e-6 = 200 м/с; разлёт 300 м/с перекрывает выталкивание.
+        const Cross c = make_cross(0.3, 0.6, 0.7 * kD, 150.0, -150.0);
+        check(force_on_a(c, run_kernel(c, {c.prim}, with_push(c))) == 0.0, "быстрый разлёт: fn = 0, контакт не тянет");
+    }
+}
+
 } // namespace
 
 int main()
@@ -397,6 +474,7 @@ int main()
     test_momentum();
     test_consistency_and_friction();
     test_type4_hertz_damped();
+    test_type3_push();
     std::printf("\n%s: %d failure(s)\n", failures == 0 ? "PASSED" : "FAILED", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -160,10 +160,16 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // 0 = Герц (прежний путь); dt_bead нужен только при типе != 0.
     const interactions::FiberContactLaw fiber_solid_law{cfg.fiber_solid_contact_type,
                                                         cfg.fiber_solid_contact_penalty_scale,
-                                                        cfg.fiber_solid_contact_impulse_gamma};
+                                                        cfg.fiber_solid_contact_impulse_gamma,
+                                                        cfg.fiber_solid_contact_impulse_push_tau,
+                                                        cfg.fiber_contact_impulse_push_depth,
+                                                        cfg.fiber_contact_impulse_push_vmax};
     const interactions::FiberContactLaw fiber_fiber_law{cfg.fiber_fiber_contact_type,
                                                         cfg.fiber_fiber_contact_penalty_scale,
-                                                        cfg.fiber_fiber_contact_impulse_gamma};
+                                                        cfg.fiber_fiber_contact_impulse_gamma,
+                                                        cfg.fiber_fiber_contact_impulse_push_tau,
+                                                        cfg.fiber_contact_impulse_push_depth,
+                                                        cfg.fiber_contact_impulse_push_vmax};
     const bool fiber_need_bead_dt_ref = interactions::fiber_contact_law_is_penalty(fiber_solid_law) ||
                                         interactions::fiber_contact_law_is_penalty(fiber_fiber_law);
     std::vector<double> fiber_bead_dt_ref;
@@ -464,6 +470,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;
         if (fiber_dt_limit < dt) dt = fiber_dt_limit;
+        if (cfg.dt_scale < 1.0) dt *= cfg.dt_scale; // проверка сходимости по шагу
 
         // Единая стадия трения (fiber/fiber_friction_projection.md, §5;
         // fiber/fiber_solid_friction_implementation.md, §5): проекция на

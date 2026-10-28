@@ -92,10 +92,23 @@ struct FailureParams
     double sigma_u = 0.0;  // предельное полное σ = E(ε-ε_p)+q (без Кельвина); 0 => критерий выключен
 };
 
+// Повреждённость с разупрочнением (fiber/plan-fiber-damage.md): после σ_eff = σ_u
+// связь не рвётся, а теряет силу по линейной огибающей σ_env(κ) = σ_u(1 - (κ-ε0)/Δε_f)
+// до нуля; при D = 1 удаляется. Δε_f задаётся напрямую (deps_f) или через энергию
+// разрушения gf [Дж/м²]: Δε_f = 2·gf/(σ_u·l0) для каждой связи (не зависит от сетки).
+// Требует FAILURE SIGMA_U. Оба нуля => выключено (побитово прежний закон).
+struct DamageParams
+{
+    double deps_f = 0.0; // участок разупрочнения Δε_f; 0 => берётся из gf
+    double gf = 0.0;     // энергия разрушения [Дж/м²]
+    bool enabled() const { return deps_f > 0.0 || gf > 0.0; }
+};
+
 inline const PlasticParams kNoPlastic{};
 inline const RateParams kNoRate{};
 inline const ViscoParams kNoVisco{};
 inline const FailureParams kNoFailure{};
+inline const DamageParams kNoDamage{};
 
 // Закон связи = E + все блоки. НЕВЛАДЕЮЩЕЕ представление: хранит только ссылки
 // (никаких копий таблицы упрочнения, никаких аллокаций), поэтому его можно
@@ -108,12 +121,18 @@ struct BondLaw
     const RateParams& rate;
     const ViscoParams& visco;
     const FailureParams& failure;
+    const DamageParams& damage;
+    double deps_f; // Δε_f ЭТОЙ связи (из damage.deps_f или 2·gf/(σ_u·l0)); 0 => разупрочнения нет
 
     BondLaw(double E_, const PlasticParams& p = kNoPlastic, const RateParams& r = kNoRate,
-            const ViscoParams& v = kNoVisco, const FailureParams& f = kNoFailure)
-        : E(E_), plastic(p), rate(r), visco(v), failure(f)
+            const ViscoParams& v = kNoVisco, const FailureParams& f = kNoFailure,
+            const DamageParams& dm = kNoDamage, double deps_f_ = 0.0)
+        : E(E_), plastic(p), rate(r), visco(v), failure(f), damage(dm), deps_f(deps_f_)
     {
     }
+
+    // Разупрочнение действует: включено, есть σ_u и положительный участок Δε_f.
+    bool softening() const { return damage.enabled() && failure.sigma_u > 0.0 && deps_f > 0.0; }
 };
 
 // Состояние связи (раздел 2 дизайна).
@@ -124,6 +143,11 @@ struct BondState
     double eps_prev = 0.0; // ε предыдущего шага
     double w_p = 0.0;      // накопленная пластическая работа, Дж/м^3
     double w_v = 0.0;      // накопленная вязкая диссипация (Максвелл + Кельвин), Дж/м^3
+    // Повреждённость (DamageParams). eps0 < 0 -- повреждение не началось.
+    double d = 0.0;        // повреждённость [0, 1], не убывает
+    double kappa = 0.0;    // наибольшая ε после начала повреждения
+    double eps0 = -1.0;    // ε в момент начала повреждения (σ_eff = σ_u)
+    double w_d = 0.0;      // работа разупрочнения, Дж/м^3
 };
 
 // ----------------------------------------------------------------------
@@ -259,6 +283,9 @@ inline double bond_stress(const BondLaw& law, const BondState& s, double eps, do
     // eta == 0: не умножаем (0*inf = NaN), результат побитово равен упругому закону.
     const double visc = law.visco.eta != 0.0 ? law.visco.eta * eps_dot : 0.0;
     const double sigma = law.E * (eps - s.eps_p) + s.q + visc;
+    // Повреждённая связь: все ветви несут долю (1 - D). При d == 0 ветка не
+    // выполняется -- результат побитово прежний.
+    if (s.d > 0.0) return std::max((1.0 - s.d) * sigma, 0.0);
     return std::max(sigma, 0.0);
 }
 
@@ -305,7 +332,9 @@ inline BondState bond_constitutive_update(const BondLaw& law, const BondState& i
     const double E = law.E;
 
     // --- пластический возврат ---
-    if (law.plastic.enabled())
+    // После начала повреждения пластика заморожена: дальнейшая нелинейность -- разупрочнение.
+    const bool damage_started = law.softening() && in.eps0 >= 0.0;
+    if (law.plastic.enabled() && !damage_started)
     {
         const PlasticParams& pl = law.plastic;
         const RateParams& rt = law.rate;
@@ -384,6 +413,42 @@ inline BondState bond_constitutive_update(const BondLaw& law, const BondState& i
         out.w_v += int_q2 / (vs.E1 * vs.tau);
     }
     if (vs.eta > 0.0) out.w_v += vs.eta * deps_eff * (deps_eff / dt);
+
+    // --- повреждённость с разупрочнением ---
+    // Начало: σ_eff = E(ε - ε_p) + q >= σ_u. Дальше κ = max ε, огибающая
+    // σ_env(κ) = σ_u·max(0, 1 - (κ - ε0)/Δε_f), D = 1 - σ_env/σ_eff(κ), D не убывает.
+    // Напряжение связи (bond_stress) = (1 - D)·σ_eff: на огибающей при ε = κ,
+    // разгрузка и повторная нагрузка -- по секущей к ε_p.
+    // Работа разупрочнения: dw_d = Y·dD, Y = ½E(κ - ε_p)² (энергия, освобождаемая
+    // ростом D), Y на шаге -- среднее по концам. После D = 1 запасённая энергия 0.
+    if (law.softening())
+    {
+        const double su = law.failure.sigma_u;
+        bool onset = false;
+        if (out.eps0 < 0.0 && E * (eps_new - out.eps_p) + out.q >= su)
+        {
+            // ε0 -- деформация, при которой σ_eff ровно равно σ_u (внутри шага, при q шага),
+            // а не конец шага: иначе перелёт через σ_u не идёт в разупрочнение, и при Δε_f -> 0
+            // связь не рвётся на том же шаге, что мгновенный критерий SIGMA_U (тест B3).
+            const double eps_star = out.eps_p + (su - out.q) / E;
+            out.eps0 = std::min(std::max(eps_star, std::min(in.eps_prev, eps_new)), eps_new);
+            out.kappa = out.eps0;
+            onset = true;
+        }
+        if (out.eps0 >= 0.0)
+        {
+            const double kap_old = onset ? out.eps0 : out.kappa;
+            const double kap = std::max(kap_old, eps_new);
+            const double env = su * std::max(0.0, 1.0 - (kap - out.eps0) / law.deps_f);
+            const double sig_eff = E * (kap - out.eps_p) + out.q;
+            double D = sig_eff > 0.0 ? 1.0 - env / sig_eff : 1.0;
+            D = std::min(std::max(D, in.d), 1.0);
+            const double e0 = kap_old - out.eps_p, e1 = kap - out.eps_p;
+            out.w_d = in.w_d + 0.25 * E * (e0 * e0 + e1 * e1) * (D - in.d);
+            out.d = D;
+            out.kappa = kap;
+        }
+    }
 
     out.eps_prev = eps_new;
     return out;

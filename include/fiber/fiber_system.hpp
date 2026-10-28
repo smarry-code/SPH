@@ -183,14 +183,17 @@ struct FiberMaterial
     RateParams rate{};
     ViscoParams visco{};
     FailureParams failure{};
+    // Повреждённость с разупрочнением (fiber/plan-fiber-damage.md). По умолчанию выключена.
+    DamageParams damage{};
 
     // Включена ли у материала хоть одна неупругая составляющая связи (пластика,
-    // ветвь Максвелла, демпфер Кельвина через eta или xi). false => RHS-ядро и
-    // dt-лимит идут по прежней упругой формуле побитово, проход Postprocessing
-    // apply_fiber_bond_constitutive связь не трогает.
+    // ветвь Максвелла, демпфер Кельвина через eta или xi, повреждённость). false =>
+    // RHS-ядро и dt-лимит идут по прежней упругой формуле побитово, проход
+    // Postprocessing apply_fiber_bond_constitutive связь не трогает.
     bool inelastic() const
     {
-        return plastic.enabled() || (visco.E1 > 0.0 && visco.tau > 0.0) || visco.eta != 0.0 || visco.xi != 0.0;
+        return plastic.enabled() || (visco.E1 > 0.0 && visco.tau > 0.0) || visco.eta != 0.0 || visco.xi != 0.0 ||
+               damage.enabled();
     }
 
     // Включён ли хоть один критерий разрыва FAILURE (EPS_P > 0 или SIGMA_U > 0).

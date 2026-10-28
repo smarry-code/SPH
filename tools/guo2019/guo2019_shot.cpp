@@ -120,6 +120,9 @@ struct Options
     fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
     double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
     double fiber_E = -1.0;    // > 0 -- переопределить модуль Юнга нити, Па (все материалы ткани)
+    // Тип 3: выталкивание при глубоком проникании (оба контакта нитей) и gamma; множитель шага.
+    double impulse_push_tau = 0.0, impulse_push_depth = 0.1, impulse_gamma = -1.0, impulse_push_vmax = 0.0;
+    double dt_scale = 1.0;
     std::size_t energy_log = 0; // > 0 -- energy_log.csv каждые N шагов (только сборка с SPH_ENERGY_LOG)
     // Законы нормальной силы контактов нитей (fiber_contact_law.hpp): -1 -- как в
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
@@ -170,6 +173,8 @@ void print_usage()
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
+                "                   [--impulse-push-tau=<с>] [--impulse-push-depth=<доля r>] [--impulse-push-vmax=<м/с>] [--impulse-gamma=<g>]  (тип 3)\n"
+                "                   [--dt-scale=<s из (0;1]>]  (множитель шага, сходимость)\n"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
                 "  свой и имеют приоритет над --mu независимо от порядка ключей; не заданный из пары берётся из --mu\n"
                 "  (по умолчанию %g).\n", kMuDefault);
@@ -326,6 +331,31 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_double(val("--fiber-E="), d) || !(d > 0.0)) return bad("--fiber-E");
             o.fiber_E = d;
         }
+        else if (a.rfind("--impulse-push-tau=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-tau="), d) || d < 0.0) return bad("--impulse-push-tau");
+            o.impulse_push_tau = d;
+        }
+        else if (a.rfind("--impulse-push-depth=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-depth="), d) || d < 0.0 || d >= 1.0) return bad("--impulse-push-depth");
+            o.impulse_push_depth = d;
+        }
+        else if (a.rfind("--impulse-push-vmax=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-vmax="), d) || d < 0.0) return bad("--impulse-push-vmax");
+            o.impulse_push_vmax = d;
+        }
+        else if (a.rfind("--impulse-gamma=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-gamma="), d) || !(d > 0.0) || d > 1.6) return bad("--impulse-gamma");
+            o.impulse_gamma = d;
+        }
+        else if (a.rfind("--dt-scale=", 0) == 0)
+        {
+            if (!parse_double(val("--dt-scale="), d) || !(d > 0.0) || d > 1.0) return bad("--dt-scale");
+            o.dt_scale = d;
+        }
         else if (a.rfind("--eps-break=", 0) == 0)
         {
             if (!parse_double(val("--eps-break="), d) || !(d > 0.0)) return bad("--eps-break");
@@ -440,6 +470,7 @@ std::string kv_get(const KV& kv, const std::string& key)
 }
 
 bool g_first_scene_printed = false;
+bool g_first_scene_printed_push_warn = false; // предупреждение о --impulse-push-tau -- один раз
 
 // Неупругость нити и eps_break (после build_guo_scene). Возвращает пары ключ=значение для shot.txt.
 // Файл директив разбирается штатным load_fiber_file: временный .fib = MATERIAL 0 сцены + директивы файла + заглушка FIBER
@@ -484,6 +515,7 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
             m.rate = tmp.materials[0].rate;
             m.visco = tmp.materials[0].visco;
             m.failure = tmp.materials[0].failure;
+            m.damage = tmp.materials[0].damage;
         }
         const fiber::FiberMaterial& m = sc.model.materials.at(0);
         info.emplace_back("fiber_inelastic", opt.fiber_inelastic.filename().string());
@@ -493,6 +525,11 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
         info.emplace_back("visco_eta", fmtg(m.visco.eta));
         info.emplace_back("fail_eps_p", fmtg(m.failure.eps_p));
         info.emplace_back("fail_sigma_u", fmtg(m.failure.sigma_u));
+        if (m.damage.enabled())
+        {
+            info.emplace_back("damage_deps_f", fmtg(m.damage.deps_f));
+            info.emplace_back("damage_gf", fmtg(m.damage.gf));
+        }
     }
     if (opt.eps_break > 0.0)
     {
@@ -502,6 +539,11 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     }
     info.emplace_back("fiber_eps_break", fmtg(sc.model.materials.at(0).eps_break));
     info.emplace_back("fiber_E", fmtg(sc.model.materials.at(0).E));
+    info.emplace_back("impulse_push_tau", fmtg(opt.impulse_push_tau));
+    info.emplace_back("impulse_push_depth", fmtg(opt.impulse_push_depth));
+    info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
+    info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
+    info.emplace_back("dt_scale", fmtg(opt.dt_scale));
     return info;
 }
 
@@ -557,6 +599,19 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         sc.cfg.t_total = t_max;
         if (opt.fs_contact >= 0) sc.cfg.fiber_solid_contact_type = opt.fs_contact;
         if (opt.ff_contact >= 0) sc.cfg.fiber_fiber_contact_type = opt.ff_contact;
+        sc.cfg.fiber_solid_contact_impulse_push_tau = sc.cfg.fiber_fiber_contact_impulse_push_tau = opt.impulse_push_tau;
+        if (opt.impulse_push_tau > 0.0 && !g_first_scene_printed_push_warn)
+        {
+            g_first_scene_printed_push_warn = true;
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --impulse-push-tau включает выталкивание закона 3 -- источник энергии "
+                                 "(выбросы до -37 %% E0, ложные разрывы; fiber_contact_law.hpp, FiberContactLaw::push_tau). "
+                                 "Только для воспроизведения серий 2026-10-20/21.\n");
+        }
+        sc.cfg.fiber_contact_impulse_push_depth = opt.impulse_push_depth;
+        sc.cfg.fiber_contact_impulse_push_vmax = opt.impulse_push_vmax;
+        if (opt.impulse_gamma > 0.0)
+            sc.cfg.fiber_solid_contact_impulse_gamma = sc.cfg.fiber_fiber_contact_impulse_gamma = opt.impulse_gamma;
+        sc.cfg.dt_scale = opt.dt_scale;
 #ifdef SPH_CONTACT_STATS
         // Статистика контактов -- в подкаталог выстрела (CWD).
         sc.cfg.contact_stats_every = opt.contact_stats;
@@ -580,7 +635,7 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
 #endif
         }
 
-        double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal), time = 0.0;
+        double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
         RunGuard guard(opt.time_limit, 2.0e6, 200); // time_limit <= 0 -- без лимита по стенному времени
         if (opt.max_steps > 0) guard.set_step_limit(opt.max_steps);
         MonitorOptions mo;

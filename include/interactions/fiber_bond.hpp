@@ -73,6 +73,16 @@ inline fiber::ViscoParams fiber_bond_visco(const fiber::FiberMaterial& mat, doub
     return vp;
 }
 
+// Участок разупрочнения Δε_f ЭТОЙ связи (fiber/plan-fiber-damage.md): DEPS_F напрямую или
+// из энергии разрушения GF: Δε_f = 2·GF/(σ_u·l0) -- энергия разрыва связи не зависит от l0.
+// 0, если повреждённость выключена.
+inline double fiber_bond_damage_deps_f(const fiber::FiberMaterial& mat, double l0)
+{
+    if (!mat.damage.enabled() || !(mat.failure.sigma_u > 0.0)) return 0.0;
+    if (mat.damage.deps_f > 0.0) return mat.damage.deps_f;
+    return l0 > 0.0 ? 2.0 * mat.damage.gf / (mat.failure.sigma_u * l0) : 0.0;
+}
+
 // Критический безразмерный шаг h = omega*dt схемы проекта (предиктор -> RHS ->
 // корректор) для линейного осциллятора с демпфером Кельвина, доля критического
 // демпфирования xi: h_cr = 2 (sqrt(1+4 xi^2) - 2 xi). xi = 0 даёт 2, при
@@ -163,7 +173,7 @@ inline void compute_fiber_bond_contributions(
                     for (std::size_t d = 0; d < dim; ++d) vrel += (state.vx[d][j] - state.vx[d][i]) * xij[d];
                     eps_dot = (vrel / l) / b.l0;
                 }
-                const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+                const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure, mat.damage, fiber_bond_damage_deps_f(mat, b.l0));
                 const double sigma = fiber::bond_stress(law, b.st, strain, eps_dot);
 #ifdef SPH_ENERGY_LOG
                 if (sigma_clip && strain > b.st.eps_p)

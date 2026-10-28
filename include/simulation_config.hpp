@@ -60,6 +60,16 @@ struct SimulationConfig
     double fiber_solid_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
     double fiber_fiber_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
     double fiber_fiber_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    // Выталкивание типа 3 при глубоком проникании (fiber/plan-fiber-contact-laws12-fix.md;
+    // FiberContactLaw::push_tau): к pdot добавляется max(p - depth*r, 0)/tau, tau в с.
+    // tau = 0 -- выключено (побитово прежний тип 3); depth -- доля суммы радиусов пары.
+    double fiber_solid_contact_impulse_push_tau = 0.0;
+    double fiber_fiber_contact_impulse_push_tau = 0.0;
+    double fiber_contact_impulse_push_depth = 0.1;
+    double fiber_contact_impulse_push_vmax = 0.0; // предел скорости выталкивания, м/с; 0 -- без предела
+    // Множитель общего шага по времени (проверка сходимости по шагу); 1 -- без изменений,
+    // допустимо (0; 1].
+    double dt_scale = 1.0;
 
     // --- Изоляция SPH-сумм Solid по телам ---
     // При true SPH-пары реальных частиц разных тел (sys.body) отвергаются;
@@ -147,6 +157,8 @@ inline void SimulationConfig::apply_defaults()
     // Контакты нитей: 0 = Герц (не «выключено»).
     fiber_solid_contact_type = 0;  fiber_solid_contact_penalty_scale = 1.0;  fiber_solid_contact_impulse_gamma = 1.0;
     fiber_fiber_contact_type = 0;  fiber_fiber_contact_penalty_scale = 1.0;  fiber_fiber_contact_impulse_gamma = 1.0;
+    fiber_solid_contact_impulse_push_tau = 0.0;  fiber_fiber_contact_impulse_push_tau = 0.0;
+    fiber_contact_impulse_push_depth = 0.1;  fiber_contact_impulse_push_vmax = 0.0;  dt_scale = 1.0;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;

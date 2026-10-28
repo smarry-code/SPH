@@ -256,6 +256,30 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         {
             cfg.fiber_fiber_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
         }
+        else if (key == "fiber_solid_contact_impulse_push_tau")
+        {
+            cfg.fiber_solid_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_push_tau")
+        {
+            cfg.fiber_fiber_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_vmax")
+        {
+            cfg.fiber_contact_impulse_push_vmax = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_depth")
+        {
+            cfg.fiber_contact_impulse_push_depth = std::stod(value);
+        }
+        else if (key == "dt_scale")
+        {
+            const double v = std::stod(value);
+            if (!(v > 0.0) || v > 1.0)
+                std::cerr << "dt_scale = " << v << " вне (0; 1], откат к 1\n";
+            else
+                cfg.dt_scale = v;
+        }
         else if (key == "ode_solver")
         {
             const int v = std::stoi(value);

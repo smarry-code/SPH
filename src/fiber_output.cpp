@@ -88,10 +88,17 @@ void fiber_output(const FiberState& fiber, const FiberTopology& topology, const 
         file << "\n";
     }
 
-    bool extended = false;
-    for (const auto& m : materials) extended = extended || m.inelastic();
+    bool extended = false, with_damage = false;
+    for (const auto& m : materials)
+    {
+        extended = extended || m.inelastic();
+        with_damage = with_damage || m.damage.enabled();
+    }
 
-    file << (extended ? "# i j l0 l l_break elongation eps_p sigma w_p w_v\n" : "# i j l0 l l_break elongation\n");
+    // Столбец D (повреждённость) -- только при включённой DAMAGE: без неё кадры побитово прежние.
+    file << (with_damage ? "# i j l0 l l_break elongation eps_p sigma w_p w_v D\n"
+                         : (extended ? "# i j l0 l l_break elongation eps_p sigma w_p w_v\n"
+                                     : "# i j l0 l l_break elongation\n"));
     file << "BONDS\n";
     for (std::size_t k = 0; k < nb; ++k)
     {
@@ -122,7 +129,7 @@ void fiber_output(const FiberState& fiber, const FiberTopology& topology, const 
                         vrel += (fiber.vx[d][b.j] - fiber.vx[d][b.i]) * (fiber.x[d][b.j] - fiber.x[d][b.i]);
                     eps_dot = (vrel / l) / b.l0;
                 }
-                const BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+                const BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure, mat.damage, interactions::fiber_bond_damage_deps_f(mat, b.l0));
                 eps_p = b.st.eps_p;
                 sigma = bond_stress(law, b.st, eps, eps_dot);
                 wp = b.st.w_p * A * b.l0;
@@ -137,6 +144,7 @@ void fiber_output(const FiberState& fiber, const FiberTopology& topology, const 
             // прежние 6 колонок и точность потока не трогаем.
             const std::streamsize old_prec = file.precision(17);
             file << " " << eps_p << " " << sigma << " " << wp << " " << wv;
+            if (with_damage) file << " " << (mat.inelastic() ? b.st.d : 0.0);
             file.precision(old_prec);
         }
         file << "\n";

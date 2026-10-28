@@ -37,6 +37,7 @@
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_bond.hpp" // fiber_bond_pair_dt
 #include "rhs/cpu_executor.hpp"
+#include "simulation_config.hpp" // dt_scale (impulse_unscaled_limit)
 
 struct SimulationConfig;
 
@@ -50,6 +51,33 @@ struct FiberContactLaw
     int type = 0;       // 0 = Герц (не «выключено»)
     double kp = 1.0;    // Kp (типы 1, 2; у типа 4 -- масштаб демпфера)
     double gamma = 1.0; // доля гашения (тип 3)
+    // НЕ ИСПОЛЬЗОВАТЬ ДЛЯ РАСЧЁТОВ (решение владельца 2026-10-21; ключ оставлен для
+    // воспроизведения серий 2026-10-20/21). Выталкивание на уровне скоростей -- источник
+    // энергии: закон 3 гасит скорость пары за шаг при любой силе, и с выталкиванием пара,
+    // которую натянутая нить прижимает обратно, разводится с заданной скоростью сотни шагов
+    // подряд, совершая работу против натяжения. 1T 71 м/с: -19,8 % E0 за 5 мкс без предела,
+    // -37,5 % E0 с пределом push_vmax = 20 м/с (предел ограничивает скорость, а не работу),
+    // пачки по 12-16 ложных разрывов. Вернуть проникание без источника энергии можно только
+    // потенциальной (упругой) силой от глубины -- это закон 4 (Герц + демпфер).
+    //
+    // Выталкивание типа 3 (стабилизация Баумгарте на уровне скоростей): при
+    // p > push_depth*r закон гасит не pdot, а pdot + (p - push_depth*r)/push_tau,
+    // то есть выводит лишнее проникание с постоянной времени push_tau, с.
+    // Без него тип 3 держит нагрузку (F ~ gamma*P), но не возвращает
+    // накопленное проникание: при pdot <= 0 сила ноль, и нити копят проникание
+    // до сквозного прохода. Время, а не доля за шаг: доля beta за шаг дала бы
+    // скорость выталкивания beta*excess/dt ~ сотни м/с при dt ~ 2e-8 с и
+    // зависела бы от шага. Требование устойчивости: push_tau >> dt.
+    // push_tau = 0 -- выключено (побитово прежний тип 3).
+    double push_tau = 0.0;
+    double push_depth = 0.1; // доля g.r (суммы радиусов пары)
+    // Предел скорости выталкивания, м/с (0 -- без предела). Без него при внезапно глубоком
+    // проникании (порванный конец влетает в перекрестье) (p - depth*r)/tau достигает сотен м/с,
+    // и контакт выбрасывает энергию: 1T 71 м/с, 2026-10-21, -19,8 % E0 за 5 мкс и 12 ложных
+    // разрывов. Под нагрузкой P пара за шаг набирает P*dt/m_red (4,5-9 м/с при 25-50 Н и
+    // dt = 9e-9 с), выталкивание должно её перекрывать -- поэтому предел порядка 20 м/с, а не 1 м/с.
+    // За одно срабатывание контакт может отдать не больше m_red*vmax^2/2 (~1e-5 Дж при 20 м/с).
+    double push_vmax = 0.0;
 };
 
 struct FiberContactStepParams
@@ -134,11 +162,39 @@ inline double fiber_contact_g_eff(double g1, double g2)
     return g1 * g2 / (g1 + g2);
 }
 
+// Предел шага типа 3 (2*kOscSafety*dt_prev/gamma) выражен через сам прошлый шаг. При
+// cfg.dt_scale = s < 1 общий шаг умножается на s ПОСЛЕ минимума по пределам, и этот
+// предел замыкал бы петлю dt_new = s*1.6*dt_prev: шаг падал бы в 0.8 раза за шаг до
+// нуля (B-этап 2026-10-20: dt_min = 3e-29 за 2000 шагов). Поэтому предел типа 3
+// делится на s: после умножения он снова 1.6*dt_prev/gamma. При s = 1 -- без изменений.
+inline contact::Result impulse_unscaled_limit(const FiberContactStepParams& params, contact::Result out)
+{
+    if (params.cfg != nullptr && params.cfg->dt_scale < 1.0 && params.cfg->dt_scale > 0.0 &&
+        out.dt_limit < contact::kNoLimit)
+        out.dt_limit /= params.cfg->dt_scale;
+    return out;
+}
+
 // = contact::penalty_force(type, g, pr, kp, dt_prev, gamma). Только для type 1-3.
+// У типа 3 с push_tau > 0 к pdot добавляется скорость выталкивания (см.
+// FiberContactLaw::push_tau); сама формула impulse_force не меняется.
 inline contact::Result fiber_penalty_force(const FiberContactStepParams& params, const contact::PairGeom& g,
                                            const contact::PairProps& pr)
 {
-    return contact::penalty_force(params.law.type, g, pr, params.law.kp, params.dt_prev, params.law.gamma);
+    if (params.law.type == contact::Impulse && params.law.push_tau > 0.0)
+    {
+        const double excess = g.p - params.law.push_depth * g.r;
+        if (excess > 0.0)
+        {
+            contact::PairGeom gp = g;
+            double v_push = excess / params.law.push_tau;
+            if (params.law.push_vmax > 0.0 && v_push > params.law.push_vmax) v_push = params.law.push_vmax;
+            gp.pdot += v_push;
+            return impulse_unscaled_limit(params, contact::impulse_force(gp, pr, params.dt_prev, params.law.gamma));
+        }
+    }
+    contact::Result out = contact::penalty_force(params.law.type, g, pr, params.law.kp, params.dt_prev, params.law.gamma);
+    return params.law.type == contact::Impulse ? impulse_unscaled_limit(params, out) : out;
 }
 
 // ----------------------------------------------------------------------
