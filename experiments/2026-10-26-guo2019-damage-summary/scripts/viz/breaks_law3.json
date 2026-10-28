@@ -1,0 +1,51 @@
+{
+ "b4": {
+  "V0": 73.0,
+  "outcome": "perforated",
+  "V_R": 55.9171504,
+  "nv": 2,
+  "nh": 0,
+  "t_fb_us": 72.0,
+  "w_fb_mm": 3.57,
+  "v_fb": -56.8,
+  "KEball_fb_pct": 60.5,
+  "KEfab_fb_pct": 7.9,
+  "Ubond_fb_pct": 18.3,
+  "fric_fb_pct": 3.6,
+  "fric_end_pct": 10.2,
+  "cont_end_pct": 14.1,
+  "Wp_end_pct": 7.91,
+  "KEfab_max_pct": 23.6,
+  "Ubond_max_pct": 18.3,
+  "F_clamp_max_N": 553,
+  "t_F_clamp_max_us": 72,
+  "J_clamp_Ns": 0.0048,
+  "p_ball_lost_Ns": 0.0044,
+  "timeline": [
+   [
+    72.0,
+    1
+   ],
+   [
+    72.2,
+    2
+   ]
+  ],
+  "broken_yarns": [
+   [
+    "y",
+    -0.59,
+    80
+   ],
+   [
+    "y",
+    0.59,
+    80
+   ]
+  ],
+  "pre_t_us": 70,
+  "pre_n_sig_gt_0.8su": 47,
+  "pre_n_sig_gt_0.9su": 0,
+  "pre_hot_yarns": []
+ }
+}
