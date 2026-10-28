@@ -4,7 +4,7 @@
 // и замер стоимости (ТЗ Guo 2019 §7). Не тест: add_test() не добавлен.
 //
 // Использование:
-//   guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled
+//   guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled
 //                (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)
 //                --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]
 //                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--repeat=N]
@@ -137,7 +137,7 @@ bool parse_ll(const std::string& s, long long& out)
 
 void print_usage()
 {
-    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T --level=base|fine|smoke|scaled\n"
+    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled\n"
                 "                   (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)\n"
                 "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
                 "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--repeat=N]\n"
@@ -268,7 +268,7 @@ int parse_args(int argc, char** argv, Options& o)
             return 2;
         }
     }
-    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T\n"); return 2; }
+    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T|2T|4T\n"); return 2; }
     if (!o.have_level) { std::fprintf(stderr, "Нужен --level=base|fine|smoke|scaled\n"); return 2; }
     if (o.out.empty()) { std::fprintf(stderr, "Нужен --out=<каталог>\n"); return 2; }
     const int modes = (o.have_v0 ? 1 : 0) + (o.paper_shots ? 1 : 0) + (o.have_list ? 1 : 0);
@@ -619,6 +619,9 @@ void write_vbl(const Options& opt, const std::vector<ShotRecord>& recs, std::FIL
                          !v.has_p ? "нет пробитых выстрелов"
                          : !v.has_n ? "нет непробитых выстрелов"
                                     : "нет пробитых выстрелов в пределах 15 м/с над наибольшей «н»");
+        // 2T/4T: V_BL и e_BL статьи (ТЗ 2T/4T §4.5); для остальных конфигураций формат vbl.txt прежний
+        if (opt.config == Config::T2 || opt.config == Config::T4)
+            std::fprintf(f, "V_BL статьи = %.0f м/с, e_BL статьи = %.1f Дж\n", pv.value, paper_e_bl(opt.config));
     };
     std::FILE* f = std::fopen((fs::absolute(opt.out) / "vbl.txt").string().c_str(), "w");
     if (f)
@@ -819,6 +822,29 @@ int main(int argc, char** argv)
     std::printf("\n=== Итог: %s %s ===\n", config_name(opt.config), level_name(opt.level));
     write_shots_csv(opt, recs);
     write_vbl(opt, recs, stdout);
+    // Послойные разрывы последнего пробивного выстрела (ТЗ 2T/4T §4.5), только для пакета из >= 2 слоёв
+    if (fabric_plies(opt.config) >= 2)
+    {
+        const ShotRecord* last = nullptr;
+        for (const auto& s : recs)
+            if (s.ok && s.outcome == Outcome::Perforated) last = &s;
+        if (!last)
+            std::printf("\nПослойные разрывы: пробивных выстрелов в серии нет\n");
+        else
+        {
+            const int np = std::atoi(kv_get(last->kv, "n_plies").c_str());
+            std::printf("\nПослойные разрывы последнего пробивного выстрела (V0=%.1f м/с, r=%d; слой 1 -- лицевой):\n", last->V0,
+                        last->rep);
+            for (int k = 1; k <= np; ++k)
+            {
+                const std::string q = "_p" + std::to_string(k);
+                std::printf("  слой %d: порвано вдоль y (зажатые) %s, вдоль x (свободные) %s, t_первого разрыва %s с, прогиб "
+                            "слоя при нём %s м\n",
+                            k, kv_get(last->kv, "n_broken_v" + q).c_str(), kv_get(last->kv, "n_broken_h" + q).c_str(),
+                            kv_get(last->kv, "t_first_break" + q).c_str(), kv_get(last->kv, "w_f_at_first_break" + q).c_str());
+            }
+        }
+    }
     std::printf("shots.csv и vbl.txt: %s\n", fs::absolute(opt.out).string().c_str());
     if (n_err > 0) std::printf("ВНИМАНИЕ: выстрелов с исключением: %d\n", n_err);
     return 0;

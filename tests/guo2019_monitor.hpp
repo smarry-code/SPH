@@ -28,6 +28,7 @@
 #include "run_guard.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -109,6 +110,25 @@ struct MonitorStats
     double w_f_at_first_break = 0.0;
     double w_f_max = 0.0, w_p_max = 0.0;
     double w_f_end = 0.0;
+
+    // Пакет слоёв (n_plies >= 2; ТЗ 2T/4T §4.3). При n_plies == 1 не заполняется и не пишется.
+    int n_plies = 1;
+    std::vector<std::size_t> n_broken_v_p, n_broken_h_p;      // порванные нити по слоям (слой 1 -- лицевой)
+    std::vector<double> t_first_break_p;                      // < 0 -- у слоя разрывов не было
+    std::vector<double> w_f_at_first_break_p;                 // прогиб слоя в момент его первого разрыва
+    std::vector<double> pullin_at_first_break_p;              // втягивание свободных кромок слоя при его первом разрыве
+    std::vector<double> pullin_end_p;                         // то же на t_end (оценка распускания, не измерение)
+    std::vector<double> w_f_end_p;                            // прогиб слоя на последнем шаге
+    double contacts_per_crossing_inter = 0.0;                 // максимум по шагам, на (N - 1) nx ny
+    double contacts_per_crossing_inter_step1 = 0.0;
+    double max_delta_ff_inter_d = 0.0;                        // максимум по шагам, контакты между слоями
+    std::size_t ff_intra_initial = 0, ff_inter_initial = 0;   // контакты нить--нить на исходной укладке
+    std::size_t ff_intra_step1 = 0, ff_inter_step1 = 0;       // на шаге 1
+    std::size_t ff_intra_last = 0, ff_inter_last = 0;         // на последнем шаге дорогой диагностики
+    std::size_t ply_order_violations = 0;                     // максимум по шагам диагностики
+    std::size_t ply_order_violations_step1 = 0;
+    double t_ply_order_first = -1.0;                          // < 0 -- нарушений не было
+    double ply_gap_min = 0.0, ply_gap_max = 0.0;              // зазор слоёв по вершинным бусинам на старте (ply_vertex_gaps)
 
     // Дорогая диагностика
     double m_ej = 0.0, m_ej_max = 0.0;
@@ -201,6 +221,9 @@ public:
         st_.E_tot_max = st_.E_tot_0;
         st_.E_tot_end = st_.E_tot_0;
 
+        // Пакет слоёв: бусина -> слой, вершинные бусины пересечений, концы нитей (ТЗ 2T/4T §4.3)
+        init_plies();
+
         // Диаметр нити и число пересечений
         for (const auto& mat : m_.materials) d_fiber_ = std::max(d_fiber_, mat.d);
         crossings_ = static_cast<double>(sc_.has_fabric ? sc_.spec.nx * sc_.spec.ny : 0);
@@ -211,6 +234,8 @@ public:
             const ContactFF c = contact_ff();
             st_.ff_contacts_initial = c.count;
             st_.ff_delta_d_initial = c.delta_d;
+            st_.ff_intra_initial = c.intra;
+            st_.ff_inter_initial = c.inter;
         }
 
         if (!opt_.csv_path.empty())
@@ -219,7 +244,17 @@ public:
             if (csv_)
                 std::fprintf(csv_,
                              "step,t,dt,z_c,v_z,KE_s,KE_p,KE_f,U_b,U_int,E_tot,Fs_x,Fs_y,Fs_z,Ff_x,Ff_y,Ff_z,"
-                             "n_bonds,n_broken_v,n_broken_h,w_f,w_p\n");
+                             "n_bonds,n_broken_v,n_broken_h,w_f,w_p");
+            if (csv_)
+            {
+                if (nply_ >= 2)
+                {
+                    for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",n_broken_v_p%d", k);
+                    for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",n_broken_h_p%d", k);
+                    for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",w_f_p%d", k);
+                }
+                std::fprintf(csv_, "\n");
+            }
         }
     }
 
@@ -297,6 +332,11 @@ public:
         }
         r.n_broken_v = broken_v_;
         r.n_broken_h = broken_h_;
+        if (nply_ >= 2)
+        {
+            r.pv = brk_pv_;
+            r.ph = brk_ph_;
+        }
 
         // --- прогибы
         {
@@ -319,6 +359,7 @@ public:
             st_.t_first_break = time;
             st_.w_f_at_first_break = r.w_f;
         }
+        if (nply_ >= 2) plies_step(r, time);
 
         // --- S2: скорости на первом шаге
         if (step == 1)
@@ -370,6 +411,13 @@ public:
         st_.n_bonds_end = r.n_bonds;
         st_.n_broken_v = r.n_broken_v;
         st_.n_broken_h = r.n_broken_h;
+        if (nply_ >= 2)
+        {
+            st_.n_broken_v_p.assign(r.pv.begin(), r.pv.end());
+            st_.n_broken_h_p.assign(r.ph.begin(), r.ph.end());
+            st_.w_f_end_p = r.wp;
+            st_.pullin_end_p = pullin_cur_;
+        }
 
         // --- исход
         update_outcome(time, r.v_z, r.z_c);
@@ -421,6 +469,33 @@ public:
         return 0.5 * ball_mass_ * (sc_.V0 * sc_.V0 - st_.V_R * st_.V_R);
     }
 
+    // S15 (ТЗ 2T/4T §6.1): на ТЕКУЩЕМ состоянии считает контакты нить--нить двумя способами по одному
+    // поиску: compute_fiber_contact_diagnostics (старый) и послойный обход примитивов (новый).
+    struct FFSplitCheck
+    {
+        std::size_t old_count = 0, intra = 0, inter = 0;
+        double old_delta_d = 0.0, delta_intra_d = 0.0, delta_inter_d = 0.0;
+        bool match() const
+        {
+            return old_count == intra + inter && old_delta_d == std::max(delta_intra_d, delta_inter_d);
+        }
+    };
+    FFSplitCheck ff_split_check() const
+    {
+        FFSplitCheck r;
+        if (nb_ == 0 || nply_ < 2) return r;
+        interactions::build_fiber_contact_search(diag_executor_, m_.fiber, m_.topology, m_.materials, diag_search_);
+        const auto dg = interactions::compute_fiber_contact_diagnostics(diag_executor_, m_.fiber, m_.materials, diag_search_);
+        r.old_count = dg.contact_count;
+        r.old_delta_d = d_fiber_ > 0.0 ? dg.max_penetration / d_fiber_ : 0.0;
+        const ContactFF c = split_contacts();
+        r.intra = c.intra;
+        r.inter = c.inter;
+        r.delta_intra_d = c.delta_intra;
+        r.delta_inter_d = c.delta_inter;
+        return r;
+    }
+
     // Разложение энергии (ТЗ Guo 2019 §6.2): пластина, ткань, шар, невязка.
     void print_energy_decomposition(std::FILE* f) const
     {
@@ -450,13 +525,35 @@ public:
                         "F_clamp_s_z_max=%.9g F_clamp_f_z_max=%.9g n_clamped_s=%zu n_clamped_f=%zu n_broken_v=%zu "
                         "n_broken_h=%zu w_f_max=%.9g t_first_break=%.9g w_f_at_first_break=%.9g w_p_max=%.9g "
                         "m_ej=%.9g n_tunnel=%zu max_delta_ff/d=%.9g max_delta_fs/d=%.9g contacts_per_crossing=%.9g "
-                        "guard_reason=%s\n",
+                        "guard_reason=%s%s",
                      config_name(sc_.config), level_name(sc_.level), sc_.V0, sc_.mu, outcome_name(st_.outcome), VR,
                      shot_energy(), st_.t_end, st_.steps, wall_s, st_.dt_first, st_.dt_min, st_.E_tot_max / E0,
                      st_.E_tot_end / E0, st_.F_s_z_max, st_.F_f_z_max, st_.n_clamped_s, st_.n_clamped_f,
                      st_.n_broken_v, st_.n_broken_h, st_.w_f_max, st_.t_first_break < 0.0 ? nan : st_.t_first_break,
                      st_.t_first_break < 0.0 ? nan : st_.w_f_at_first_break, st_.w_p_max, st_.m_ej, st_.n_tunnel,
-                     st_.max_delta_ff_d, st_.max_delta_fs_d, st_.contacts_per_crossing, guard_reason.c_str());
+                     st_.max_delta_ff_d, st_.max_delta_fs_d, st_.contacts_per_crossing, guard_reason.c_str(),
+                     nply_ >= 2 ? "" : "\n");
+        if (nply_ >= 2)
+        {
+            // Новые ключи ТЗ 2T/4T §4.3 -- строго в конец строки (парсер tools/guo2019 читает по ключам).
+            std::fprintf(f, " n_plies=%d", nply_);
+            for (int k = 0; k < nply_; ++k)
+            {
+                const std::size_t q = static_cast<std::size_t>(k);
+                const bool fb = st_.t_first_break_p[q] >= 0.0;
+                std::fprintf(f,
+                             " n_broken_v_p%d=%zu n_broken_h_p%d=%zu t_first_break_p%d=%.9g w_f_at_first_break_p%d=%.9g "
+                             "pullin_at_first_break_p%d=%.9g pullin_end_p%d=%.9g",
+                             k + 1, st_.n_broken_v_p[q], k + 1, st_.n_broken_h_p[q], k + 1, fb ? st_.t_first_break_p[q] : nan,
+                             k + 1, fb ? st_.w_f_at_first_break_p[q] : nan, k + 1,
+                             fb ? st_.pullin_at_first_break_p[q] : nan, k + 1, st_.pullin_end_p[q]);
+            }
+            std::fprintf(f,
+                         " contacts_per_crossing_inter=%.9g max_delta_ff_inter/d=%.9g ply_order_violations=%zu "
+                         "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e\n",
+                         st_.contacts_per_crossing_inter, st_.max_delta_ff_inter_d, st_.ply_order_violations,
+                         st_.t_ply_order_first < 0.0 ? nan : st_.t_ply_order_first, st_.ply_gap_min, st_.ply_gap_max);
+        }
         std::fclose(f);
     }
 
@@ -482,12 +579,24 @@ private:
         double Fs[3] = {}, Ff[3] = {};
         std::size_t n_bonds = 0, n_broken_v = 0, n_broken_h = 0;
         double w_f = 0.0, w_p = 0.0;
+        std::vector<std::size_t> pv, ph; // по слоям (только при n_plies >= 2)
+        std::vector<double> wp;          // прогиб по слоям (только при n_plies >= 2)
     };
 
     struct ContactFF
     {
         std::size_t count = 0;
         double delta_d = 0.0;
+        // Только при n_plies >= 2: «внутри слоя» и «между слоями»; max проникания / d.
+        std::size_t intra = 0, inter = 0;
+        double delta_intra = 0.0, delta_inter = 0.0;
+    };
+
+    // Свёртка по примитивам контакта: целые счётчики и max (детерминирована).
+    struct SplitAcc
+    {
+        std::size_t intra = 0, inter = 0;
+        double dmax_intra = 0.0, dmax_inter = 0.0;
     };
 
     void add_clamped(bool fiber, std::size_t i, std::uint8_t mask)
@@ -539,11 +648,18 @@ private:
             if (y >= 0) ++cnt_[static_cast<std::size_t>(y)];
         }
         nv = nh = 0;
+        if (nply_ >= 2)
+        {
+            std::fill(brk_pv_.begin(), brk_pv_.end(), std::size_t{0});
+            std::fill(brk_ph_.begin(), brk_ph_.end(), std::size_t{0});
+        }
         for (std::size_t y = 0; y < cnt_.size(); ++y)
             if (cnt_[y] < orig_bonds_[y])
             {
-                if (sc_.yarns[y].direction == 'y') ++nv;
+                const bool v = sc_.yarns[y].direction == 'y';
+                if (v) ++nv;
                 else ++nh;
+                if (nply_ >= 2) ++(v ? brk_pv_ : brk_ph_)[static_cast<std::size_t>(sc_.yarns[y].ply - 1)];
             }
     }
 
@@ -554,10 +670,159 @@ private:
         if (nb_ == 0) return r;
         // Постоянные члены монитора вместо локальных объектов на каждый вызов.
         interactions::build_fiber_contact_search(diag_executor_, m_.fiber, m_.topology, m_.materials, diag_search_);
+        if (nply_ >= 2) return split_contacts();
         const auto dg = interactions::compute_fiber_contact_diagnostics(diag_executor_, m_.fiber, m_.materials, diag_search_);
         r.count = dg.contact_count;
         r.delta_d = d_fiber_ > 0.0 ? dg.max_penetration / d_fiber_ : 0.0;
         return r;
+    }
+
+    // Послойный обход diag_search_.primitives (по образцу compute_fiber_contact_diagnostics,
+    // include/interactions/fiber_contact.hpp): принятый контакт -- внутри слоя, если ply_of_[a0] == ply_of_[b0].
+    ContactFF split_contacts() const
+    {
+        ContactFF r;
+        const std::size_t n = diag_search_.primitives.size();
+        const fiber::FiberState& fb = m_.fiber;
+        const std::vector<int>& po = ply_of_;
+        const SplitAcc acc = diag_executor_.parallel_reduce(
+            n, SplitAcc{},
+            [&](std::size_t k) -> SplitAcc {
+                SplitAcc a;
+                const interactions::FiberContactPrimitive& prim = diag_search_.primitives[k];
+                const interactions::FiberContactGeometry geom =
+                    interactions::compute_fiber_contact_geometry(fb, m_.materials, prim);
+                if (geom.rejected_by_ownership || geom.degenerate || !geom.contact) return a;
+                if (po[prim.a0] == po[prim.b0])
+                {
+                    a.intra = 1;
+                    a.dmax_intra = geom.delta;
+                }
+                else
+                {
+                    a.inter = 1;
+                    a.dmax_inter = geom.delta;
+                }
+                return a;
+            },
+            [](SplitAcc x, SplitAcc y) {
+                SplitAcc z;
+                z.intra = x.intra + y.intra;
+                z.inter = x.inter + y.inter;
+                z.dmax_intra = std::max(x.dmax_intra, y.dmax_intra);
+                z.dmax_inter = std::max(x.dmax_inter, y.dmax_inter);
+                return z;
+            });
+        r.intra = acc.intra;
+        r.inter = acc.inter;
+        r.count = acc.intra + acc.inter;
+        r.delta_intra = d_fiber_ > 0.0 ? acc.dmax_intra / d_fiber_ : 0.0;
+        r.delta_inter = d_fiber_ > 0.0 ? acc.dmax_inter / d_fiber_ : 0.0;
+        r.delta_d = std::max(r.delta_intra, r.delta_inter);
+        return r;
+    }
+
+    // ---- пакет слоёв (ТЗ 2T/4T §4.3) -------------------------------------
+    void init_plies()
+    {
+        nply_ = sc_.has_fabric ? sc_.n_plies : 1;
+        if (nply_ < 2) return;
+        const std::size_t N = static_cast<std::size_t>(nply_);
+        ply_of_.assign(nb_, 0);
+        for (std::size_t k = 0; k < N; ++k)
+            for (std::size_t b = sc_.ply_layout[k].bead_begin; b < sc_.ply_layout[k].bead_end && b < nb_; ++b)
+                ply_of_[b] = static_cast<int>(k);
+        // вершинные бусины пересечений (как в ply_vertex_gaps): у основы j вершина i, у утка i вершина j
+        const int nx = sc_.W.params.nx, ny = sc_.W.params.ny;
+        vb_.assign(N, {});
+        for (std::size_t k = 0; k < N; ++k)
+        {
+            vb_[k].reserve(2 * static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny));
+            for (int j = 0; j < nx; ++j)
+                for (int i = 0; i < ny; ++i)
+                {
+                    const std::size_t lx = static_cast<std::size_t>(j), ly = static_cast<std::size_t>(nx + i);
+                    const std::size_t yx = sc_.ply_layout[k].yarn_begin + lx, yy = sc_.ply_layout[k].yarn_begin + ly;
+                    vb_[k].push_back(sc_.yarns[yx].bead_begin + sc_.plies[k].fibers[lx].vertex_bead[static_cast<std::size_t>(i)]);
+                    vb_[k].push_back(sc_.yarns[yy].bead_begin + sc_.plies[k].fibers[ly].vertex_bead[static_cast<std::size_t>(j)]);
+                }
+        }
+        // концы свободных нитей (вдоль x): стартовые x
+        end_x0_.assign(sc_.yarns.size(), {0.0, 0.0});
+        for (std::size_t y = 0; y < sc_.yarns.size(); ++y)
+            if (sc_.yarns[y].direction == 'x')
+            {
+                end_x0_[y][0] = m_.fiber.x[0][sc_.yarns[y].bead_begin];
+                end_x0_[y][1] = m_.fiber.x[0][sc_.yarns[y].bead_end - 1];
+            }
+        brk_pv_.assign(N, 0);
+        brk_ph_.assign(N, 0);
+        pullin_cur_.assign(N, 0.0);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        st_.n_plies = nply_;
+        st_.n_broken_v_p.assign(N, 0);
+        st_.n_broken_h_p.assign(N, 0);
+        st_.t_first_break_p.assign(N, -1.0);
+        st_.w_f_at_first_break_p.assign(N, nan);
+        st_.pullin_at_first_break_p.assign(N, nan);
+        st_.pullin_end_p.assign(N, 0.0);
+        st_.w_f_end_p.assign(N, 0.0);
+        const PlyGapReport pg = ply_vertex_gaps(sc_); // по начальной укладке: монитор создаётся до прогона
+        st_.ply_gap_min = pg.min_gap;
+        st_.ply_gap_max = pg.max_gap;
+    }
+
+    // Послойные величины шага: прогиб по слоям, первый разрыв слоя, втягивание кромок.
+    void plies_step(Row& r, double time)
+    {
+        const fiber::FiberState& fb = m_.fiber;
+        const std::size_t N = static_cast<std::size_t>(nply_);
+        r.wp.assign(N, 0.0);
+        for (std::size_t k = 0; k < N; ++k)
+        {
+            double w = 0.0;
+            for (std::size_t b = sc_.ply_layout[k].bead_begin; b < sc_.ply_layout[k].bead_end; ++b)
+                w = std::max(w, z0_bead_[b] - fb.x[2][b]);
+            r.wp[k] = w;
+        }
+        // втягивание: Delta = |x_0| - |x| концевых бусин свободных нитей слоя, максимум по нитям
+        for (std::size_t k = 0; k < N; ++k)
+        {
+            double pm = -std::numeric_limits<double>::infinity();
+            for (std::size_t y = sc_.ply_layout[k].yarn_begin; y < sc_.ply_layout[k].yarn_end; ++y)
+            {
+                if (sc_.yarns[y].direction != 'x') continue;
+                pm = std::max(pm, std::fabs(end_x0_[y][0]) - std::fabs(fb.x[0][sc_.yarns[y].bead_begin]));
+                pm = std::max(pm, std::fabs(end_x0_[y][1]) - std::fabs(fb.x[0][sc_.yarns[y].bead_end - 1]));
+            }
+            pullin_cur_[k] = std::isfinite(pm) ? pm : 0.0;
+        }
+        for (std::size_t k = 0; k < N; ++k)
+            if (st_.t_first_break_p[k] < 0.0 && (r.pv[k] + r.ph[k]) > 0)
+            {
+                st_.t_first_break_p[k] = time;
+                st_.w_f_at_first_break_p[k] = r.wp[k];
+                st_.pullin_at_first_break_p[k] = pullin_cur_[k];
+            }
+    }
+
+    // Нарушения порядка слоёв: пары (k, k+1) и пересечения, где средняя z слоя k <= средней z слоя k+1.
+    std::size_t count_ply_order_violations() const
+    {
+        const fiber::FiberState& fb = m_.fiber;
+        std::size_t nv = 0;
+        for (std::size_t k = 0; k + 1 < vb_.size(); ++k)
+        {
+            const std::vector<std::size_t>& a = vb_[k];
+            const std::vector<std::size_t>& b = vb_[k + 1];
+            for (std::size_t q = 0; q + 1 < a.size(); q += 2)
+            {
+                const double za = 0.5 * (fb.x[2][a[q]] + fb.x[2][a[q + 1]]);
+                const double zb = 0.5 * (fb.x[2][b[q]] + fb.x[2][b[q + 1]]);
+                if (za <= zb) ++nv;
+            }
+        }
+        return nv;
     }
 
     struct SolidGrid
@@ -590,13 +855,32 @@ private:
             const ContactFF c = contact_ff();
             st_.ff_contacts_max = std::max(st_.ff_contacts_max, c.count);
             st_.max_delta_ff_d = std::max(st_.max_delta_ff_d, c.delta_d);
-            const double cpc = crossings_ > 0.0 ? static_cast<double>(c.count) / crossings_ : 0.0;
+            // При N >= 2 contacts_per_crossing -- контакты внутри слоя на N nx ny (при N = 1 то же, что раньше)
+            const double cpc = crossings_ > 0.0
+                                   ? static_cast<double>(nply_ >= 2 ? c.intra : c.count) / (crossings_ * (nply_ >= 2 ? nply_ : 1))
+                                   : 0.0;
             st_.contacts_per_crossing = std::max(st_.contacts_per_crossing, cpc);
+            double cpi = 0.0;
+            if (nply_ >= 2)
+            {
+                cpi = crossings_ > 0.0 ? static_cast<double>(c.inter) / (crossings_ * (nply_ - 1)) : 0.0;
+                st_.contacts_per_crossing_inter = std::max(st_.contacts_per_crossing_inter, cpi);
+                st_.max_delta_ff_inter_d = std::max(st_.max_delta_ff_inter_d, c.delta_inter);
+                st_.ff_intra_last = c.intra;
+                st_.ff_inter_last = c.inter;
+                const std::size_t pov = count_ply_order_violations();
+                st_.ply_order_violations = std::max(st_.ply_order_violations, pov);
+                if (pov > 0 && st_.t_ply_order_first < 0.0) st_.t_ply_order_first = st_.t_end;
+                if (first_step) st_.ply_order_violations_step1 = pov;
+            }
             if (first_step)
             {
                 st_.ff_contacts_step1 = c.count;
                 st_.ff_delta_d_step1 = c.delta_d;
                 st_.contacts_per_crossing_step1 = cpc;
+                st_.ff_intra_step1 = c.intra;
+                st_.ff_inter_step1 = c.inter;
+                st_.contacts_per_crossing_inter_step1 = cpi;
             }
         }
 
@@ -717,9 +1001,17 @@ private:
     {
         if (!csv_) return;
         std::fprintf(csv_,
-                     "%zu,%.12e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%zu,%zu,%zu,%.9e,%.9e\n",
+                     "%zu,%.12e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%zu,%zu,%zu,%.9e,%.9e%s",
                      r.step, r.t, r.dt, r.z_c, r.v_z, r.KE_s, r.KE_p, r.KE_f, r.U_b, r.U_int, r.E_tot, r.Fs[0], r.Fs[1],
-                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p);
+                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p,
+                     nply_ >= 2 ? "" : "\n");
+        if (nply_ >= 2)
+        {
+            for (std::size_t k = 0; k < r.pv.size(); ++k) std::fprintf(csv_, ",%zu", r.pv[k]);
+            for (std::size_t k = 0; k < r.ph.size(); ++k) std::fprintf(csv_, ",%zu", r.ph[k]);
+            for (std::size_t k = 0; k < r.wp.size(); ++k) std::fprintf(csv_, ",%.9e", r.wp[k]);
+            std::fprintf(csv_, "\n");
+        }
     }
 
     const GuoScene& sc_;
@@ -736,6 +1028,14 @@ private:
     std::vector<std::size_t> cnt_;
     std::size_t last_bonds_ = 0, broken_v_ = 0, broken_h_ = 0;
     double d_fiber_ = 0.0, crossings_ = 0.0;
+
+    // Пакет слоёв (n_plies >= 2)
+    int nply_ = 1;
+    std::vector<int> ply_of_;                       // бусина -> слой (с нуля)
+    std::vector<std::vector<std::size_t>> vb_;      // по слоям: пары вершинных бусин пересечений (основа, уток)
+    std::vector<std::array<double, 2>> end_x0_;     // по нитям: стартовые x концевых бусин
+    std::vector<std::size_t> brk_pv_, brk_ph_;      // порванные нити по слоям
+    std::vector<double> pullin_cur_;                // втягивание кромок по слоям на текущем шаге
 
     std::deque<std::pair<double, double>> hist_;
     double t_pos_ = -1.0;

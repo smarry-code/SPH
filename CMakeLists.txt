@@ -602,7 +602,7 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(test_e2e_guo2019 PRIVATE -fopenmp)
     target_link_options(test_e2e_guo2019 PRIVATE -fopenmp)
 endif()
-foreach(_guo_cfg A 1T 1T_A A_1T)
+foreach(_guo_cfg A 1T 1T_A A_1T 2T 4T)
     add_test(NAME e2e_guo2019_smoke_${_guo_cfg}
         COMMAND test_e2e_guo2019 --config=${_guo_cfg} --time-limit=100)
     # 2 потока: при ctest -jN 8 потоков на тест переподписывают ядра, и

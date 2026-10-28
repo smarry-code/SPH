@@ -75,3 +75,5 @@ log.txt
 
 # IDE-generated project state
 *.layout
+# Ярлыки Windows
+*.lnk

@@ -1,0 +1,9 @@
+Загрузка 49 кадров из C:/Users/Maria/AppData/Local/Temp/claude/C--dip-sph-SPH--claude-worktrees-Guo2T/fd6d2681-b380-4e02-801b-603414833b9c/scratchpad/viz/mu18/v76.0/1T_base_v76.0_r0 ...
+  чтение кадров: 12.9 с (0.26 с/кадр)
+Время: монитор для STEP кадра; max|t_монитор - TIME_заголовка| = 0.0187 мкс (кадров без строки монитора: 46, для них берётся TIME заголовка)
+Пределы (мм): x[-33.00,33.00] y[-33.00,33.00] z[-53.10,15.10]; шаг нитей 1.180 мм; полоса сечения ±1.77 мм
+снимок: experiments/2026-10-07-guo2019-1t-mu-fit-base/anim_1t/anim_1t_mu1.8_v76_not_perforated_frame0.png (0.8 с)
+снимок: experiments/2026-10-07-guo2019-1t-mu-fit-base/anim_1t/anim_1t_mu1.8_v76_not_perforated_frame21.png (0.7 с)
+снимок: experiments/2026-10-07-guo2019-1t-mu-fit-base/anim_1t/anim_1t_mu1.8_v76_not_perforated_frame48.png (0.7 с)
+GIF: рендер 65.7 с (1.34 с/кадр)
+GIF: experiments/2026-10-07-guo2019-1t-mu-fit-base/anim_1t/anim_1t_mu1.8_v76_not_perforated.gif (1.57 МБ, 49 кадров)

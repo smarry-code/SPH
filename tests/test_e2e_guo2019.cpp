@@ -1,11 +1,13 @@
 // test_e2e_guo2019.cpp
 // Smoke-тест сцен Guo 2019 (ТЗ Guo 2019 §9): шар + ткань + Al-пластина, уровень
 // smoke, V_0 = 100 м/с, t_total = 20 мкс, кадры каждые 2 мкс. Четыре регистрации
-// в ctest: --config=A | 1T | 1T_A | A_1T.
+// в ctest: --config=A | 1T | 1T_A | A_1T | 2T | 4T.
 //
 // Прогон идёт одним непрерывным time_integration(cfg, fiber::Model&, ...) с
 // монитором GuoShotMonitor в RunGuard::set_step_observer (tests/guo2019_monitor.hpp),
 // во временном каталоге (ScopedWorkDir), вывод конвейера заглушён.
+//
+// Для 2T и 4T (пакет из 2 и 4 слоёв) дополнительно S1m, S2m, S14, S15 (ТЗ 2T/4T §6.1).
 //
 // Проверки S1-S13 -- жёсткие (e2e::check), справочные величины -- note/warn
 // (ТЗ Guo 2019 §9). Проверки не ослабляются, чтобы тест позеленел.
@@ -388,6 +390,66 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
               "зажатых бусин по fiber_mask " + std::to_string(total) + " == формула " +
                   std::to_string(sc.expected.clamped_beads));
     }
+    if (sc.n_plies >= 2)
+    {
+        const int N = sc.n_plies;
+        const int nx = sc.W.params.nx, ny = sc.W.params.ny;
+        std::printf("\n[S1m] Пакет слоёв: %d слоёв\n", N);
+        const auto& fm = model.clamps.fiber_mask;
+        std::size_t sum_beads = 0, sum_bonds = 0, sum_clamped = 0, yarn_total = 0, clamped_first = 0;
+        for (int k = 0; k < N; ++k)
+        {
+            const auto& pl = sc.ply_layout[static_cast<std::size_t>(k)];
+            const auto& pe = sc.ply_expected[static_cast<std::size_t>(k)];
+            const std::string tag = "слой " + std::to_string(k + 1) + ": ";
+            const std::size_t beads = pl.bead_end - pl.bead_begin;
+            std::size_t bonds = 0;
+            for (const auto& b : model.topology.bonds)
+                if (b.i >= pl.bead_begin && b.i < pl.bead_end) ++bonds;
+            std::size_t clamped = 0, bad_dir = 0, bad_bal = 0, bad_ply = 0, bad_oid = 0;
+            for (std::size_t y = pl.yarn_begin; y < pl.yarn_end; ++y)
+            {
+                const auto& Y = sc.yarns[y];
+                if (Y.ply != k + 1) ++bad_ply;
+                // object_id нитей слоя k (с единицы) -- ровно [(k-1)(nx+ny); k(nx+ny)), по порядку
+                if (Y.object_id != k * (nx + ny) + static_cast<int>(y - pl.yarn_begin)) ++bad_oid;
+                const std::size_t mid = Y.bead_begin + (Y.bead_end - Y.bead_begin) / 2;
+                std::size_t lo = 0, hi = 0;
+                for (std::size_t b = Y.bead_begin; b < Y.bead_end; ++b)
+                    if (b < fm.size() && fm[b] != 0) (b < mid ? lo : hi) += 1;
+                clamped += lo + hi;
+                if (Y.direction == 'x' && lo + hi != 0) ++bad_dir;
+                if (Y.direction == 'y' && (lo != hi || lo != Y.n_clamp_lo || hi != Y.n_clamp_hi)) ++bad_bal;
+            }
+            if (k == 0) clamped_first = clamped;
+            check(beads == pe.beads, tag + "бусин " + std::to_string(beads) + " == формула " + std::to_string(pe.beads));
+            check(bonds == pe.bonds, tag + "связей " + std::to_string(bonds) + " == формула " + std::to_string(pe.bonds));
+            check(clamped == pe.clamped_beads && clamped == clamped_first,
+                  tag + "зажатых бусин " + std::to_string(clamped) + " == формула " + std::to_string(pe.clamped_beads) +
+                      " и == слою 1 (" + std::to_string(clamped_first) + ")");
+            check(bad_dir == 0 && bad_bal == 0, tag + "зажаты только нити вдоль y, поровну на концах (нарушений " +
+                                                    std::to_string(bad_dir + bad_bal) + ")");
+            check(pl.yarn_end - pl.yarn_begin == static_cast<std::size_t>(nx + ny) && bad_ply == 0 && bad_oid == 0,
+                  tag + "нитей " + std::to_string(pl.yarn_end - pl.yarn_begin) + " == nx+ny, object_id в диапазоне [" +
+                      std::to_string(k * (nx + ny)) + "; " + std::to_string((k + 1) * (nx + ny)) + ") (нарушений " +
+                      std::to_string(bad_ply + bad_oid) + ")");
+            note(tag + "поверхностная плотность: в окне " + fmtg(pe.areal_density_window, 5) + " кг/м^2, summary " +
+                 fmtg(pe.areal_density_summary, 5) + " кг/м^2");
+            sum_beads += beads;
+            sum_bonds += bonds;
+            sum_clamped += clamped;
+            yarn_total += pl.yarn_end - pl.yarn_begin;
+        }
+        check(sum_beads == sc.actual_beads && sum_bonds == sc.actual_bonds,
+              "суммы по слоям: бусин " + std::to_string(sum_beads) + ", связей " + std::to_string(sum_bonds) +
+                  " == всего в модели " + std::to_string(sc.actual_beads) + ", " + std::to_string(sc.actual_bonds));
+        check(sum_clamped == sc.expected.clamped_beads && yarn_total == sc.yarns.size(),
+              "сумма зажатых по слоям " + std::to_string(sum_clamped) + " == формула " +
+                  std::to_string(sc.expected.clamped_beads) + " (сверка с model.clamp_report -- после прогона), нитей " +
+                  std::to_string(yarn_total) + " == " + std::to_string(sc.yarns.size()));
+        note("плотность, сумма по слоям: summary " + fmtg(sc.areal_density_summary, 5) + " кг/м^2, в окне " +
+             fmtg(sc.areal_density_window, 5) + " кг/м^2");
+    }
     if (const auto es = elastic_by_itype(cfg.mats, kBallItype))
         note("сталь (itype 3): E = " + fmtg(es->E * 1e-9, 4) + " ГПа, nu = " + fmtg(es->nu, 4));
 
@@ -424,6 +486,17 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
         if (sc.has_plate) report("пластина", gr.plate);
     }
 
+    if (sc.n_plies >= 2)
+    {
+        std::printf("\n[S2m] Зазор между слоями (до прогона)\n");
+        const PlyGapReport pg = ply_vertex_gaps(sc);
+        check(pg.valid && pg.n_pairs > 0, "проверено пар (пара слоёв, пересечение): " + std::to_string(pg.n_pairs));
+        check(std::fabs(pg.min_gap - kEpsPly) <= kTolGap && std::fabs(pg.max_gap - kEpsPly) <= kTolGap,
+              "зазор слоёв по вершинным бусинам: min " + fmt(pg.min_gap, 12) + " м, max " + fmt(pg.max_gap, 12) +
+                  " м == eps_ply = " + fmt(kEpsPly, 3) + " +- 1e-12 (откл. min " + fmt(pg.min_gap - kEpsPly, 2) +
+                  ", max " + fmt(pg.max_gap - kEpsPly, 2) + ")");
+    }
+
     // ------------------------------------------------------------------ прогон
     // Снимок x_0 для проверки кадров (S6)
     std::vector<double> sx0[3], fx0[3];
@@ -443,7 +516,17 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
     mo.guard = &guard;
     mo.n_diag = kDiagEvery;
     GuoShotMonitor monitor(sc, mo);
-    guard.set_step_observer([&](double d, double t) { monitor.on_step(d, t); });
+    GuoShotMonitor::FFSplitCheck split_step1, split_last;
+    bool have_split_step1 = false;
+    guard.set_step_observer([&](double d, double t) {
+        monitor.on_step(d, t);
+        if (sc.n_plies >= 2 && !have_split_step1)
+        {
+            // S15 на шаге 1: оба способа счёта по одному поиску на состоянии после шага 1
+            split_step1 = monitor.ff_split_check();
+            have_split_step1 = true;
+        }
+    });
 
     bool threw = false;
     std::string what;
@@ -463,6 +546,7 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
     const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
     monitor.finalize();
     const MonitorStats& st = monitor.stats();
+    if (sc.n_plies >= 2) split_last = monitor.ff_split_check(); // состояние на последнем шаге
 
     std::printf("\n[Прогон] %zu шагов, t = %s с, %.2f с стенных, начальный dt (CFL) = %s с, сторож: %s\n", st.steps,
                 fmt(time).c_str(), wall, fmt(dt_init).c_str(), reason_name(guard.reason()));
@@ -478,6 +562,14 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
     check(model.clamp_report.fiber_clamped == sc.expected.clamped_beads,
           "зажатых бусин " + std::to_string(model.clamp_report.fiber_clamped) + " == формула " +
               std::to_string(sc.expected.clamped_beads));
+    if (sc.n_plies >= 2)
+    {
+        std::size_t sum = 0;
+        for (const auto& pe : sc.ply_expected) sum += pe.clamped_beads;
+        check(model.clamp_report.fiber_clamped == sum,
+              "S1m: model.clamp_report.fiber_clamped " + std::to_string(model.clamp_report.fiber_clamped) +
+                  " == сумма по слоям " + std::to_string(sum));
+    }
 
     // ---------------------------------------------------------------------- S2 (первый шаг)
     std::printf("\n[S2] Первый шаг\n");
@@ -490,6 +582,38 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
         if (st.bead_vmax_step1 > 0.0)
             warn("бусины движутся на первом шаге (max |v| = " + fmt(st.bead_vmax_step1, 3) +
                  " м/с): ложные контакты Fiber-Fiber или контакт с Solid");
+    }
+
+    if (sc.n_plies >= 2)
+    {
+        std::printf("\n[S2m] Контакты нить--нить на исходной укладке и после шага 1\n");
+        check(st.ff_intra_initial == 0 && st.ff_inter_initial == 0,
+              "исходная укладка: контактов внутри слоя " + std::to_string(st.ff_intra_initial) + ", между слоями " +
+                  std::to_string(st.ff_inter_initial) + " (ожидание 0 и 0)");
+        check(st.ff_intra_step1 == 0 && st.ff_inter_step1 == 0,
+              "после шага 1: контактов внутри слоя " + std::to_string(st.ff_intra_step1) + ", между слоями " +
+                  std::to_string(st.ff_inter_step1) + " (ожидание 0 и 0)");
+
+        std::printf("\n[S14] Порядок слоёв\n");
+        check(st.ply_order_violations_step1 == 0,
+              "шаг 1: нарушений порядка слоёв " + std::to_string(st.ply_order_violations_step1));
+        check(st.ply_order_violations == 0,
+              "максимум нарушений за все шаги диагностики " + std::to_string(st.ply_order_violations) +
+                  (st.t_ply_order_first >= 0.0 ? " (первое при t = " + fmt(st.t_ply_order_first, 3) + " с)"
+                                               : std::string()));
+
+        std::printf("\n[S15] Послойный счёт контактов против compute_fiber_contact_diagnostics\n");
+        auto s15 = [&](const char* when, const GuoShotMonitor::FFSplitCheck& r) {
+            check(r.match(), std::string(when) + ": диагностика ядра " + std::to_string(r.old_count) +
+                                 " контактов, max delta/d " + fmtg(r.old_delta_d, 9) + "; послойно внутри " +
+                                 std::to_string(r.intra) + " + между " + std::to_string(r.inter) + " = " +
+                                 std::to_string(r.intra + r.inter) + ", max delta/d " +
+                                 fmtg(std::max(r.delta_intra_d, r.delta_inter_d), 9) + " (внутри " +
+                                 fmtg(r.delta_intra_d, 6) + ", между " + fmtg(r.delta_inter_d, 6) + ")");
+        };
+        check(have_split_step1, "проверка S15 на шаге 1 выполнена");
+        s15("шаг 1", split_step1);
+        s15("последний шаг", split_last);
     }
 
     // ---------------------------------------------------------------------- S3
@@ -598,6 +722,25 @@ void run_main_case(Config config, bool keep_workdir, double time_limit, bool bod
              fmtg(st.ff_delta_d_step1, 4) + "), максимум за прогон " + std::to_string(st.ff_contacts_max));
         note("contacts_per_crossing: максимум " + fmtg(st.contacts_per_crossing, 5) + ", после шага 1 " +
              fmtg(st.contacts_per_crossing_step1, 5));
+        if (sc.n_plies >= 2)
+        {
+            note("contacts_per_crossing_inter: максимум " + fmtg(st.contacts_per_crossing_inter, 5) + ", после шага 1 " +
+                 fmtg(st.contacts_per_crossing_inter_step1, 5) + "; max delta/d между слоями " +
+                 fmtg(st.max_delta_ff_inter_d, 5));
+            if (st.contacts_per_crossing_inter > 1.0)
+                warn("contacts_per_crossing_inter = " + fmtg(st.contacts_per_crossing_inter, 5) + " > 1");
+            if (st.max_delta_ff_inter_d > 0.3)
+                warn("max delta/d нить--нить между слоями = " + fmtg(st.max_delta_ff_inter_d, 5) + " > 0.3");
+            for (int k = 0; k < sc.n_plies; ++k)
+            {
+                const std::size_t q = static_cast<std::size_t>(k);
+                note("слой " + std::to_string(k + 1) + ": порвано вдоль y " + std::to_string(st.n_broken_v_p[q]) +
+                     ", вдоль x " + std::to_string(st.n_broken_h_p[q]) + ", t первого разрыва " +
+                     (st.t_first_break_p[q] >= 0.0 ? fmt(st.t_first_break_p[q], 3) + " с" : std::string("нет")) +
+                     ", прогиб слоя на t_end " + fmt(st.w_f_end_p[q], 3) + " м, втягивание кромок на t_end " +
+                     fmt(st.pullin_end_p[q], 3) + " м");
+            }
+        }
         if (st.contacts_per_crossing > 1.0)
             warn("contacts_per_crossing = " + fmtg(st.contacts_per_crossing, 5) + " > 1 контакта на пересечение");
         if (st.ff_contacts_initial > 0 || st.ff_contacts_step1 > 0)
@@ -633,7 +776,7 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "-h" || a == "--help")
         {
-            std::printf("Использование: test_e2e_guo2019 --config=A|1T|1T_A|A_1T [--keep-workdir] [--time-limit=<с>]\n");
+            std::printf("Использование: test_e2e_guo2019 --config=A|1T|1T_A|A_1T|2T|4T [--keep-workdir] [--time-limit=<с>]\n");
             return 0;
         }
         else if (a == "--keep-workdir") keep_workdir = true;
@@ -642,7 +785,7 @@ int main(int argc, char** argv)
         {
             if (!parse_config(a.substr(std::strlen("--config=")), config))
             {
-                std::fprintf(stderr, "Неверная конфигурация: %s\n", a.c_str());
+                std::fprintf(stderr, "Неверная конфигурация: %s (допустимо A|1T|1T_A|A_1T|2T|4T)\n", a.c_str());
                 return 2;
             }
             have_config = true;
@@ -669,7 +812,7 @@ int main(int argc, char** argv)
     }
     if (!have_config)
     {
-        std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T\n");
+        std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T|2T|4T\n");
         return 2;
     }
 

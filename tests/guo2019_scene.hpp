@@ -2,7 +2,7 @@
 // guo2019_scene.hpp
 // Сцена «шар + ткань из нитей + Al-пластина» для опытов Guo et al. 2019 (ТЗ Guo
 // 2019 §3, §4.1, §5). Одна функция build_guo_scene() собирает fiber::Model и
-// SimulationConfig по имени конфигурации (A, 1T, 1T_A, A_1T) и уровню
+// SimulationConfig по имени конфигурации (A, 1T, 1T_A, A_1T, 2T, 4T) и уровню
 // разрешения (smoke, base, fine). От ctest не зависит: бросает исключения, а не
 // ведёт счётчик failures. Все числа -- tests/guo2019_case.hpp.
 //
@@ -19,6 +19,10 @@
 // индекс n_ball + (ix*ny + iy)*nz + iz, iz = 0 -- ТЫЛЬНЫЙ (нижний по z) слой.
 // Бусины ткани: подряд по нитям в порядке генератора (сначала основа вдоль x,
 // затем уток вдоль y); у каждой нити диапазон [bead_begin, bead_end).
+// ПАКЕТ СЛОЁВ (2T, 4T; ТЗ 2T/4T §3.2, §4.2): блоки FIBER всех слоёв идут в одном
+// .fib по слоям (слой 1 -- лицевой, по нему бьёт шар), внутри слоя в порядке
+// генератора. object_id нити -- глобальный: (k - 1)(nx + ny) + локальный id.
+// Слои одинаковые, без сдвига в плоскости, шаг по z Delta_ply = 2A + d + kEpsPly.
 //
 // НАПРАВЛЕНИЯ НИТЕЙ. В генераторе «основа» (direction 'x', nx нитей) идёт вдоль
 // x, «уток» (direction 'y', ny нитей) -- вдоль y. Зажим clamp = Y пишет два
@@ -58,6 +62,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -78,14 +83,32 @@ namespace guo2019
 // Раскладка одной нити в общих массивах бусин (диапазон полуоткрытый).
 struct YarnLayout
 {
+    int ply = 1;                    // номер слоя пакета, 1 -- лицевой
     char direction = 'x';           // 'x' горизонтальная (свободная), 'y' вертикальная (зажатая)
     int index = 0;                  // номер нити внутри своего направления
-    int object_id = 0;              // исходный номер нити (id в генераторе и в .fib)
+    int object_id = 0;              // глобальный номер нити (порядковый блок FIBER в .fib); при одном слое равен id генератора
     std::size_t bead_begin = 0;     // первая бусина нити
     std::size_t bead_end = 0;       // за последней бусиной
     std::size_t n_clamp_lo = 0;     // зажатых бусин у начала нити
     std::size_t n_clamp_hi = 0;     // зажатых бусин у конца нити
     bool clamped = false;
+};
+
+// Раскладка слоя пакета в общих массивах (диапазоны полуоткрытые).
+struct PlyLayout
+{
+    std::size_t bead_begin = 0, bead_end = 0; // бусины слоя в model.fiber
+    std::size_t yarn_begin = 0, yarn_end = 0; // нити слоя в GuoScene::yarns
+    int object_id_begin = 0;                  // object_id первой нити слоя
+};
+
+// Ожидаемые числа слоя (из PlainWeave, ТЗ 2T/4T §3.2) и его поверхностная плотность.
+struct PlyExpected
+{
+    std::size_t beads = 0, bonds = 0, clamped_beads = 0;
+    double areal_density_window = 0.0;  // кг/м^2, связи слоя целиком в окне
+    double areal_density_summary = 0.0; // plain_weave_summary слоя
+    std::size_t bonds_in_window = 0;
 };
 
 struct GuoScene
@@ -100,7 +123,13 @@ struct GuoScene
     bool has_fabric = false, has_plate = false;
     SimulationConfig cfg;
     fiber::Model model;
-    fiber::PlainWeave W;            // ткань (пусто, если has_fabric == false)
+    fiber::PlainWeave W;            // ткань; при пакете -- слой 1 (лицевой); пусто, если has_fabric == false
+    int n_plies = 0;                // число слоёв ткани (fabric_plies(config))
+    std::vector<fiber::PlainWeave> plies; // слои, слой 1 первым
+    std::vector<double> ply_cz;     // c_z слоёв
+    double ply_pitch = 0.0;         // Delta_ply = 2A + d + kEpsPly
+    std::vector<PlyLayout> ply_layout;
+    std::vector<PlyExpected> ply_expected;
     std::filesystem::path fib_path, layout_path;
 
     // --- диапазоны индексов Solid -----------------------------------------
@@ -203,6 +232,126 @@ inline std::size_t ball_lattice_count(double D, double dx)
 inline double plate_node(double lo, double d, std::size_t i) { return lo + (static_cast<double>(i) + 0.5) * d; }
 
 // ===========================================================================
+// Пакет слоёв ткани (ТЗ 2T/4T §4.2)
+// ===========================================================================
+// Слой k (с нуля) -- копия q1 с cz = q1.cz - k * ply_pitch, построенная build_plain_weave.
+// c_z считается умножением, без накопления суммы. n_plies == 1 даёт ровно build_plain_weave(q1).
+inline std::vector<fiber::PlainWeave> build_fabric_stack(const fiber::PlainWeaveParams& q1, int n_plies,
+                                                         double ply_pitch)
+{
+    if (n_plies < 1) throw std::invalid_argument("guo2019: build_fabric_stack: n_plies < 1");
+    std::vector<fiber::PlainWeave> out;
+    out.reserve(static_cast<std::size_t>(n_plies));
+    for (int k = 0; k < n_plies; ++k)
+    {
+        fiber::PlainWeaveParams q = q1;
+        q.cz = q1.cz - static_cast<double>(k) * ply_pitch;
+        out.push_back(fiber::build_plain_weave(q));
+    }
+    return out;
+}
+
+namespace detail
+{
+
+// Материалы слоёв обязаны совпадать: в .fib пакета одна строка MATERIAL 0.
+inline bool same_fabric_material(const fiber::PlainWeaveParams& a, const fiber::PlainWeaveParams& b)
+{
+    return a.E == b.E && a.nu == b.nu && a.d == b.d && a.rho == b.rho && a.eps_break == b.eps_break &&
+           a.mu_ff == b.mu_ff && a.mu_fs == b.mu_fs;
+}
+
+} // namespace detail
+
+// .fib пакета слоёв: одна MATERIAL 0, блоки FIBER всех слоёв по порядку, затем все CLAMP_BOX
+// (правило полей mu_ff/mu_fs -- как у write_plain_weave_fib, include/fiber/plain_weave.hpp).
+inline void write_fabric_stack_fib(std::ostream& os, const std::vector<fiber::PlainWeave>& plies,
+                                   const std::string& command_line)
+{
+    if (plies.empty()) throw std::invalid_argument("guo2019: write_fabric_stack_fib: нет слоёв");
+    const auto& q = plies.front().params;
+    for (const auto& W : plies)
+        if (!detail::same_fabric_material(q, W.params))
+            throw std::runtime_error("guo2019: write_fabric_stack_fib: материалы слоёв различаются");
+
+    std::size_t beads = 0, bonds = 0, clamped = 0, nfib = 0;
+    for (const auto& W : plies)
+    {
+        const fiber::PlainWeaveSummary S = fiber::plain_weave_summary(W);
+        beads += S.beads;
+        bonds += S.bonds;
+        clamped += S.clamped_beads;
+        nfib += S.fibers;
+    }
+    os << std::setprecision(std::numeric_limits<double>::max_digits10);
+    os << "# Пакет слоёв полотняного переплетения (plain weave), сгенерировано plain_weave.hpp\n";
+    os << "# команда: " << command_line << "\n";
+    os << "# слоёв: " << plies.size() << ", Delta_ply = "
+       << (plies.size() > 1 ? plies.front().params.cz - plies[1].params.cz : 0.0) << "\n";
+    for (std::size_t k = 0; k < plies.size(); ++k)
+        os << "# слой " << (k + 1) << ": c_z = " << plies[k].params.cz << "\n";
+    os << "# d=" << q.d << " pitch=" << q.pitch << " amp=" << q.amp << " nx=" << q.nx << " ny=" << q.ny
+       << " seg=" << q.seg << "\n";
+    os << "# overhang_x=" << fiber::plain_weave_overhang_x(q) << " overhang_y=" << fiber::plain_weave_overhang_y(q)
+       << " profile=" << (q.profile == fiber::PlainWeaveProfile::Cos ? "cos" : "arcs") << "\n";
+    os << "# center=" << q.cx << "," << q.cy << " allow_penetration=" << (q.allow_penetration ? 1 : 0) << "\n";
+    os << "# E=" << q.E << " nu=" << q.nu << " rho=" << q.rho << " eps_break=" << q.eps_break << " mu_ff=" << q.mu_ff
+       << " mu_fs=" << q.mu_fs << "\n";
+    const char* cl = q.clamp == fiber::PlainWeaveClamp::None ? "none"
+                     : q.clamp == fiber::PlainWeaveClamp::X   ? "x"
+                     : q.clamp == fiber::PlainWeaveClamp::Y   ? "y"
+                                                              : "xy";
+    os << "# clamp=" << cl;
+    if (q.clamp != fiber::PlainWeaveClamp::None) os << " clamp_edge=" << q.clamp_edge;
+    os << "\n";
+    os << "# итого: слоёв " << plies.size() << ", нитей " << nfib << ", бусин " << beads << ", связей " << bonds
+       << ", зажатых бусин " << clamped << "\n";
+    for (std::size_t k = 0; k < plies.size(); ++k)
+        for (const auto& w : plies[k].warnings) os << "# слой " << (k + 1) << ": " << w << "\n";
+
+    os << "MATERIAL 0 " << q.E << " " << q.nu << " " << q.d << " " << q.rho << " " << q.eps_break;
+    if (q.mu_fs != 0.0)
+        os << " " << q.mu_ff << " " << q.mu_fs;
+    else if (q.mu_ff != 0.0)
+        os << " " << q.mu_ff;
+    os << "\n";
+
+    for (const auto& W : plies)
+        for (const auto& F : W.fibers)
+        {
+            os << "FIBER 0 " << F.pts.size() << "\n";
+            for (const auto& P : F.pts) os << P[0] << " " << P[1] << " " << P[2] << "\n";
+        }
+    for (std::size_t k = 0; k < plies.size(); ++k)
+    {
+        if (plies[k].clamp_boxes.empty()) continue;
+        os << "# закрепление слоя " << (k + 1) << ": --clamp=" << cl << ", c_e = " << q.clamp_edge << "\n";
+        for (const auto& b : plies[k].clamp_boxes)
+            os << "CLAMP_BOX " << b.lo[0] << " " << b.lo[1] << " " << b.lo[2] << " " << b.hi[0] << " " << b.hi[1]
+               << " " << b.hi[2] << "\n";
+    }
+}
+
+// Раскладка пакета: строка на нить, первый столбец ply, object_id/first_bead/last_bead глобальные.
+inline void write_fabric_stack_layout(std::ostream& os, const std::vector<fiber::PlainWeave>& plies)
+{
+    os << std::setprecision(std::numeric_limits<double>::max_digits10);
+    os << "# ply object_id direction index offset clamped first_bead last_bead n_clamp_lo n_clamp_hi\n";
+    std::size_t first = 0;
+    int oid = 0;
+    for (std::size_t k = 0; k < plies.size(); ++k)
+        for (const auto& F : plies[k].fibers)
+        {
+            const std::size_t last = first + F.pts.size() - 1;
+            os << (k + 1) << " " << oid << " " << F.direction << " " << F.index << " " << F.offset << " "
+               << (F.clamped ? 1 : 0) << " " << first << " " << last << " " << F.n_clamp_lo << " " << F.n_clamp_hi
+               << "\n";
+            first = last + 1;
+            ++oid;
+        }
+}
+
+// ===========================================================================
 // Сборка сцены
 // ===========================================================================
 inline GuoScene build_guo_scene(Config config, Level level, double V0, const std::filesystem::path& workdir,
@@ -218,6 +367,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     sc.body_isolation = body_isolation;
     sc.has_fabric = config_has_fabric(config);
     sc.has_plate = config_has_plate(config);
+    sc.n_plies = fabric_plies(config);
     const LevelSpec& L = sc.spec;
     const double plate_t = L.t;
     sc.plate_t = plate_t;
@@ -269,7 +419,11 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         sc.fabric_cz = q.cz;
         sc.fabric_amp = Aamp;
         sc.fabric_d = d;
-        sc.W = fiber::build_plain_weave(q); // генератор сам проверяет диапазон c_e и бросает исключение
+        sc.ply_pitch = 2.0 * Aamp + d + kEpsPly; // Delta_ply (ТЗ 2T/4T §3.2)
+        // Генератор сам проверяет диапазон c_e и бросает исключение.
+        sc.plies = build_fabric_stack(q, sc.n_plies, sc.ply_pitch);
+        sc.W = sc.plies.front(); // слой 1 (лицевой): на него опирается остальной код
+        for (const auto& P : sc.plies) sc.ply_cz.push_back(P.params.cz);
     }
 
     // ----------------------------------------------------- грани и тыл мишени
@@ -297,6 +451,11 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             sc.plate_z_top = 0.0;
             sc.plate_z_bot = -plate_t;
             sc.z_b = -plate_t - kEpsG - 2.0 * A - d;
+            break;
+        case Config::T2:
+        case Config::T4:
+            // Пакет без пластины: z_b = c_z,N - A - d/2 = -(N (2A + d) + (N - 1) eps_ply)
+            sc.z_b = -(static_cast<double>(sc.n_plies) * (2.0 * A + d) + static_cast<double>(sc.n_plies - 1) * kEpsPly);
             break;
         }
     }
@@ -412,32 +571,55 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             std::ofstream f(sc.fib_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.fib_path.string());
-            fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
+            if (sc.n_plies == 1)
+                fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
+            else
+                write_fabric_stack_fib(f, sc.plies, "guo2019_scene build_guo_scene");
         }
         {
             std::ofstream f(sc.layout_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.layout_path.string());
-            fiber::write_plain_weave_layout(f, sc.W);
+            if (sc.n_plies == 1)
+                fiber::write_plain_weave_layout(f, sc.W);
+            else
+                write_fabric_stack_layout(f, sc.plies);
         }
         fiber::load_fiber_file(sc.fib_path.string(), sc.model); // заполняет model.clamps.fiber_mask из CLAMP_BOX
 
         std::size_t first = 0;
-        for (const auto& F : sc.W.fibers)
+        int oid = 0; // глобальный object_id: (k - 1)(nx + ny) + локальный id
+        for (int k = 0; k < sc.n_plies; ++k)
         {
-            YarnLayout y;
-            y.direction = F.direction;
-            y.index = F.index;
-            y.object_id = F.object_id;
-            y.bead_begin = first;
-            y.bead_end = first + F.pts.size();
-            y.n_clamp_lo = F.n_clamp_lo;
-            y.n_clamp_hi = F.n_clamp_hi;
-            y.clamped = F.clamped;
-            sc.yarns.push_back(y);
-            first = y.bead_end;
-            sc.expected.beads += F.pts.size();
-            sc.expected.bonds += F.pts.size() - 1;
-            sc.expected.clamped_beads += F.n_clamp_lo + F.n_clamp_hi;
+            PlyLayout pl;
+            pl.bead_begin = first;
+            pl.yarn_begin = sc.yarns.size();
+            pl.object_id_begin = oid;
+            PlyExpected pe;
+            for (const auto& F : sc.plies[static_cast<std::size_t>(k)].fibers)
+            {
+                YarnLayout y;
+                y.ply = k + 1;
+                y.direction = F.direction;
+                y.index = F.index;
+                y.object_id = oid++;
+                y.bead_begin = first;
+                y.bead_end = first + F.pts.size();
+                y.n_clamp_lo = F.n_clamp_lo;
+                y.n_clamp_hi = F.n_clamp_hi;
+                y.clamped = F.clamped;
+                sc.yarns.push_back(y);
+                first = y.bead_end;
+                pe.beads += F.pts.size();
+                pe.bonds += F.pts.size() - 1;
+                pe.clamped_beads += F.n_clamp_lo + F.n_clamp_hi;
+            }
+            pl.bead_end = first;
+            pl.yarn_end = sc.yarns.size();
+            sc.ply_layout.push_back(pl);
+            sc.ply_expected.push_back(pe);
+            sc.expected.beads += pe.beads;
+            sc.expected.bonds += pe.bonds;
+            sc.expected.clamped_beads += pe.clamped_beads;
         }
     }
     else
@@ -485,18 +667,87 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         };
         const double pi = std::acos(-1.0);
         double mass = 0.0;
+        std::vector<double> ply_mass(static_cast<std::size_t>(sc.n_plies), 0.0);
         for (const auto& b : sc.model.topology.bonds)
         {
             if (!inside(b.i) || !inside(b.j)) continue;
+            std::size_t kply = 0; // слой связи по бусине b.i (слоёв не больше 4)
+            while (kply + 1 < sc.ply_layout.size() && b.i >= sc.ply_layout[kply].bead_end) ++kply;
             const auto& mat = sc.model.materials[static_cast<std::size_t>(fb.material_id[b.i])];
-            mass += mat.rho * pi * mat.d * mat.d / 4.0 * b.l0;
+            const double dm = mat.rho * pi * mat.d * mat.d / 4.0 * b.l0;
+            mass += dm;
+            ply_mass[kply] += dm;
             ++sc.bonds_in_window;
+            ++sc.ply_expected[kply].bonds_in_window;
         }
         sc.areal_density_window = mass / (sc.window_Lx * sc.window_Ly);
-        sc.areal_density_summary = fiber::plain_weave_summary(sc.W).areal_density;
+        sc.areal_density_summary = 0.0;
+        for (std::size_t k = 0; k < sc.ply_expected.size(); ++k)
+        {
+            sc.ply_expected[k].areal_density_window = ply_mass[k] / (sc.window_Lx * sc.window_Ly);
+            sc.ply_expected[k].areal_density_summary = fiber::plain_weave_summary(sc.plies[k]).areal_density;
+            sc.areal_density_summary += sc.ply_expected[k].areal_density_summary;
+        }
     }
 
     return sc;
+}
+
+// ===========================================================================
+// S2m: зазоры между слоями пакета (ТЗ 2T/4T §4.2)
+// ===========================================================================
+struct PlyGapReport
+{
+    bool valid = false; // есть хотя бы одна пара соседних слоёв
+    double min_gap = std::numeric_limits<double>::infinity();
+    double max_gap = -std::numeric_limits<double>::infinity();
+    int min_ply = 0, min_i = 0, min_j = 0; // где достигнут минимум: пара слоёв (min_ply, min_ply + 1), пересечение (i, j)
+    int max_ply = 0, max_i = 0, max_j = 0;
+    std::size_t n_pairs = 0;               // число проверенных (пара слоёв, пересечение)
+};
+
+// Для пары соседних слоёв (k, k+1) и каждого пересечения (i, j): нижняя по z из двух вершинных бусин
+// слоя k и верхняя из двух вершинных бусин слоя k+1; зазор = разность z минус d. Вершины: у основы j
+// (вдоль x) вершина i, у утка i (вдоль y) вершина j. По координатам model.fiber (начальное состояние).
+inline PlyGapReport ply_vertex_gaps(const GuoScene& sc)
+{
+    PlyGapReport r;
+    if (sc.n_plies < 2) return r;
+    r.valid = true;
+    const auto& fb = sc.model.fiber;
+    const int nx = sc.W.params.nx, ny = sc.W.params.ny;
+    const double d = sc.fabric_d;
+    auto bead = [&](int ply, char dir, int idx, int vert) {
+        // нити слоя: сначала nx основы (j = 0..nx-1), затем ny утка (i = 0..ny-1)
+        const std::size_t loc = (dir == 'x') ? static_cast<std::size_t>(idx) : static_cast<std::size_t>(nx + idx);
+        const std::size_t yi = sc.ply_layout[static_cast<std::size_t>(ply)].yarn_begin + loc;
+        const auto& F = sc.plies[static_cast<std::size_t>(ply)].fibers[loc];
+        return sc.yarns[yi].bead_begin + F.vertex_bead[static_cast<std::size_t>(vert)];
+    };
+    for (int k = 0; k + 1 < sc.n_plies; ++k)
+        for (int j = 0; j < nx; ++j)
+            for (int i = 0; i < ny; ++i)
+            {
+                const double za = fb.x[2][bead(k, 'x', j, i)], zb = fb.x[2][bead(k, 'y', i, j)];
+                const double zc = fb.x[2][bead(k + 1, 'x', j, i)], zd = fb.x[2][bead(k + 1, 'y', i, j)];
+                const double gap = std::min(za, zb) - std::max(zc, zd) - d;
+                ++r.n_pairs;
+                if (gap < r.min_gap)
+                {
+                    r.min_gap = gap;
+                    r.min_ply = k + 1;
+                    r.min_i = i;
+                    r.min_j = j;
+                }
+                if (gap > r.max_gap)
+                {
+                    r.max_gap = gap;
+                    r.max_ply = k + 1;
+                    r.max_i = i;
+                    r.max_j = j;
+                }
+            }
+    return r;
 }
 
 // ===========================================================================
@@ -727,6 +978,35 @@ inline void print_scene_summary(std::FILE* f, const GuoScene& sc)
         std::fprintf(f, "  plain_weave_summary (все бусины, включая выступы): %.5f кг/м^2; статья %.2f, ожидание модели %.3f (k = 2) / %.3f (k = 4)\n",
                      sc.areal_density_summary, kArealDensityPaper, kArealDensityExpectK2, kArealDensityExpectK4);
         std::fprintf(f, "  толщина полотна 2A + d = %.4g м\n", 2.0 * q.amp + q.d);
+    }
+    if (sc.has_fabric && sc.n_plies >= 2)
+    {
+        std::fprintf(f, "Пакет слоёв: %d, Delta_ply = 2A + d + eps_ply = %.9g м (eps_ply = %.3e м)\n", sc.n_plies, sc.ply_pitch,
+                     kEpsPly);
+        std::size_t sb = 0, sn = 0, scl = 0;
+        double sum_w = 0.0, sum_s = 0.0;
+        for (int k = 0; k < sc.n_plies; ++k)
+        {
+            const auto& pl = sc.ply_layout[static_cast<std::size_t>(k)];
+            const auto& pe = sc.ply_expected[static_cast<std::size_t>(k)];
+            std::fprintf(f, "  слой %d: c_z = %.9g м, бусин / связей / зажатых = %zu / %zu / %zu, нити %zu..%zu (object_id с %d), "
+                         "плотность в окне %.5f кг/м^2 (summary %.5f)\n",
+                         k + 1, sc.ply_cz[static_cast<std::size_t>(k)], pe.beads, pe.bonds, pe.clamped_beads, pl.yarn_begin,
+                         pl.yarn_end - 1, pl.object_id_begin, pe.areal_density_window, pe.areal_density_summary);
+            sb += pe.beads;
+            sn += pe.bonds;
+            scl += pe.clamped_beads;
+            sum_w += pe.areal_density_window;
+            sum_s += pe.areal_density_summary;
+        }
+        std::fprintf(f, "  сумма: бусин / связей / зажатых = %zu / %zu / %zu; плотность в окне %.5f кг/м^2, summary %.5f "
+                     "(статья %.2f / %.2f для 2T / 4T)\n",
+                     sb, sn, scl, sum_w, sum_s, 2.0 * kArealDensityPaper, 4.0 * kArealDensityPaper);
+        const PlyGapReport pg = ply_vertex_gaps(sc);
+        std::fprintf(f, "  зазор слоёв по вершинным бусинам (мин / макс; ожидание eps_ply = %.3e м): %.12e / %.12e м по %zu "
+                     "пересечениям; мин в паре слоёв %d, пересечение (%d, %d); макс в паре %d, (%d, %d)\n",
+                     kEpsPly, pg.min_gap, pg.max_gap, pg.n_pairs, pg.min_ply, pg.min_i, pg.min_j, pg.max_ply, pg.max_i,
+                     pg.max_j);
     }
     const BallGap bg = ball_target_gap(sc);
     std::fprintf(f, "Зазор шар--мишень: аналитический %.12e м (g_0 = %.3e, откл. %.2e); по граням частиц %.6e м; по контактным радиусам %.6e м\n",
