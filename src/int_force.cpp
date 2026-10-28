@@ -2,35 +2,27 @@
 // Определение urs() — диспетчера уравнения состояния (УРС). Объявление — в
 // int_force.hpp (там же — почему файл сохранён после удаления int_force()
 // на этапе Ф4-B2).
+//
+// fiber/CUDA_PLAN.md §3.2, этап Г2д: сам диспетчер (switch по itype) —
+// теперь тонкая обёртка над physics::solid_eos_dispatch (physics/eos.hpp,
+// SPH_HD, используется и interactions::solid_sph.hpp::solid_eos — тот же
+// диспетчер, тот же результат бит в бит для тех же itype). Неизвестный
+// itype — SphErrorCode::kUnknownItype вместо default: в switch; здесь, в
+// CPU-обёртке, по коду ошибки бросается ТО ЖЕ исключение с тем же текстом,
+// что и раньше (план §3.7).
 #include "int_force.hpp"
+#include "physics/eos.hpp"
+#include "physics/material_table.hpp"
 #include <stdexcept>
 #include <string>
 
-// Диспетчеризация уравнения состояния по типу материала (itype).
-// цепочка if/else без else заменена на switch с default —
-// управляемый отказ. Ранее при неизвестном itype УРС молчаливо не пересчитывался
-// (p/c оставались прежними => некорректные силы, возможен NaN). Теперь — явное
-// исключение с диагностикой. Материалы (mats) передаются по ссылке (ADR-4).
 void urs(const Materials& mats, ParticleSystem& sys, size_t i)
 {
-    switch (sys.itype[i])
+    const physics::MaterialTable t = physics::build_material_table(mats);
+    const SphErrorCode err = physics::solid_eos_dispatch(
+        t, sys.itype[i], sys.rho[i], sys.rho_0[i], sys.u[i], sys.dp[i], sys.D[i], sys.p[i], sys.c[i]);
+    if (err == SphErrorCode::kUnknownItype)
     {
-        case 1: // идеальный газ
-            p_gas(sys.rho[i], sys.u[i], sys.p[i], sys.c[i]);
-            break;
-        case 2: // вода
-            p_art_water(sys.rho[i], sys.p[i], sys.c[i]);
-            break;
-        case 3: case 4: // тантал, алюминий
-            eos_mi_grunaizen(mats, static_cast<size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.u[i], sys.p[i], sys.c[i]);
-            break;
-        case 5: case 6: case 7: case 8: case 9: // LiF, полиуретаны, PMMA
-            eos_ua_teta(mats, static_cast<size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.p[i], sys.c[i]);
-            break;
-        case 10: case 11: // B4C, Al2O3
-            urs_cem_JH2(mats, static_cast<size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.dp[i], sys.c[i], sys.p[i], sys.D[i]);
-            break;
-        default:
-            throw std::runtime_error("urs(): неизвестный itype=" + std::to_string(sys.itype[i]));
+        throw std::runtime_error("urs(): неизвестный itype=" + std::to_string(sys.itype[i]));
     }
 }

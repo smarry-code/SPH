@@ -47,6 +47,9 @@
 #include "materials.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "physics/eos.hpp"
+#include "physics/material_table.hpp"
+#include "physics/solid_finalize.hpp"
 #include "physics/solid_sph_pair.hpp"
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
@@ -172,33 +175,21 @@ inline bool solid_itype_known(int itype)
     }
 }
 
-inline void solid_eos(const Materials& mats, const ParticleSystem& sys, std::size_t i, real_t& p, real_t& c)
+// Диспетчер -- тонкая обёртка над physics::solid_eos_dispatch (physics/eos.hpp,
+// SPH_HD, этап Г2д: fiber/CUDA_PLAN.md §3.2). Само тело диспетчера (switch по
+// itype, вызовы p_gas/p_art_water/eos_mi_grunaizen/eos_ua_teta/urs_cem_JH2)
+// перенесено туда построчно -- здесь только сборка MaterialTable и проверка
+// кода ошибки (compute_solid_derived уже гарантирует известный itype ДО
+// вызова этой функции своим последовательным pre-check, см. там же, поэтому
+// kUnknownItype здесь недостижим в проде; исключение оставлено на случай
+// прямого вызова в обход compute_solid_derived, как и раньше).
+inline void solid_eos(const physics::MaterialTable& mtab, const ParticleSystem& sys, std::size_t i, real_t& p, real_t& c)
 {
-    switch (sys.itype[i])
+    const SphErrorCode err = physics::solid_eos_dispatch(
+        mtab, sys.itype[i], sys.rho[i], sys.rho_0[i], sys.u[i], sys.dp[i], sys.D[i], p, c);
+    if (err == SphErrorCode::kUnknownItype)
     {
-        case 1: // идеальный газ
-            p_gas(sys.rho[i], sys.u[i], p, c);
-            break;
-        case 2: // вода
-            p_art_water(sys.rho[i], p, c);
-            break;
-        case 3: case 4: // тантал, алюминий
-            eos_mi_grunaizen(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.u[i], p, c);
-            break;
-        case 5: case 6: case 7: case 8: case 9: // LiF, полиуретаны, PMMA
-            eos_ua_teta(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], p, c);
-            break;
-        case 10: case 11: // B4C, Al2O3 (JH-2)
-        {
-            // urs_cem_JH2 принимает D по неконстантной ссылке, но не изменяет
-            // её (см. src/eos.cpp -- существующая особенность сигнатуры,
-            // не наша). Локальная копия достаточна и не мутирует sys.
-            real_t D_local = sys.D[i];
-            urs_cem_JH2(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.dp[i], c, p, D_local);
-            break;
-        }
-        default:
-            throw std::runtime_error("solid_eos: неизвестный itype=" + std::to_string(sys.itype[i]));
+        throw std::runtime_error("solid_eos: неизвестный itype=" + std::to_string(sys.itype[i]));
     }
 }
 
@@ -245,7 +236,10 @@ inline void compute_solid_derived(const rhs::CpuExecutor& exec, const Materials&
                 " у частицы " + std::to_string(i));
         }
     }
-    exec.parallel_for(nreal, [&](std::size_t i) { solid_eos(mats, sys, i, out.p[i], out.c[i]); });
+    // MaterialTable строится ОДИН раз на вызов (не на частицу) -- POD
+    // фиксированного размера, physics/eos.hpp, этап Г2д.
+    const physics::MaterialTable mtab = physics::build_material_table(mats);
+    exec.parallel_for(nreal, [&](std::size_t i) { solid_eos(mtab, sys, i, out.p[i], out.c[i]); });
 }
 
 // ----------------------------------------------------------------------
@@ -560,74 +554,43 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
         }
     }
 
+    // MaterialTable строится ОДИН раз на вызов (не на частицу), physics/
+    // material_table.hpp, этап Г2b/Г2d.
+    const physics::MaterialTable mtab = physics::build_material_table(mats);
+
     exec.parallel_for(nreal, [&](std::size_t i) {
         SolidFinal& f = out[i];
         const SolidDelta& d = reduced[i];
 
-        real_t exx = d.dexx, eyy = d.deyy, ezz = d.dezz;
-        real_t exy = d.dexy, exz = d.dexz, eyz = d.deyz;
-        const real_t rxy = d.drxy, rxz = d.drxz, ryz = d.dryz;
+        // Математика одной частицы (осевые члены, закон Гука + Яуманн,
+        // энергия) вынесена в physics::finalize_solid_particle
+        // (fiber/CUDA_PLAN.md §3.2, этап Г2д) -- построчная копия прежнего
+        // тела этого лямбда-кернела. Здесь -- только сборка входа из sys/d и
+        // раскладка выхода в f.
+        physics::SolidFinalizeInput fin_in{};
+        for (std::size_t dd = 0; dd < dim; ++dd) fin_in.dv[dd] = d.dv[dd];
+        fin_in.drho_raw = d.drho;
+        fin_in.du_raw = d.du;
+        fin_in.dexx = d.dexx; fin_in.deyy = d.deyy; fin_in.dezz = d.dezz;
+        fin_in.dexy = d.dexy; fin_in.dexz = d.dexz; fin_in.deyz = d.deyz;
+        fin_in.drxy = d.drxy; fin_in.drxz = d.drxz; fin_in.dryz = d.dryz;
+        fin_in.x0 = sys.x[0][i]; fin_in.vx0 = sys.vx[0][i];
+        fin_in.rho = sys.rho[i];
+        fin_in.sxx = sys.sxx[i]; fin_in.syy = sys.syy[i]; fin_in.szz = sys.szz[i];
+        fin_in.sxy = sys.sxy[i]; fin_in.syz = sys.syz[i]; fin_in.sxz = sys.sxz[i];
+        fin_in.itype = sys.itype[i];
 
-        real_t drho = d.drho;
-        if constexpr (axis_sim && dim == 2)
-        {
-            // Окружная скорость деформации -- ПОЧАСТИЧНАЯ формула, не парная
-            // сумма (int_force.cpp, "Окружная скорость деформации").
-            ezz = sys.vx[0][i] / sys.x[0][i];
-            // Осевой член неразрывности (density.cpp, "Осесимметричная
-            // поправка к уравнению непрерывности").
-            drho -= sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
-        }
-        f.drho = drho;
+        physics::SolidFinalizeOutput fin_out;
+        physics::finalize_solid_particle(mtab, fin_in, fin_out);
 
-        for (std::size_t dd = 0; dd < dim; ++dd) f.dv[dd] = d.dv[dd];
-
-        // Шим совместимости (fiber/PLAN.md, этап Ф4-B1) -- ровно те значения,
-        // что старый int_force.cpp пишет в sys.exx.. и sys.rxy.. (те же
-        // локальные exx/eyy/ezz(с осевым переопределением)/exy/exz/eyz/rxy/
-        // rxz/ryz, что участвуют в формулах dsxx.. ниже).
-        f.exx = exx; f.eyy = eyy; f.ezz = ezz;
-        f.exy = exy; f.exz = exz; f.eyz = eyz;
-        f.rxy = rxy; f.rxz = rxz; f.ryz = ryz;
-
-        // Энергия: 0.5*(сырая сумма давление+вязкость) + девиаторная работа.
-        const real_t dedt_half = real_t(0.5) * d.du;
-        real_t deviatoric;
-        if constexpr (axis_sim && dim == 2)
-        {
-            deviatoric = (sys.sxx[i] * exx + sys.syy[i] * eyy + sys.szz[i] * ezz + real_t(2.0) * sys.sxy[i] * exy) / sys.rho[i];
-        }
-        else
-        {
-            deviatoric = (sys.sxx[i] * exx + sys.syy[i] * eyy + sys.szz[i] * ezz
-                         + real_t(2.0) * sys.sxy[i] * exy + real_t(2.0) * sys.syz[i] * eyz + real_t(2.0) * sys.sxz[i] * exz) / sys.rho[i];
-        }
-        f.du = dedt_half + deviatoric;
-
-        // Закон Гука + производная Яуманна (int_force.cpp, финальный блок).
-        if (sys.itype[i] > 2)
-        {
-            const real_t G_ = shear_modulus_by_itype(mats, sys.itype[i]);
-            if constexpr (dim > 1)
-            {
-                f.dsxx = real_t(2.0) * G_ * (exx + drho / (real_t(3.0) * sys.rho[i])) + real_t(2.0) * (sys.sxy[i] * rxy + sys.sxz[i] * rxz);
-                f.dsyy = real_t(2.0) * G_ * (eyy + drho / (real_t(3.0) * sys.rho[i])) + real_t(2.0) * (sys.syz[i] * ryz - sys.sxy[i] * rxy);
-                // Исправленный знак у syz*ryz (см. tests/test_kinematics_3d.cpp,
-                // проверки C2-C4: прежний знак «− syz·ryz» делал след
-                // поворотной части dS/dt равным 4·syz·ryz, и при вращении
-                // вокруг x девиатор переставал быть бесследовым).
-                f.dszz = real_t(2.0) * G_ * (ezz + drho / (real_t(3.0) * sys.rho[i])) - real_t(2.0) * (sys.sxz[i] * rxz + sys.syz[i] * ryz);
-                f.dsxy = real_t(2.0) * G_ * exy + rxy * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * ryz + sys.syz[i] * rxz;
-                f.dsyz = real_t(2.0) * G_ * eyz - sys.sxy[i] * rxz - sys.sxz[i] * rxy + ryz * (sys.szz[i] - sys.syy[i]);
-                f.dsxz = real_t(2.0) * G_ * exz + rxz * (sys.szz[i] - sys.sxx[i]) - sys.sxy[i] * ryz + sys.syz[i] * rxy;
-            }
-            else
-            {
-                f.dsxx = real_t(2.0) * G_ * (exx + drho / (real_t(3.0) * sys.rho[i]));
-                f.dsyy = real_t(2.0) * G_ * (drho / (real_t(3.0) * sys.rho[i]));
-                f.dszz = real_t(2.0) * G_ * (drho / (real_t(3.0) * sys.rho[i]));
-            }
-        }
+        f.drho = fin_out.drho;
+        f.du = fin_out.du;
+        for (std::size_t dd = 0; dd < dim; ++dd) f.dv[dd] = fin_out.dv[dd];
+        f.dsxx = fin_out.dsxx; f.dsyy = fin_out.dsyy; f.dszz = fin_out.dszz;
+        f.dsxy = fin_out.dsxy; f.dsyz = fin_out.dsyz; f.dsxz = fin_out.dsxz;
+        f.exx = fin_out.exx; f.eyy = fin_out.eyy; f.ezz = fin_out.ezz;
+        f.exy = fin_out.exy; f.exz = fin_out.exz; f.eyz = fin_out.eyz;
+        f.rxy = fin_out.rxy; f.rxz = fin_out.rxz; f.ryz = fin_out.ryz;
     });
 }
 

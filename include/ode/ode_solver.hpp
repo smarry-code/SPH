@@ -33,6 +33,7 @@
 #include "fiber/fiber_system.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "physics/ode_update.hpp"
 
 namespace ode
 {
@@ -61,7 +62,7 @@ void pc_predict_velocity_half_step(N n, real_t dt_prev, VxArr& vx, const DvArr& 
         for (N i = 0; i < n; ++i)
         {
             v_min[d][i] = vx[d][i];
-            vx[d][i] += (dt_prev / real_t(2.0)) * dv[d][i];
+            vx[d][i] = physics::ode_velocity_half_step(vx[d][i], dt_prev, dv[d][i]);
         }
     }
 }
@@ -80,8 +81,8 @@ void pc_finalize_velocity_position_with_av(N n, real_t dt, real_t coeff, XArr& x
         for (N i = 0; i < n; ++i)
         {
             const real_t base = use_base ? v_base[d][i] : vx[d][i];
-            vx[d][i] = base + coeff * dv[d][i] + av[d][i];
-            x[d][i] += dt * vx[d][i];
+            vx[d][i] = physics::ode_velocity_with_av(base, coeff, dv[d][i], av[d][i]);
+            x[d][i] = physics::ode_position(x[d][i], dt, vx[d][i]);
         }
     }
 }
@@ -97,8 +98,8 @@ void pc_finalize_velocity_position(N n, real_t dt, real_t coeff, XArr& x, VxArr&
         for (N i = 0; i < n; ++i)
         {
             const real_t base = use_base ? v_base[d][i] : vx[d][i];
-            vx[d][i] = base + coeff * dv[d][i];
-            x[d][i] += dt * vx[d][i];
+            vx[d][i] = physics::ode_velocity(base, coeff, dv[d][i]);
+            x[d][i] = physics::ode_position(x[d][i], dt, vx[d][i]);
         }
     }
 }
@@ -113,9 +114,9 @@ template <class N, class XArr, class VxArr, class DvArr>
 void euler_step_position_velocity(N n, real_t dt, XArr& x, VxArr& vx, const DvArr& dv)
 {
     for (std::size_t d = 0; d < dim; ++d)
-        for (N i = 0; i < n; ++i) x[d][i] += dt * vx[d][i]; // x^{n+1} = x^n + dt*v^n (старая скорость)
+        for (N i = 0; i < n; ++i) x[d][i] = physics::ode_position(x[d][i], dt, vx[d][i]); // x^{n+1} = x^n + dt*v^n (старая скорость)
     for (std::size_t d = 0; d < dim; ++d)
-        for (N i = 0; i < n; ++i) vx[d][i] += dt * dv[d][i];
+        for (N i = 0; i < n; ++i) vx[d][i] = physics::ode_velocity(vx[d][i], dt, dv[d][i]);
 }
 
 // Скалярная величина (Solid: u, rho, s-компоненты): y^{n+1} = y^n + dt*dy.
@@ -211,20 +212,22 @@ public:
     void predict_solid(ParticleSystem& sys, std::size_t ntotal, real_t dt)
     {
         if (first_step_) return;
+        // half_dt вычисляется ОДИН раз (не на каждое поле, как раньше
+        // текстуально) -- та же операция dt/real_t(2.0) даёт тот же результат
+        // при каждом вычислении (детерминизм IEEE754), поэтому вынос за
+        // пределы полей одной частицы не меняет ни одного бита.
+        const real_t half_dt = dt / real_t(2.0);
         for (std::size_t i = 0; i < ntotal; ++i)
         {
             u_min_[i] = sys.u[i];
-            real_t temp_u = 0;
-            if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
-            sys.u[i] += (dt / real_t(2.0)) * (solid_rhs.du[i] + temp_u);
-            if (sys.u[i] < 0) sys.u[i] = 0;
+            const real_t temp_u = physics::ode_solid_energy_axis_term(sys.p[i], sys.vx[0][i], sys.x[0][i], sys.rho[i]);
+            sys.u[i] = physics::ode_solid_update_nonneg(sys.u[i], half_dt, solid_rhs.du[i], temp_u);
 
             if (!summation_density)
             {
                 rho_min_[i] = sys.rho[i];
-                real_t temp_rho = 0;
-                if (dim == 1) temp_rho = -nsym * sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
-                sys.rho[i] += (dt / real_t(2.0)) * (solid_rhs.drho[i] + temp_rho);
+                const real_t temp_rho = physics::ode_solid_density_axis_term(sys.rho[i], sys.vx[0][i], sys.x[0][i]);
+                sys.rho[i] = physics::ode_solid_update(sys.rho[i], half_dt, solid_rhs.drho[i], temp_rho);
             }
 
             sxx_min_[i] = sys.sxx[i];
@@ -233,12 +236,12 @@ public:
             syz_min_[i] = sys.syz[i];
             sxz_min_[i] = sys.sxz[i];
             szz_min_[i] = sys.szz[i];
-            sys.sxx[i] += (dt / real_t(2.0)) * solid_rhs.dsxx[i];
-            sys.syy[i] += (dt / real_t(2.0)) * solid_rhs.dsyy[i];
-            sys.szz[i] += (dt / real_t(2.0)) * solid_rhs.dszz[i];
-            sys.sxy[i] += (dt / real_t(2.0)) * solid_rhs.dsxy[i];
-            sys.syz[i] += (dt / real_t(2.0)) * solid_rhs.dsyz[i];
-            sys.sxz[i] += (dt / real_t(2.0)) * solid_rhs.dsxz[i];
+            sys.sxx[i] = physics::ode_solid_advance(sys.sxx[i], half_dt, solid_rhs.dsxx[i]);
+            sys.syy[i] = physics::ode_solid_advance(sys.syy[i], half_dt, solid_rhs.dsyy[i]);
+            sys.szz[i] = physics::ode_solid_advance(sys.szz[i], half_dt, solid_rhs.dszz[i]);
+            sys.sxy[i] = physics::ode_solid_advance(sys.sxy[i], half_dt, solid_rhs.dsxy[i]);
+            sys.syz[i] = physics::ode_solid_advance(sys.syz[i], half_dt, solid_rhs.dsyz[i]);
+            sys.sxz[i] = physics::ode_solid_advance(sys.sxz[i], half_dt, solid_rhs.dsxz[i]);
         }
         pc_predict_velocity_half_step(ntotal, dt, sys.vx, solid_rhs.dvx, v_min_);
     }
@@ -253,52 +256,32 @@ public:
     void correct_solid(ParticleSystem& sys, std::size_t ntotal, real_t dt)
     {
         const bool fs = first_step_;
+        const real_t half_dt = dt / real_t(2.0);
+        const real_t coeff = fs ? half_dt : dt; // тот же выбор, что раньше выбирал if(fs)/else почленно
         for (std::size_t i = 0; i < ntotal; ++i)
         {
-            real_t temp_u = 0;
-            if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
-
-            if (fs)
-                sys.u[i] += (dt / real_t(2.0)) * (solid_rhs.du[i] + temp_u);
-            else
-                sys.u[i] = u_min_[i] + dt * (solid_rhs.du[i] + temp_u);
-            if (sys.u[i] < 0) sys.u[i] = 0;
+            const real_t temp_u = physics::ode_solid_energy_axis_term(sys.p[i], sys.vx[0][i], sys.x[0][i], sys.rho[i]);
+            sys.u[i] = physics::ode_solid_update_nonneg(fs ? sys.u[i] : u_min_[i], coeff, solid_rhs.du[i], temp_u);
 
             if (!summation_density)
             {
-                real_t temp_rho = 0;
-                if (dim == 1) temp_rho = -nsym * sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
-                if (fs)
-                    sys.rho[i] += (dt / real_t(2.0)) * (solid_rhs.drho[i] + temp_rho);
-                else
-                    sys.rho[i] = rho_min_[i] + dt * (solid_rhs.drho[i] + temp_rho);
+                const real_t temp_rho = physics::ode_solid_density_axis_term(sys.rho[i], sys.vx[0][i], sys.x[0][i]);
+                sys.rho[i] = physics::ode_solid_update(fs ? sys.rho[i] : rho_min_[i], coeff, solid_rhs.drho[i], temp_rho);
             }
 
-            if (fs)
-            {
-                sys.sxx[i] += (dt / real_t(2.0)) * solid_rhs.dsxx[i];
-                sys.syy[i] += (dt / real_t(2.0)) * solid_rhs.dsyy[i];
-                sys.szz[i] += (dt / real_t(2.0)) * solid_rhs.dszz[i];
-                sys.sxy[i] += (dt / real_t(2.0)) * solid_rhs.dsxy[i];
-                sys.syz[i] += (dt / real_t(2.0)) * solid_rhs.dsyz[i];
-                sys.sxz[i] += (dt / real_t(2.0)) * solid_rhs.dsxz[i];
-            }
-            else
-            {
-                sys.sxx[i] = sxx_min_[i] + dt * solid_rhs.dsxx[i];
-                sys.syy[i] = syy_min_[i] + dt * solid_rhs.dsyy[i];
-                sys.szz[i] = szz_min_[i] + dt * solid_rhs.dszz[i];
-                sys.sxy[i] = sxy_min_[i] + dt * solid_rhs.dsxy[i];
-                sys.syz[i] = syz_min_[i] + dt * solid_rhs.dsyz[i];
-                sys.sxz[i] = sxz_min_[i] + dt * solid_rhs.dsxz[i];
-            }
+            sys.sxx[i] = physics::ode_solid_advance(fs ? sys.sxx[i] : sxx_min_[i], coeff, solid_rhs.dsxx[i]);
+            sys.syy[i] = physics::ode_solid_advance(fs ? sys.syy[i] : syy_min_[i], coeff, solid_rhs.dsyy[i]);
+            sys.szz[i] = physics::ode_solid_advance(fs ? sys.szz[i] : szz_min_[i], coeff, solid_rhs.dszz[i]);
+            sys.sxy[i] = physics::ode_solid_advance(fs ? sys.sxy[i] : sxy_min_[i], coeff, solid_rhs.dsxy[i]);
+            sys.syz[i] = physics::ode_solid_advance(fs ? sys.syz[i] : syz_min_[i], coeff, solid_rhs.dsyz[i]);
+            sys.sxz[i] = physics::ode_solid_advance(fs ? sys.sxz[i] : sxz_min_[i], coeff, solid_rhs.dsxz[i]);
         }
         // Скорость/координата -- через общий шаблон (axis-ветвление старого
         // кода арифметически совпадало в обеих ветках if/else, поэтому
         // безопасно заменено на безусловный цикл ещё в перегрузке
         // time_integration(fiber::Model&, ...), этап Ф3; здесь -- то же
         // самое, проверено tests/test_fiber_time_integration_equivalence.cpp).
-        pc_finalize_velocity_position_with_av(ntotal, dt, fs ? dt / real_t(2.0) : dt, sys.x, sys.vx, solid_rhs.dvx, v_min_,
+        pc_finalize_velocity_position_with_av(ntotal, dt, coeff, sys.x, sys.vx, solid_rhs.dvx, v_min_,
                                                /*use_base=*/!fs, solid_rhs.av);
     }
 
@@ -371,24 +354,21 @@ public:
     {
         for (std::size_t i = 0; i < ntotal; ++i)
         {
-            real_t temp_u = 0;
-            if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
-            sys.u[i] += dt * (solid_rhs.du[i] + temp_u);
-            if (sys.u[i] < 0) sys.u[i] = 0;
+            const real_t temp_u = physics::ode_solid_energy_axis_term(sys.p[i], sys.vx[0][i], sys.x[0][i], sys.rho[i]);
+            sys.u[i] = physics::ode_solid_update_nonneg(sys.u[i], dt, solid_rhs.du[i], temp_u);
 
             if (!summation_density)
             {
-                real_t temp_rho = 0;
-                if (dim == 1) temp_rho = -nsym * sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
-                sys.rho[i] += dt * (solid_rhs.drho[i] + temp_rho);
+                const real_t temp_rho = physics::ode_solid_density_axis_term(sys.rho[i], sys.vx[0][i], sys.x[0][i]);
+                sys.rho[i] = physics::ode_solid_update(sys.rho[i], dt, solid_rhs.drho[i], temp_rho);
             }
 
-            sys.sxx[i] += dt * solid_rhs.dsxx[i];
-            sys.syy[i] += dt * solid_rhs.dsyy[i];
-            sys.szz[i] += dt * solid_rhs.dszz[i];
-            sys.sxy[i] += dt * solid_rhs.dsxy[i];
-            sys.syz[i] += dt * solid_rhs.dsyz[i];
-            sys.sxz[i] += dt * solid_rhs.dsxz[i];
+            sys.sxx[i] = physics::ode_solid_advance(sys.sxx[i], dt, solid_rhs.dsxx[i]);
+            sys.syy[i] = physics::ode_solid_advance(sys.syy[i], dt, solid_rhs.dsyy[i]);
+            sys.szz[i] = physics::ode_solid_advance(sys.szz[i], dt, solid_rhs.dszz[i]);
+            sys.sxy[i] = physics::ode_solid_advance(sys.sxy[i], dt, solid_rhs.dsxy[i]);
+            sys.syz[i] = physics::ode_solid_advance(sys.syz[i], dt, solid_rhs.dsyz[i]);
+            sys.sxz[i] = physics::ode_solid_advance(sys.sxz[i], dt, solid_rhs.dsxz[i]);
         }
         euler_step_position_velocity(ntotal, dt, sys.x, sys.vx, solid_rhs.dvx);
     }

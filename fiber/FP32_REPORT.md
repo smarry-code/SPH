@@ -3,7 +3,7 @@
 Написано для: разработчиков проекта SPH, которые будут переносить конвейер на GPU (см. [CUDA_PLAN.md](CUDA_PLAN.md)) и решать, в какой точности считать.
 
 **Дата:** 2026-09-26
-**Ветка:** `fiber_cuda` (worktree `C:/dip/sph/SPH-cuda`), от коммита `3b9873c`
+**Ветка:** `fiber_cuda` (worktree `C:/dip/sph/SPH/.claude/worktrees/cuda`), от коммита `3b9873c`
 **Машина замеров:** AMD Ryzen 5 7535HS (6 ядер, 12 потоков), 15 ГБ ОЗУ, Windows 11, Clang 22.1.5, Release `-O3 -march=native`, OpenMP
 
 ## 1. Итог

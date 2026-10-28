@@ -47,9 +47,37 @@ struct MaterialTable
     static constexpr std::size_t kMetalCount = 7;
     // itype 10..11 (Materials::const_JH_2[.][1]) -- керамика JH-2, столбец G.
     static constexpr std::size_t kJh2Count = 2;
+    // Смещение индекса itype -> [itype - kNMe] у металлов/полимеров -- та же
+    // константа, что Materials::n_Me (используется физикой напрямую, без
+    // объекта Materials -- значение известно на этапе компиляции).
+    static constexpr std::size_t kNMe = Materials::n_Me;
+    // Число столбцов в строке JH-2 -- как у Materials::const_JH_2 (см. там
+    // комментарий с раскладкой столбцов).
+    static constexpr std::size_t kJh2Cols = 17;
 
     real_t G[kMetalCount] = {};
     real_t jh2_g[kJh2Count] = {};
+
+    // Прочность Мизеса (physics/strength.hpp), этап Г2д: предел текучести --
+    // Materials::sigy, та же индексация [itype - kNMe], что у G.
+    real_t sigy[kMetalCount] = {};
+
+    // ЭОС (physics/eos.hpp), этап Г2д: aa/zz/gamm -- Materials::aa/zz/gamm
+    // (УА Тэта -- itype 5..9, aa/zz; Ми-Грюнайзен -- itype 3..4, aa/zz/gamm),
+    // индексация -- [itype - kNMe], буквально как у Materials. gamm заполнен
+    // только у индексов 0..1 (Materials::gamm имеет 2 элемента -- используются
+    // только itype 3,4), остальные -- 0 (тот же паттерн "нет данных -> 0",
+    // что у G/jh2_g выше; eos_ua_teta gamm не читает, поэтому нули у
+    // индексов 2..6 недостижимы).
+    real_t aa[kMetalCount] = {};
+    real_t zz[kMetalCount] = {};
+    real_t gamm[kMetalCount] = {};
+
+    // jh2[mat][col] -- побитная копия строки Materials::const_JH_2[mat] (все
+    // 17 столбцов, не только G) -- нужна и УРС JH-2 (K1,K2,K3,T -- eos.hpp),
+    // и прочности JH-2 (P_hel,s_hel,T_n,A,N,B,M,s_f_max,C,D1,D2,K1 --
+    // strength.hpp).
+    real_t jh2[kJh2Count][kJh2Cols] = {};
 };
 
 inline MaterialTable build_material_table(const Materials& m)
@@ -59,6 +87,21 @@ inline MaterialTable build_material_table(const Materials& m)
         t.G[k] = (k < m.G.size()) ? m.G[k] : real_t(0.0);
     for (std::size_t k = 0; k < MaterialTable::kJh2Count; ++k)
         t.jh2_g[k] = (k < m.const_JH_2.size() && m.const_JH_2[k].size() > 1) ? m.const_JH_2[k][1] : real_t(0.0);
+    for (std::size_t k = 0; k < MaterialTable::kMetalCount; ++k)
+        t.sigy[k] = (k < m.sigy.size()) ? m.sigy[k] : real_t(0.0);
+    for (std::size_t k = 0; k < MaterialTable::kMetalCount; ++k)
+    {
+        t.aa[k] = (k < m.aa.size()) ? m.aa[k] : real_t(0.0);
+        t.zz[k] = (k < m.zz.size()) ? m.zz[k] : real_t(0.0);
+        t.gamm[k] = (k < m.gamm.size()) ? m.gamm[k] : real_t(0.0);
+    }
+    for (std::size_t k = 0; k < MaterialTable::kJh2Count; ++k)
+    {
+        for (std::size_t col = 0; col < MaterialTable::kJh2Cols; ++col)
+        {
+            t.jh2[k][col] = (k < m.const_JH_2.size() && col < m.const_JH_2[k].size()) ? m.const_JH_2[k][col] : real_t(0.0);
+        }
+    }
     return t;
 }
 
