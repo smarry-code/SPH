@@ -4,7 +4,9 @@
 // полного перебора (brute force) — для "своего типа" (внутри одного набора)
 // и для "чужого типа" (между двумя разными наборами), на нескольких
 // случайных конфигурациях разной плотности, включая последовательные и
-// параллельные (через CpuExecutor) запросы.
+// параллельные (через CpuExecutor) запросы, а также повторные запросы с
+// выходным параметром (find_pairs_parallel(..., out&)) на одном и том же
+// индексе, перестраиваемом с разным N.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -204,6 +206,66 @@ static void test_cross_type()
     }
 }
 
+// -----------------------------------------------------------------------
+// Переиспользование: один SpatialIndex и один out, build() с разным N
+// (рост/спад), find_pairs_parallel/find_pairs_cross_parallel с out& дают те
+// же пары, что варианты по значению. При одном потоке порядок пар должен
+// совпадать точно (worker-major, порядок обхода), при нескольких — как
+// множество.
+// -----------------------------------------------------------------------
+template <std::size_t Dim>
+static void test_reuse_out()
+{
+    std::mt19937 rng(3000 + static_cast<unsigned>(Dim));
+    const std::vector<std::size_t> sizes = {300, 20, 0, 600, 5, 150, 600};
+    const double radius = 1.5;
+    auto accept = [](index_t i, index_t j) { return (i + j) % 5 != 0; };
+
+    for (int nthreads : {1, 4})
+    {
+        CpuExecutor exec(nthreads);
+        SpatialIndex<Dim> index; // один и тот же индекс на все перестроения
+        PairVec out_same, out_cross;
+        bool ok_same = true, ok_cross = true, ok_ref = true;
+        for (std::size_t n : sizes)
+        {
+            Cloud<Dim> cloud = random_cloud<Dim>(n, 6.0, rng);
+            Cloud<Dim> other = random_cloud<Dim>(n / 2 + 1, 6.0, rng);
+            auto coords = cloud.ptrs();
+            auto other_coords = other.ptrs();
+            index.build(coords, n, radius);
+
+            // Свежий индекс — эталон "по значению".
+            SpatialIndex<Dim> fresh;
+            fresh.build(coords, n, radius);
+            PairVec by_value = fresh.find_pairs_parallel(exec, radius, accept);
+            PairVec by_value_cross = fresh.find_pairs_cross_parallel(exec, other_coords, other.n, radius, accept);
+
+            // Повторять вызов на одном индексе и одном out: результат не зависит от прошлых вызовов.
+            for (int rep = 0; rep < 2; ++rep)
+            {
+                index.find_pairs_parallel(exec, radius, accept, out_same);
+                index.find_pairs_cross_parallel(exec, other_coords, other.n, radius, accept, out_cross);
+                if (nthreads == 1)
+                {
+                    if (out_same != by_value) ok_same = false;
+                    if (out_cross != by_value_cross) ok_cross = false;
+                }
+                else
+                {
+                    if (sorted_copy(out_same) != sorted_copy(by_value)) ok_same = false;
+                    if (sorted_copy(out_cross) != sorted_copy(by_value_cross)) ok_cross = false;
+                }
+            }
+            if (sorted_copy(out_same) != sorted_copy(brute_force_same<Dim>(cloud, radius, accept))) ok_ref = false;
+        }
+        check(ok_same, "SpatialIndex::find_pairs_parallel(out&) при повторных вызовах расходится с вариантом по значению");
+        check(ok_cross,
+              "SpatialIndex::find_pairs_cross_parallel(out&) при повторных вызовах расходится с вариантом по значению");
+        check(ok_ref, "SpatialIndex::find_pairs_parallel(out&) после перестроений расходится с brute force");
+    }
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -215,6 +277,8 @@ int main()
     test_same_type<3>();
     test_cross_type<2>();
     test_cross_type<3>();
+    test_reuse_out<2>();
+    test_reuse_out<3>();
 
     if (failures == 0)
         std::printf("test_spatial_index: ПРОЙДЕН\n");

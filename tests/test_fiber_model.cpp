@@ -7,7 +7,7 @@
 //   - fiber::check_fiber_requires_dim3() не бросает при dim == 3 (ветка
 //     throw при dim != 3 недостижима здесь компилятивно — её проверяет
 //     отдельная цель test_fiber_dim_guard, собранная без SPH_DIM=3);
-//   - body[] в ParticleSystem: из PID k-файла (parse_k_file) и из itype[]
+//   - body[] в ParticleSystem: из PID k-файла (k_input::load_k_geometry) и из itype[]
 //     во встроенном генераторе (shock_tube).
 //
 // Собирается с SPH_DIM=3 (CMakeLists.txt): нити (fiber/SPH.md) поддержаны
@@ -16,6 +16,7 @@
 #include "fiber/fiber_output.hpp"
 #include "fiber/model.hpp"
 #include "input.hpp"
+#include "k_input/k_geometry.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
 #include "simulation_config.hpp"
@@ -410,6 +411,7 @@ void test_body_from_k_file()
     std::printf("test_body_from_k_file:\n");
     const char* kfile = "__fiber_model_body.k";
     write_file(kfile,
+        "*PART\nA\n5\n*PART\nB\n7\n"  // новый читатель требует *PART для каждого PID (Р8)
         "*NODE\n"
         "1,0.0,0.0,0.0\n"
         "2,1.0,0.0,0.0\n"
@@ -421,8 +423,12 @@ void test_body_from_k_file()
 
     SimulationConfig cfg;
     cfg.apply_defaults();
-    ParticleSystem sys;
-    parse_k_file(cfg, kfile, sys);
+    fiber::Model model;
+    k_input::KImportOptions kopt;
+    kopt.k_file = kfile; // без таблицы деталей: itype = body = PID
+    std::size_t moni = 0;
+    k_input::load_k_geometry(kopt, cfg.mats, model, moni);
+    ParticleSystem& sys = model.solid;
 
     check(sys.size() == 3, "3 частицы разобраны из k-файла");
     const int expected_pid[3] = {5, 7, 5};

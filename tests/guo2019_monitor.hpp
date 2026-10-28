@@ -552,10 +552,9 @@ private:
     {
         ContactFF r;
         if (nb_ == 0) return r;
-        rhs::CpuExecutor exec(1);
-        interactions::FiberContactSearchResult search;
-        interactions::build_fiber_contact_search(exec, m_.fiber, m_.topology, m_.materials, search);
-        const auto dg = interactions::compute_fiber_contact_diagnostics(exec, m_.fiber, m_.materials, search);
+        // Постоянные члены монитора вместо локальных объектов на каждый вызов.
+        interactions::build_fiber_contact_search(diag_executor_, m_.fiber, m_.topology, m_.materials, diag_search_);
+        const auto dg = interactions::compute_fiber_contact_diagnostics(diag_executor_, m_.fiber, m_.materials, diag_search_);
         r.count = dg.contact_count;
         r.delta_d = d_fiber_ > 0.0 ? dg.max_penetration / d_fiber_ : 0.0;
         return r;
@@ -563,7 +562,6 @@ private:
 
     struct SolidGrid
     {
-        std::vector<std::pair<std::uint64_t, std::uint32_t>> cells; // (ключ ячейки, индекс частицы), отсортирован
         double org[3] = {0, 0, 0};
         double W = 0.0;
         long long cell(double x, int d) const { return static_cast<long long>(std::floor((x - org[d]) / W)); }
@@ -617,15 +615,19 @@ private:
         for (const auto& mat : m_.materials) rf_max = std::max(rf_max, 0.5 * mat.d);
         g.W = rf_max + rs_max;
         if (!(g.W > 0.0)) return;
-        g.cells.reserve(nt_);
+        // Ячейки сетки (ключ ячейки, индекс частицы), отсортированы; буфер постоянный.
+        grid_cells_.clear();
+        grid_cells_.reserve(nt_);
         for (std::size_t k = 0; k < nt_; ++k)
         {
             const std::uint64_t key = detail::cell_key(g.cell(s.x[0][k], 0), g.cell(s.x[1][k], 1), g.cell(s.x[2][k], 2));
-            g.cells.emplace_back(key, static_cast<std::uint32_t>(k));
+            grid_cells_.emplace_back(key, static_cast<std::uint32_t>(k));
         }
-        std::sort(g.cells.begin(), g.cells.end());
+        std::sort(grid_cells_.begin(), grid_cells_.end());
 
-        std::vector<char> tun(nb_, 0);
+        // Метки туннелирования; буфер постоянный.
+        tun_.clear();
+        tun_.resize(nb_, 0);
         double dmax_fs = 0.0;
         for (const auto& b : bonds)
         {
@@ -646,9 +648,9 @@ private:
                     for (long long cz = cz0; cz <= cz1; ++cz)
                     {
                         const std::uint64_t key = detail::cell_key(cx, cy, cz);
-                        auto it = std::lower_bound(g.cells.begin(), g.cells.end(),
+                        auto it = std::lower_bound(grid_cells_.begin(), grid_cells_.end(),
                                                    std::make_pair(key, static_cast<std::uint32_t>(0)));
-                        for (; it != g.cells.end() && it->first == key; ++it)
+                        for (; it != grid_cells_.end() && it->first == key; ++it)
                         {
                             const std::size_t k = it->second;
                             const double p[3] = {s.x[0][k], s.x[1][k], s.x[2][k]};
@@ -660,15 +662,15 @@ private:
                             // Глубокое проникание в шар: ближе r_f + r_s - 0.5 r_f (ТЗ Guo 2019 §6.3, n_tunnel)
                             if (k < sc_.ball_end && dist < rf + rs - 0.5 * rf)
                             {
-                                tun[b.i] = 1;
-                                tun[b.j] = 1;
+                                tun_[b.i] = 1;
+                                tun_[b.j] = 1;
                             }
                         }
                     }
         }
         st_.max_delta_fs_d = std::max(st_.max_delta_fs_d, dmax_fs);
         std::size_t nt = 0;
-        for (char c : tun) nt += (c != 0);
+        for (char c : tun_) nt += (c != 0);
         st_.n_tunnel = std::max(st_.n_tunnel, nt);
     }
 
@@ -741,6 +743,13 @@ private:
     std::FILE* csv_ = nullptr;
     Row last_;
     bool last_written_ = true;
+
+    // Персистентные буферы диагностики: переиспользуются в diagnostics() вместо
+    // повторной аллокации (контакты FF, FS, туннелирование, m_ej).
+    mutable rhs::CpuExecutor diag_executor_{1};
+    mutable interactions::FiberContactSearchResult diag_search_;
+    mutable std::vector<std::pair<std::uint64_t, std::uint32_t>> grid_cells_;
+    mutable std::vector<char> tun_;
 };
 
 } // namespace guo2019

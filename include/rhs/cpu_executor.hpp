@@ -106,6 +106,10 @@ public:
     // ожидается коммутативной. Каждый worker сворачивает свою часть
     // диапазона в локальный аккумулятор, финальное объединение — по числу
     // потоков (SPH.md, "ODE solver"/"Reduce" — общий паттерн CPU backend).
+    // Раздача итераций — schedule(dynamic, lchunk), lchunk = n/(8*nthreads)
+    // (около 8 порций на поток): при порции 1 каждая итерация — атомарная
+    // операция над общим счётчиком libgomp, и на лёгком map (единицы нс)
+    // потоки упираются в этот счётчик (speedup/contact.md).
     // ------------------------------------------------------------------
     template <class T, class MapFunc, class CombineFunc>
     T parallel_reduce(std::size_t n, T init, MapFunc&& map, CombineFunc&& combine) const
@@ -116,11 +120,13 @@ public:
         {
             std::vector<T> partial(static_cast<std::size_t>(num_threads_), init);
             const long long nn = static_cast<long long>(n);
+            const long long lchunk = static_cast<long long>(
+                std::max<std::size_t>(1, n / (8 * static_cast<std::size_t>(num_threads_))));
 #pragma omp parallel num_threads(num_threads_)
             {
                 const int tid = omp_get_thread_num();
                 T local = init;
-#pragma omp for schedule(dynamic)
+#pragma omp for schedule(dynamic, lchunk)
                 for (long long i = 0; i < nn; ++i)
                 {
                     local = combine(local, map(static_cast<std::size_t>(i)));

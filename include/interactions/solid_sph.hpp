@@ -363,10 +363,39 @@ struct SolidSphPrimitive
     double dwdx[dim] = {};
 };
 
+// Межтельная пара real-real из real_pairs (body[i] != body[j]) -- список для
+// Solid-Solid-Contact. k -- исходный индекс пары в real_pairs: он передаётся
+// как primitive_id в meta вкладов, чтобы meta (и детерминированный порядок
+// reduce) не зависели от того, что контакт идёт по сокращённому списку.
+struct SolidContactPair
+{
+    rhs::index_t i, j;
+    std::uint64_t k;
+};
+
+// Счётчики одного блока сборки примитивов (проход 1 -> смещения для прохода 2).
+// alignas(64): запись счётчиков каждым потоком -- в своей кэш-линии (false sharing).
+struct alignas(64) SolidBlockCount
+{
+    std::size_t prim = 0, real = 0, cont = 0;
+};
+
 struct SolidSphSearchResult
 {
     std::vector<SolidSphPrimitive> primitives;                          // (real, real|ghost)
     std::vector<std::pair<rhs::index_t, rhs::index_t>> real_pairs;      // подмножество (real, real)
+    // Подмножество real_pairs с body[i] != body[j], порядок real_pairs сохранён.
+    // По нему идут контактное ядро и диагностика контакта: межтельных пар на
+    // порядки меньше, чем всех real_pairs.
+    std::vector<SolidContactPair> contact_pairs;
+
+    // Рабочая память поиска. Лежит здесь, а не в локальных переменных
+    // build_solid_sph_search, чтобы при постоянном SolidSphSearchResult
+    // (SolidStepWorkspace) сетка и буферы пар переиспользовались между
+    // шагами, а не выделялись заново на каждом (glibc mmap/munmap).
+    rhs::SpatialIndex<dim> index;
+    std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
+    std::vector<SolidBlockCount> blocks;
 };
 
 // Поиск пар -- та же логика, что был у прежнего прямого поиска соседей
@@ -390,16 +419,25 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
             "sph_same_body_only = 1 требует contact_force_type != 0: иначе разные тела не взаимодействуют вовсе");
     }
 
-    out.primitives.clear();
-    out.real_pairs.clear();
-    if (ext.next == 0) return;
+    // clear() в начале нет намеренно: primitives/real_pairs/contact_pairs
+    // получают размер resize() ниже и целиком перезаписываются по индексам, а
+    // clear()+resize() каждый шаг заново обнуляли бы десятки МБ на главном потоке.
+    // Буферы живут в SolidStepWorkspace и переиспользуются; только на ранних
+    // выходах массивы обнуляются явно.
+    if (ext.next == 0)
+    {
+        out.primitives.resize(0);
+        out.real_pairs.resize(0);
+        out.contact_pairs.resize(0);
+        return;
+    }
 
     double max_h = 0.0;
     for (std::size_t k = 0; k < ext.next; ++k) max_h = std::max(max_h, ext.hsml[k]);
     const double scale_k = (cfg.skf == 1) ? 2.0 : 3.0;
     const double radius = scale_k * max_h;
 
-    rhs::SpatialIndex<dim> index;
+    rhs::SpatialIndex<dim>& index = out.index;
     std::array<const double*, dim> coords{};
     for (std::size_t d = 0; d < dim; ++d) coords[d] = ext.x[d].data();
     index.build(coords, ext.next, radius > 0.0 ? radius : 1.0);
@@ -418,36 +456,124 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
         return std::sqrt(r2) < scale_k * mh;
     };
 
-    const auto pairs = index.find_pairs_parallel(exec, radius, accept);
+    const auto& pairs = out.pairs;
+    index.find_pairs_parallel(exec, radius, accept, out.pairs);
 
-    out.primitives.reserve(pairs.size());
-    for (const auto& pr : pairs)
+    const std::size_t n = pairs.size();
+    if (n == 0)
     {
-        const rhs::index_t i = pr.first, j = pr.second;
-        // Изоляция по телам (ТЗ эксперименты Guo 2019, §4.2): пара real-real
-        // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по
-        // этому же списку работает Solid-Solid-Contact (solid_contact.hpp).
-        // Пары с ghost (j >= nreal) не затрагиваются.
-        if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
-        {
-            out.real_pairs.emplace_back(i, j);
-            continue;
-        }
-        double dx[dim];
-        double r2 = 0.0;
-        for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
-        const double r = std::sqrt(r2);
-        const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+        out.primitives.resize(0);
+        out.real_pairs.resize(0);
+        out.contact_pairs.resize(0);
+        return;
+    }
 
-        SolidSphPrimitive prim;
-        prim.i = i; prim.j = j;
-        double w = 0.0;
-        double dwdx_buf[dim];
-        kernel(cfg.skf, r, std::span<const double>(dx, dim), mh, w, dwdx_buf);
-        prim.w = w;
-        for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
-        out.primitives.push_back(prim);
-        if (j < nreal) out.real_pairs.emplace_back(i, j);
+    // Сборка по индексам: счёт -> префиксная сумма -> запись. Пары делятся на nb
+    // непрерывных блоков; проход 1 считает у каждого блока число примитивов,
+    // real_pairs и contact_pairs, исключающая сумма даёт смещения блоков, проход 2
+    // пишет элементы по своим смещениям. Позиция элемента определяется номером
+    // пары, а не блоком или потоком: массивы совпадают с прежней последовательной
+    // сборкой (push_back в порядке pairs) при любом числе потоков. Блок --
+    // отдельная кэш-линия SolidBlockCount.
+    const std::size_t nb = std::clamp<std::size_t>(n / 2048, 1, 8 * static_cast<std::size_t>(exec.num_workers()));
+    auto block_begin = [&](std::size_t t) { return n * t / nb; };
+    out.blocks.resize(nb + 1);
+    SolidBlockCount* const blocks = out.blocks.data();
+
+    // Пара отсечена изоляцией по телам (ТЗ эксперименты Guo 2019, §4.2): real-real
+    // разных тел не даёт SPH-primitive, но остаётся в real_pairs -- по этому же
+    // списку работает Solid-Solid-Contact (solid_contact.hpp). Пары с ghost
+    // (j >= nreal) не затрагиваются.
+    exec.parallel_for(nb, 1, [&](std::size_t t) {
+        std::size_t prim = 0, real = 0, cont = 0;
+        for (std::size_t q = block_begin(t), qe = block_begin(t + 1); q < qe; ++q)
+        {
+            const rhs::index_t i = pairs[q].first, j = pairs[q].second;
+            const bool cross = j < nreal && ext.body[i] != ext.body[j];
+            if (!(same_body_only && cross)) ++prim;
+            if (j < nreal) ++real;
+            if (cross) ++cont;
+        }
+        blocks[t].prim = prim; blocks[t].real = real; blocks[t].cont = cont;
+    });
+    SolidBlockCount run;
+    for (std::size_t t = 0; t < nb; ++t)
+    {
+        const SolidBlockCount c = blocks[t];
+        blocks[t] = run;
+        run.prim += c.prim; run.real += c.real; run.cont += c.cont;
+    }
+    blocks[nb] = run;
+
+    out.primitives.resize(run.prim);
+    out.real_pairs.resize(run.real);
+    out.contact_pairs.resize(run.cont);
+    SolidSphPrimitive* const primitives = out.primitives.data();
+    std::pair<rhs::index_t, rhs::index_t>* const real_pairs = out.real_pairs.data();
+    SolidContactPair* const contact_pairs = out.contact_pairs.data();
+
+    // Тело прохода 2; ядро -- параметр (kernel_fn), чтобы skf выбирался один
+    // раз вне цикла, а ядро вызывалось напрямую (у каждой лямбды свой тип --
+    // своя инстанциация build_loop; указатель на функцию дал бы непрямой
+    // вызов). Сами ядра не встраиваются ([[gnu::noinline]], см. kernel.hpp).
+    // Межтельная пара попадает и в contact_pairs (k -- её индекс в real_pairs).
+    auto build_loop = [&](auto kernel_fn) {
+        exec.parallel_for(nb, 1, [&](std::size_t t) {
+            std::size_t p = blocks[t].prim, r = blocks[t].real, c = blocks[t].cont;
+            for (std::size_t q = block_begin(t), qe = block_begin(t + 1); q < qe; ++q)
+            {
+                const rhs::index_t i = pairs[q].first, j = pairs[q].second;
+                if (same_body_only && j < nreal && ext.body[i] != ext.body[j])
+                {
+                    contact_pairs[c++] = {i, j, static_cast<std::uint64_t>(r)};
+                    real_pairs[r++] = {i, j};
+                    continue;
+                }
+                double dx[dim];
+                double r2 = 0.0;
+                for (std::size_t d = 0; d < dim; ++d) { dx[d] = ext.x[d][i] - ext.x[d][j]; r2 += dx[d] * dx[d]; }
+                const double rr = std::sqrt(r2);
+                const double mh = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+
+                SolidSphPrimitive prim;
+                prim.i = i; prim.j = j;
+                double w = 0.0;
+                double dwdx_buf[dim];
+                kernel_fn(rr, std::span<const double>(dx, dim), mh, w, dwdx_buf);
+                prim.w = w;
+                for (std::size_t d = 0; d < dim; ++d) prim.dwdx[d] = dwdx_buf[d];
+                primitives[p++] = prim;
+                if (j < nreal)
+                {
+                    if (ext.body[i] != ext.body[j])
+                        contact_pairs[c++] = {i, j, static_cast<std::uint64_t>(r)};
+                    real_pairs[r++] = {i, j};
+                }
+            }
+        });
+    };
+    switch (cfg.skf)
+    {
+    case 1:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_cubic(r, dx, mh, w, dwdx);
+        });
+        break;
+    case 2:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_gauss(r, dx, mh, w, dwdx);
+        });
+        break;
+    case 3:
+        build_loop([](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel_quintic(r, dx, mh, w, dwdx);
+        });
+        break;
+    // Неизвестный skf: kernel() обнуляет w и dwdx.
+    default:
+        build_loop([&](double r, std::span<const double> dx, double mh, double& w, double* dwdx) {
+            kernel(cfg.skf, r, dx, mh, w, dwdx);
+        });
     }
 }
 
@@ -465,14 +591,26 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
 inline void compute_solid_sph_contributions(
     const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const SolidExtended& ext,
     const std::vector<SolidSphPrimitive>& primitives,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& thread_buffers)
+    rhs::IndexedContributions<SolidDelta>& out)
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
-    if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
-    for (auto& buf : thread_buffers) buf.clear();
-
+    // Число вкладов известно заранее: примитив k даёт вклад для i и, если j
+    // реальна, для j. Позиции -- исключающая префиксная сумма; порядок вкладов
+    // i0, j0, i1, j1, ... канонический (не зависит от числа потоков), общего
+    // буфера с заголовком, в который пишут все потоки, нет.
     const std::size_t n = primitives.size();
-    if (n == 0) return;
+    if (n == 0)
+    {
+        out.prepare(0);
+        return;
+    }
+    out.counts.resize(n);
+    out.offsets.resize(n + 1);
+    std::size_t* const cnt = out.counts.data();
+    std::size_t* const offset = out.offsets.data();
+    exec.parallel_for(n, [&](std::size_t k) { cnt[k] = 1 + (primitives[k].j < ext.nreal ? 1 : 0); });
+    exec.parallel_scan(cnt, offset, n);
+    out.prepare(offset[n]);
+    const auto w_out = out.writer();
 
     const int density_method = cfg.density_method;
     const int pa_sph = cfg.pa_sph;
@@ -751,11 +889,14 @@ inline void compute_solid_sph_contributions(
             }
         }
 
-        int w_id = rhs::CpuExecutor::worker_id();
-        if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
-        rhs::ContributionWriter<SolidDelta> writer(thread_buffers[static_cast<std::size_t>(w_id)], kSolidSphInteractionType);
-        writer.emit(i, di, static_cast<std::uint64_t>(k), 0);
-        if (j_real) writer.emit(j, dj, static_cast<std::uint64_t>(k), 1);
+        const std::size_t pos = offset[k];
+        w_out.set(pos, rhs::Contribution<SolidDelta>{
+            i, di, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 0}});
+        if (j_real)
+        {
+            w_out.set(pos + 1, rhs::Contribution<SolidDelta>{
+                j, dj, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 1}});
+        }
     });
 }
 

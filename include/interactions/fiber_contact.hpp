@@ -234,6 +234,11 @@ struct FiberContactSearchResult
 {
     std::vector<FiberContactPrimitive> primitives;
     std::size_t pair_count = 0; // spatial-пары после фильтра object_id (широкая фаза, до отбрасывания по таблице сторон)
+    // Постоянная рабочая память поиска: результат живёт между шагами, поэтому
+    // индекс и вектор пар не создаются заново на каждом вызове (память только
+    // растёт).
+    rhs::SpatialIndex<dim> index;
+    std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
 };
 
 inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -260,20 +265,19 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
     {
         const double radius = fiber_contact_search_radius(exec, state, topology, materials);
 
-        rhs::SpatialIndex<dim> index;
         std::array<const double*, dim> coords{};
         for (std::size_t d = 0; d < dim; ++d) coords[d] = state.x[d].data();
-        index.build(coords, n, radius > 0.0 ? radius : 1.0);
+        out.index.build(coords, n, radius > 0.0 ? radius : 1.0);
 
         auto accept = [&](rhs::index_t a, rhs::index_t b) -> bool {
             return state.object_id[a] != state.object_id[b];
         };
 
-        const auto pairs = index.find_pairs_parallel(exec, radius, accept);
-        out.pair_count = pairs.size();
+        out.index.find_pairs_parallel(exec, radius, accept, out.pairs);
+        out.pair_count = out.pairs.size();
 
-        out.primitives.reserve(pairs.size());
-        for (const auto& pr : pairs)
+        out.primitives.reserve(out.pairs.size());
+        for (const auto& pr : out.pairs)
         {
             const rhs::index_t k_a = pr.first;
             const rhs::index_t k_b = pr.second;

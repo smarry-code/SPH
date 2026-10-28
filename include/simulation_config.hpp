@@ -87,6 +87,17 @@ struct SimulationConfig
     // (fiber/SPH.md: "Нити поддерживаются только в трёхмерной постановке").
     std::string fiber_file;
 
+    // --- Импорт LS-DYNA .k (readk/k-import-plan.md, этап K6) ---
+    // k_file пуст (по умолчанию) -- импорта нет. Непустой k_file имеет
+    // приоритет над встроенными генераторами (shocktube/shearcavity).
+    std::string k_file;
+    std::string k_mode = "solid";           // "solid" | "solid_fiber"
+    std::string k_parts_file;               // таблица деталей (Р2); пусто -- режим без таблицы
+    double k_length_scale = 1.0;            // множитель координат (Р5), > 0
+    double k_mass_scale   = 1.0;            // множитель масс (Р5), > 0
+    long long k_monitor_nid = -1;           // NID мониторной частицы; < 0 -- не задан
+    std::string k_solid_elements = "skip";  // "skip" | "particles" (*ELEMENT_SOLID)
+
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
     // Вызывается из main ДО parse_sph_config: явно фиксирует контракт
     // инициализации конфига (независимо от default member initializers).
@@ -107,4 +118,7 @@ inline void SimulationConfig::apply_defaults()
     num_threads = 7;
     maxn = 0;  max_interaction = 0;  moni_particle = 0;
     fiber_file.clear();
+    k_file.clear();  k_mode = "solid";  k_parts_file.clear();
+    k_length_scale = 1.0;  k_mass_scale = 1.0;  k_monitor_nid = -1;
+    k_solid_elements = "skip";
 }
