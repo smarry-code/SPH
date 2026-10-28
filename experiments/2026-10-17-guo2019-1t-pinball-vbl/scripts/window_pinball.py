@@ -20,13 +20,15 @@
   Исход «не определён» -> повтор с --t-max-long; если и он не определён -> mu «вывод невозможен».
   Если ни при каком mu непробития нет -> конец (нужен анализ причин).
 
-Перезапуск той же командой безопасен: выстрел с готовым shots.csv не пересчитывается.
+Перезапуск той же командой безопасен: выстрел с готовым shots.csv не пересчитывается,
+а идущий выстрел с тем же --out (запущенный вручную) драйвер ждёт, не стирая каталог.
 Упавший выстрел (rc != 0 или нет shots.csv) повторяется один раз; повторное падение останавливает серию.
 """
-import argparse, concurrent.futures, glob, json, os, shutil, subprocess, sys, threading, time
+import argparse, concurrent.futures, csv, glob, json, os, shutil, subprocess, sys, threading, time
 
 MUS = [0.1, 0.3, 0.5, 0.7, 0.9]
-MAX_BROKEN_V = 8
+MAX_BROKEN_V = 8  # только 1T; для 2T вердикт по шару, разрывы -- отдельная метрика (владелец, 2026-10-10)
+BALL_ONLY = False  # True: и для 1T вердикт по шару, без допуска на разрывы (владелец, 2026-10-25; ключ --verdict-ball)
 LOCK = threading.Lock()
 
 
@@ -79,10 +81,35 @@ def verdict(r):
     if out == "not_perforated":
         if vr > 0.0:
             return True, "V_R = %.2f > 0" % vr
-        if nv > MAX_BROKEN_V or nh > 0:
+        if r.get("config", "1T") == "1T" and not BALL_ONLY and (nv > MAX_BROKEN_V or nh > 0):
             return True, "шар остановлен, но порвано верт. %d / гориз. %d (допуск <= %d / 0)" % (nv, nh, MAX_BROKEN_V)
         return False, "не пробит: V_R = 0, порвано %d / %d" % (nv, nh)
+    if BALL_ONLY and out == "undetermined" and r.get("_dir"):
+        # к t_max шар практически стоит за плоскостью ткани: |v_z| < 5 % V0 и z_c < 0 -> «не пробит» (оценка),
+        # без повтора до t_max_long (правило прежних драйверов; владелец, 2026-10-25)
+        try:
+            with open(os.path.join(r["_dir"], "monitor.csv")) as f:
+                last = [q for q in csv.DictReader(f) if q.get("w_p")][-1]
+            vz, zc = float(last["v_z"]), float(last["z_c"])
+            if abs(vz) < 0.05 * num(r.get("V0"), 0.0) and zc < 0.0:
+                return False, "не пробит (оценка): к t_max |v_z| = %.2f м/с < 5 %% V0, z_c = %.1f мм; порвано %d / %d" % (
+                    abs(vz), zc * 1e3, nv, nh)
+        except (OSError, IndexError, KeyError, ValueError):
+            pass
     return None, "исход не определён (%s)" % out
+
+
+def shot_running(sdir):
+    """Идёт ли уже guo2019_shot с --out=sdir (запущен вручную или прежним экземпляром драйвера)."""
+    tag = ("--out=" + sdir).encode()
+    for p in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(p, "rb") as f:
+                if tag in f.read().split(b"\0"):
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def run_shot(args, mu, v0, threads, tmax, suffix=""):
@@ -90,17 +117,27 @@ def run_shot(args, mu, v0, threads, tmax, suffix=""):
     r = read_result(sdir)
     if r is not None:
         return r
+    # Идущий выстрел в том же каталоге не стирать: дождаться и взять его результат.
+    if shot_running(sdir):
+        log(args.work, "жду идущий выстрел mu=%g V0=%g%s" % (mu, v0, suffix))
+        while shot_running(sdir):
+            time.sleep(60)
+        r = read_result(sdir)
+        if r is not None:
+            log(args.work, "готово (внешний) mu=%g V0=%g%s: %s" % (mu, v0, suffix, verdict(r)[1]))
+            return r
     for attempt in (1, 2):
         if os.path.isdir(sdir):
             shutil.rmtree(sdir)
         os.makedirs(sdir)
-        cmd = [args.bin, "--config=1T", "--level=" + args.level, "--v0=%g" % v0, "--mu=%g" % mu, "--out=" + sdir,
+        cmd = [args.bin, "--config=" + getattr(args, "config", "1T"), "--level=" + args.level, "--v0=%g" % v0, "--mu=%g" % mu, "--out=" + sdir,
                "--frames=off", "--save-t=%g" % args.save_t, "--threads=%d" % threads, "--n-mon=10", "--n-diag=100",
                "--repeat=1", "--no-bracket", "--t-max=%g" % tmax, "--fiber-inelastic=" + args.fib,
                "--eps-break=%g" % args.eps_break, "--fiber-E=%g" % args.fiber_E,
                "--fs-contact=%d" % args.contact, "--ff-contact=%d" % args.contact]
         if args.energy_log > 0:
             cmd.append("--energy-log=%d" % args.energy_log)
+        cmd += getattr(args, "extra", "").split()
         env = dict(os.environ, OMP_NUM_THREADS=str(threads))
         log(args.work, "старт mu=%g V0=%g%s (%d потоков, t_max=%g, попытка %d)" % (mu, v0, suffix, threads, tmax, attempt))
         t0 = time.time()
@@ -187,10 +224,13 @@ def process_mu(args, mu, rec, save):
 
 def write_window(args, records, final):
     law = {0: "Герц", 1: "pinball", 2: "Swegle", 3: "импульсный", 4: "Герц + демпфер"}.get(args.contact, "?")
-    lines = ["# Подбор окна 1T base, закон контакта нитей %s (fs = ff = %d)" % (law, args.contact), "",
+    cfg = getattr(args, "config", "1T")
+    lines = ["# Подбор окна %s base, закон контакта нитей %s (fs = ff = %d)" % (cfg, law, args.contact), "",
              "Нить: %s, E = %g Па, eps_break = %g; уровень %s; t_max = %g (повтор %g)." % (
                  os.path.basename(args.fib), args.fiber_E, args.eps_break, args.level, args.t_max, args.t_max_long),
-             "Критерий «не пробит»: not_perforated, V_R = 0, верт. <= %d, гориз. = 0." % MAX_BROKEN_V, ""]
+             ("Критерий «не пробит»: not_perforated, V_R = 0, верт. <= %d, гориз. = 0." % MAX_BROKEN_V
+              if cfg == "1T" and not BALL_ONLY else
+              "Критерий «не пробит»: not_perforated, V_R = 0 (по шару; разрывы нитей -- отдельная метрика)."), ""]
     for rec in records:
         lines.append("## mu = %g" % rec["mu"])
         lines.append("")
