@@ -1,0 +1,2 @@
+mu,V0,run,outcome,effective,V_R,e,n_broken_v,n_broken_h,t_first_break_us,wf_first_break_mm,eps_p_max,W_p,E_tot_max/E_tot_0,E_tot_end/E_tot_0,n_tunnel,t_end_us,t_max_us,wall_s,strict_perforated
+0.5,66.0,base,not_perforated,not_perforated,0.0,15.246,13.0,0.0,482.45123,26.541209199999997,0.00509964401,0.289998972,1.0,0.0418744559,0.0,950.9374469999999,1500.0,5186.68,1

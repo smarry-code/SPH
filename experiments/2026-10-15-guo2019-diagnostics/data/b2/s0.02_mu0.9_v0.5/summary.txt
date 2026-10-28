@@ -1,0 +1,13 @@
+mu=0.9
+stretch=0.02
+v0=0.5
+n=18
+beads=1332
+crossings=324
+KE0=5.32751325e-07
+steps=13104
+dt_first=3.81571616e-08
+dt_min=3.81571616e-08
+wall_s=94.7993987
+t_end=0.0005
+t_reached=0.000500011445

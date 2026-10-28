@@ -9,3 +9,9 @@
 2026-10-01-clamp-solid-viz/*.svg
 2026-10-01-guo2019-1t-scaled/anim_1t.gif
 2026-10-02-guo2019-1t-base/anim_1t_base.gif
+
+# GIF сверх лимита 2,5 МБ: на диске, в git не кладутся
+2026-10-12-guo2019-1t-plastic-mu/anim/weave_mu0.3_v73_not_perforated.gif
+2026-10-12-guo2019-1t-plastic-mu/anim/weave_mu0.5_v73_perforated.gif
+2026-10-14-guo2019-2t-plastic/anim/mu0.1_v137/anim_2t_epsp_mu0.1_v137.gif
+2026-10-14-guo2019-2t-plastic/anim/mu0.1_v137/anim_2t_mu0.1_v137.gif
