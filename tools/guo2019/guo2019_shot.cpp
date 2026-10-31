@@ -11,11 +11,16 @@
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
 //                [--probe-frame] [--plate-nz=N] [--save-t=<с>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
+//                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
 //   --mu задаёт ОБА коэффициента (μ_ff нить-нить и μ_fs нить-Solid); --mu-ff / --mu-fs переопределяют только свой
 //   коэффициент и имеют приоритет над --mu независимо от порядка ключей. Не заданный из пары берётся из --mu
 //   (по умолчанию kMuDefault). Без новых ключей поведение прежнее. Значения пишутся в shot.txt (mu_ff=, mu_fs=).
 //   --energy-log=N -- energy_log.csv каждые N шагов в подкаталоге выстрела (только сборка с -DSPH_ENERGY_LOG=ON;
 //   include/energy_log.hpp).
+//   --checkpoint / --checkpoint-every=N -- чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev) каждые N шагов
+//   интегрирования (N >= 1, по умолчанию 10000) и финальный при останове; --restart -- продолжить выстрел из него
+//   (нет файла -- ошибка); --force -- разрешить менять физические настройки при --restart (только с --restart).
+//   Состояние монитора пока не сохраняется: после --restart monitor.csv и вердикт по шару неполные.
 //   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
 //   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
 //   (и l_break всех связей = (1+eps_break) l0).
@@ -27,6 +32,7 @@
 #include "guo2019_monitor.hpp"
 #include "guo2019_scene.hpp"
 
+#include "checkpoint.hpp"
 #include "e2e_harness.hpp"
 
 #include "fiber/fiber_input.hpp"
@@ -130,6 +136,10 @@ struct Options
     int ff_contact = -1;
     std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
     bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
+    bool checkpoint = false;       // писать чекпоинты (--checkpoint или --checkpoint-every)
+    std::size_t checkpoint_every = 10000; // период чекпоинта, шаги интегрирования
+    bool restart = false;          // продолжить выстрел из checkpoint.ckpt
+    bool force = false;            // --force: разрешить менять физические настройки при рестарте
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -175,9 +185,16 @@ void print_usage()
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
                 "                   [--impulse-push-tau=<с>] [--impulse-push-depth=<доля r>] [--impulse-push-vmax=<м/с>] [--impulse-gamma=<g>]  (тип 3)\n"
                 "                   [--dt-scale=<s из (0;1]>]  (множитель шага, сходимость)\n"
+                "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
+                "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
+                "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
+                "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
+                "  Состояние монитора пока не сохраняется: monitor.csv и вердикт по шару после --restart неполные.\n"
+                "  --force: при --restart разрешить менять физические настройки (без него любое отличие -- отказ со списком полей).\n"
+                "  --force без --restart -- ошибка. Риски --force:\n%s"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
                 "  свой и имеют приоритет над --mu независимо от порядка ключей; не заданный из пары берётся из --mu\n"
-                "  (по умолчанию %g).\n", kMuDefault);
+                "  (по умолчанию %g).\n", checkpoint::force_risks_text().c_str(), kMuDefault);
 }
 
 // 0 -- разобрано, 1 -- справка, 2 -- ошибка
@@ -251,6 +268,15 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_ll(val("--max-steps="), n) || n < 1) return bad("--max-steps");
             o.max_steps = static_cast<std::size_t>(n);
         }
+        else if (a == "--checkpoint") o.checkpoint = true;
+        else if (a.rfind("--checkpoint-every=", 0) == 0)
+        {
+            if (!parse_ll(val("--checkpoint-every="), n) || n < 1) return bad("--checkpoint-every");
+            o.checkpoint_every = static_cast<std::size_t>(n);
+            o.checkpoint = true;
+        }
+        else if (a == "--restart") o.restart = true;
+        else if (a == "--force") o.force = true;
         else if (a == "--no-body-isolation") o.body_isolation = false;
         else if (a.rfind("--mu=", 0) == 0)
         {
@@ -388,6 +414,7 @@ int parse_args(int argc, char** argv, Options& o)
         std::fprintf(stderr, "Нужно ровно одно из --v0=, --paper-shots, --v0-list=\n");
         return 2;
     }
+    if (o.force && !o.restart) { std::fprintf(stderr, "--force допустим только вместе с --restart\n"); return 2; }
     if (o.bracket < 0) o.bracket = o.paper_shots ? 1 : 0;
     if (!o.repeat_set) o.repeat = o.paper_shots ? 2 : 1; // ТЗ Guo 2019 §8.3: --repeat=2 для выстрелов статьи
     if (o.probe_frame < 0) o.probe_frame = o.max_steps > 0 ? 1 : 0;
@@ -633,6 +660,26 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
 #ifdef _OPENMP
             omp_set_num_threads(opt.threads);
 #endif
+        }
+
+        // Чекпоинты/рестарт: файл -- в каталоге выстрела (абсолютный путь, CWD = sub). При --restart
+        // dt/time ниже перекрываются состоянием цикла из чекпоинта (time_integration).
+        const fs::path ckpt_path = sub / "checkpoint.ckpt";
+        if (opt.checkpoint)
+        {
+            sc.cfg.checkpoint_file = ckpt_path.string();
+            sc.cfg.checkpoint_every_steps = opt.checkpoint_every;
+        }
+        if (opt.restart)
+        {
+            const fs::path prev = ckpt_path.string() + ".prev";
+            if (!fs::exists(ckpt_path) && !fs::exists(prev))
+                throw std::runtime_error("--restart: нет чекпоинта " + ckpt_path.string() + " (и .prev) в каталоге выстрела");
+            sc.cfg.restart_file = (fs::exists(ckpt_path) ? ckpt_path : prev).string();
+            sc.cfg.restart_force = opt.force;
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --restart: состояние монитора не сохраняется -- monitor.csv и вердикт по "
+                                 "шару для %s после рестарта неполные (monitor.csv перезаписывается с шага рестарта).\n",
+                         sub.string().c_str());
         }
 
         double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
