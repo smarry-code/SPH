@@ -29,6 +29,10 @@ ctest --test-dir build --output-on-failure
 | `regression_selfcheck_3d` | `test_regression_3d --selfcheck` | Самопроверка компаратора в сборке `dim = 3` (19 полей) |
 | `regression_bc2mini3d_contact0..3` | `test_regression_3d --case=bc2mini3d --contact-type=N` | Регрессия уменьшенного BC2 в 3D: все поля всех частиц после 1 и 50 шагов. Метки `regression` и `3d` |
 
+| `checkpoint_test` | `test_checkpoint` | Рестарт из чекпоинта ([руководство](05-restart-checkpoints.md)): побитовое совпадение «2N шагов» и «N + рестарт + N» для предиктора–корректора и Эйлера, в том числе с разрывом связей до чекпоинта; порча, обрезание и неверная сигнатура файла; политика изменения настроек и `--force`; период и ротация `.prev`. Метка `3d` |
+| `checkpoint_energy_test` | `test_checkpoint_energy` | То же с `SPH_ENERGY_LOG`: CSV лога энергии после рестарта совпадает с непрерывным (один заголовок, без дублей строк) |
+| `checkpoint_cli_test` | `tests/checkpoint_cli_test.sh` | Ключи `guo2019_shot`: `--force` без `--restart` и `--checkpoint-every=0` дают код 2, `--restart` без файла — ошибку, разбитый на два запуска выстрел даёт те же итоговые кадры. Требует собранный `guo2019_shot` |
+
 !!! note "Почему по тесту на тип контакта"
     Прежде один тест делал базовый прогон и следом три сценария §6. Обрыв любого
     из них прекращал разбор остальных, а в отчёте CTest всё сводилось к одной
