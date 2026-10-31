@@ -247,6 +247,7 @@ public:
     }
 
     bool first_step() const { return first_step_; }
+    void set_first_step(bool v) { first_step_ = v; } // восстановление из чекпоинта
 
     // Предиктор Solid на полшага dt (по f^{n-1}, уже лежащей в solid_rhs с
     // прошлого вызова). Нет-оп на первом шаге -- fiber/SPH.md, «Первый шаг»:
@@ -453,6 +454,10 @@ public:
         solid_rhs.resize(nbuf);
         fiber_rhs.resize(nfiber);
     }
+
+    // Нет-оп: у Эйлера нет признака первого шага (паритет интерфейса).
+    void set_first_step(bool) {}
+    bool first_step() const { return false; }
 
     void step_solid(ParticleSystem& sys, std::size_t ntotal, double dt)
     {

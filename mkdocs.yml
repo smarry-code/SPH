@@ -96,6 +96,7 @@ nav:
       - Генератор полотняного переплетения: 02-how-to/02-plain-weave-generator.md
       - Из LS-PrePost в расчёт: 02-how-to/03-ls-prepost-to-calculation.md
       - Визуализация в ParaView: 02-how-to/04-paraview.md
+      - Рестарт из чекпоинта: 02-how-to/05-restart-checkpoints.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
       - Конфигурация:

@@ -2,6 +2,7 @@
 // Определения функций временной интеграции.
 // Объявления — в time_integration.hpp.
 #include "time_integration.hpp"
+#include "checkpoint.hpp"
 #include "output.hpp"
 #include "fiber/fiber_output.hpp"
 #include "interactions/clamp.hpp"
@@ -14,6 +15,8 @@
 #include "rhs/contributions.hpp"
 #include "rhs/cpu_executor.hpp"
 #include <fstream>
+#include <functional>
+#include <stdexcept>
 #include <iostream>
 #include <limits>
 #ifdef SPH_CONTACT_STATS
@@ -49,6 +52,27 @@ double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, si
 
 namespace detail
 {
+// Связь цикла с чекпоинтами (include/checkpoint.hpp). nullptr вместо указателя на
+// структуру -- цикл побитово прежний и без накладных расходов.
+//   restart       -- восстановленное состояние цикла (после checkpoint::read в обёртке;
+//                    Model уже перезаписана): цикл продолжается с него, а не с нуля.
+//   on_checkpoint -- запись чекпоинта (обёртка замыкает cfg и Model и зовёт checkpoint::write);
+//                    пуст -- чекпоинты не пишутся.
+struct CheckpointHooks
+{
+    const checkpoint::Payload* restart = nullptr;
+    std::function<void(const checkpoint::Payload&)> on_checkpoint;
+};
+
+// Копия вектора истории в буфер решателя: пустой источник -- пропуск (EulerSolver),
+// размер больше буфера -- ошибка (чекпоинт от другой сцены).
+inline void restore_history_vec(std::vector<double>& dst, const std::vector<double>& src)
+{
+    if (src.empty()) return;
+    if (src.size() > dst.size()) throw std::runtime_error("рестарт: размер истории решателя в чекпоинте больше буфера");
+    for (size_t i = 0; i < src.size(); ++i) dst[i] = src[i];
+}
+
 // ----------------------------------------------------------------------
 // run_time_integration<Solver> -- ЕДИНСТВЕННАЯ реализация главного цикла по
 // времени (fiber/PLAN.md, этап Ф8, раздел E «Унификация time_integration»).
@@ -89,7 +113,8 @@ template <class Solver>
 void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fiber::FiberState& fb,
                            fiber::FiberTopology& topology, std::vector<fiber::FiberMaterial>& materials,
                            size_t ntotal, double& dt, double& time, double /*delta_x*/, RunGuard* guard,
-                           const interactions::ClampSet& clamps, interactions::ClampReport* clamp_report)
+                           const interactions::ClampSet& clamps, interactions::ClampReport* clamp_report,
+                           const CheckpointHooks* ckpt = nullptr)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
@@ -192,10 +217,43 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // Начальное eps_prev неупругих связей = текущая деформация (иначе связь,
     // созданная при l != l0, даёт на первом шаге фиктивный скачок Δε и w_v).
     // Для упругих материалов no-op.
-    if (nfiber > 0) interactions::init_fiber_bond_state(fb, topology, materials);
+    // При рестарте eps_prev берётся из чекпоинта (BondState восстановлен), не пересчитывается.
+    const checkpoint::Payload* const restart = (ckpt != nullptr) ? ckpt->restart : nullptr;
+    if (nfiber > 0 && restart == nullptr) interactions::init_fiber_bond_state(fb, topology, materials);
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
+
+    // Рестарт: состояние цикла, история решателя, счётчики сторожа. dt и time --
+    // ссылки вызывающего, значения из чекпоинта перекрывают пересчитанные снаружи.
+    if (restart != nullptr)
+    {
+        const auto& L = restart->loop;
+        time = L.time;
+        dt = L.dt;
+        current_ts = L.step;
+        next_output_time = L.next_output_time;
+        const auto& H = restart->hist;
+        restore_history_vec(solver.solid_rhs.du, H.du);
+        restore_history_vec(solver.solid_rhs.drho, H.drho);
+        restore_history_vec(solver.solid_rhs.dsxx, H.dsxx);
+        restore_history_vec(solver.solid_rhs.dsyy, H.dsyy);
+        restore_history_vec(solver.solid_rhs.dszz, H.dszz);
+        restore_history_vec(solver.solid_rhs.dsxy, H.dsxy);
+        restore_history_vec(solver.solid_rhs.dsyz, H.dsyz);
+        restore_history_vec(solver.solid_rhs.dsxz, H.dsxz);
+        for (size_t d = 0; d < dim; ++d)
+        {
+            restore_history_vec(solver.solid_rhs.dvx[d], H.dvx[d]);
+            restore_history_vec(solver.fiber_rhs.dv[d], H.fiber_dv[d]);
+        }
+        solver.set_first_step(H.first_step);
+        if (guard != nullptr) guard->restore_progress(L.guard_steps, L.guard_dt_first, L.guard_dt_min);
+    }
+
+    // Периодические и финальные чекпоинты. Выключено -- ckpt_on == false, в цикле одна ветка.
+    const bool ckpt_on = ckpt != nullptr && static_cast<bool>(ckpt->on_checkpoint) && cfg.checkpoint_every_steps > 0;
+    size_t last_ckpt_ts = current_ts; // шаг последнего записанного (или восстановленного) чекпоинта
 
 #ifdef SPH_ENERGY_LOG
     // Лог механической энергии (include/energy_log.hpp): запасы -- каждые
@@ -215,7 +273,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     std::vector<interactions::SolidDelta> elog_damp_fs_sdelta;
     if (cfg.energy_log_every > 0)
     {
-        elog = std::make_unique<energy::EnergyLogger>(cfg.energy_log_file, cfg.energy_log_every);
+        elog = std::make_unique<energy::EnergyLogger>(cfg.energy_log_file, cfg.energy_log_every, restart != nullptr);
         solver.u_clamp_acc = &echan.u_clamp;
         ftap.w_p = &echan.w_p_fiber;
         ftap.w_v = &echan.w_v_fiber;
@@ -230,12 +288,70 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             return uff + ufs;
         };
         wb.energy_log = true;
-        elog->write_row(0, time, dt,
-                        energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
-                                                      elog->workspace()),
-                        echan);
+        if (restart != nullptr)
+        {
+            // Рестарт: CSV дописывается без заголовка и строки шага 0; каналы и база E_mech0 -- из чекпоинта.
+            if (restart->has_energy)
+            {
+                echan.from_array(restart->energy.chan);
+                elog->restore_e0(restart->energy.e_mech0, restart->energy.have_e0);
+            }
+        }
+        else
+            elog->write_row(0, time, dt,
+                            energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
+                                                          elog->workspace()),
+                            echan);
     }
 #endif
+
+    // Снимок живого состояния решателя/цикла для checkpoint::write (вызывается редко).
+    auto make_payload = [&]() {
+        checkpoint::Payload pl;
+        pl.loop.time = time;
+        pl.loop.dt = dt;
+        pl.loop.step = current_ts;
+        pl.loop.next_output_time = next_output_time;
+        if (guard != nullptr)
+        {
+            pl.loop.guard_steps = guard->steps();
+            pl.loop.guard_dt_first = guard->dt_first();
+            pl.loop.guard_dt_min = guard->dt_min();
+        }
+        auto& H = pl.hist;
+        H.first_step = solver.first_step();
+        auto cp = [ntotal](std::vector<double>& dst, const std::vector<double>& src) {
+            dst.assign(src.begin(), src.begin() + static_cast<std::ptrdiff_t>(ntotal));
+        };
+        cp(H.du, solver.solid_rhs.du);
+        cp(H.drho, solver.solid_rhs.drho);
+        cp(H.dsxx, solver.solid_rhs.dsxx);
+        cp(H.dsyy, solver.solid_rhs.dsyy);
+        cp(H.dszz, solver.solid_rhs.dszz);
+        cp(H.dsxy, solver.solid_rhs.dsxy);
+        cp(H.dsyz, solver.solid_rhs.dsyz);
+        cp(H.dsxz, solver.solid_rhs.dsxz);
+        for (size_t d = 0; d < dim; ++d)
+        {
+            cp(H.dvx[d], solver.solid_rhs.dvx[d]);
+            H.fiber_dv[d].assign(solver.fiber_rhs.dv[d].begin(),
+                                 solver.fiber_rhs.dv[d].begin() + static_cast<std::ptrdiff_t>(nfiber));
+        }
+#ifdef SPH_ENERGY_LOG
+        if (elog)
+        {
+            pl.has_energy = true;
+            echan.to_array(pl.energy.chan);
+            pl.energy.e_mech0 = elog->e_mech0();
+            pl.energy.have_e0 = elog->have_e0();
+        }
+#endif
+        return pl;
+    };
+    auto write_checkpoint = [&]() {
+        ckpt->on_checkpoint(make_payload());
+        last_ckpt_ts = current_ts;
+    };
 
 #ifdef SPH_CONTACT_STATS
     // Диагностика контактов нитей (interactions/fiber_contact_stats.hpp): без
@@ -670,13 +786,20 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе
         // шага крутится бесконечно: время задачи практически не растёт, а
         // признаков зависания для ОС нет. Причина обрыва остаётся в guard.
-        if (guard != nullptr && guard->should_stop(dt, time, t_total))
+        // Чекпоинт -- ПОСЛЕ should_stop: наблюдатель шага (монитор) уже отработал, а
+        // счётчики сторожа включают этот шаг. Периодический (current_ts % N == 0) и
+        // финальный -- перед выходом по любой причине останова сторожа.
+        const bool stop = guard != nullptr && guard->should_stop(dt, time, t_total);
+        if (ckpt_on && (stop || current_ts % cfg.checkpoint_every_steps == 0)) write_checkpoint();
+        if (stop)
         {
             // Штатный останов по числу шагов (StepLimit) аварией не является.
             if (guard->failed()) std::cerr << guard->message() << std::endl;
             break;
         }
     }
+    // Нормальное завершение (time >= t_total): финальный чекпоинт, если последний шаг не записан.
+    if (ckpt_on && current_ts != last_ckpt_ts) write_checkpoint();
 }
 
 } // namespace detail
@@ -708,15 +831,57 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
 // Postprocessing). Тонкая обёртка над detail::run_time_integration — та же
 // функция, что и у старой сигнатуры выше, различаются только передаваемые
 // model.fiber/model.topology/model.materials вместо пустых структур.
+//
+// Чекпоинты/рестарт (include/checkpoint.hpp, настройки cfg.checkpoint_* / restart_*):
+//   - cfg.restart_file непуст: до цикла checkpoint::read перезаписывает Model, dt, time
+//     и состояние цикла. cfg вызывающего АВТОРИТЕТЕН для запуска (t_total, save_t и
+//     т.п. -- новые значения); физические отличия от сохранённого без cfg.restart_force
+//     -- исключение std::runtime_error со списком полей. ntotal должен совпадать с сохранённым.
+//   - cfg.checkpoint_file непуст и checkpoint_every_steps > 0: запись каждые N шагов
+//     и финальная (останов сторожа / конец расчёта).
 void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
                       double delta_x, RunGuard* guard)
 {
+    detail::CheckpointHooks hooks;
+    checkpoint::Payload restored;
+    const bool want_write = !cfg.checkpoint_file.empty() && cfg.checkpoint_every_steps > 0;
+    if (!cfg.restart_file.empty())
+    {
+        SimulationConfig eff = cfg; // read() на выходе отдаёт действующие настройки (= новые)
+        size_t nt = ntotal;
+        checkpoint::RestoreOptions opt;
+        opt.force = cfg.restart_force;
+        // read() ничего не меняет в model при ошибке (проверки до фиксации), поэтому при
+        // битом основном файле (CRC, обрезка) безопасно пробуем ротационную копию .prev.
+        try
+        {
+            checkpoint::read(cfg.restart_file, eff, model, nt, restored, opt);
+        }
+        catch (const std::exception& e)
+        {
+            const std::string prev = cfg.restart_file + ".prev";
+            if (!std::ifstream(prev).good()) throw;
+            std::cerr << "ПРЕДУПРЕЖДЕНИЕ: не удалось прочитать " << cfg.restart_file << " (" << e.what()
+                      << "); пробую " << prev << std::endl;
+            eff = cfg;
+            nt = ntotal;
+            checkpoint::read(prev, eff, model, nt, restored, opt);
+        }
+        hooks.restart = &restored;
+    }
+    if (want_write)
+    {
+        hooks.on_checkpoint = [&cfg, &model, ntotal](const checkpoint::Payload& pl) {
+            checkpoint::write(cfg.checkpoint_file, cfg, model, ntotal, pl);
+        };
+    }
+    const detail::CheckpointHooks* h = (hooks.restart != nullptr || want_write) ? &hooks : nullptr;
     if (cfg.ode_solver == 1)
         detail::run_time_integration<ode::EulerSolver>(cfg, model.solid, model.fiber, model.topology, model.materials,
                                                         ntotal, dt, time, delta_x, guard, model.clamps,
-                                                        &model.clamp_report);
+                                                        &model.clamp_report, h);
     else
         detail::run_time_integration<ode::PredictorCorrectorSolver>(cfg, model.solid, model.fiber, model.topology,
                                                                      model.materials, ntotal, dt, time, delta_x, guard,
-                                                                     model.clamps, &model.clamp_report);
+                                                                     model.clamps, &model.clamp_report, h);
 }

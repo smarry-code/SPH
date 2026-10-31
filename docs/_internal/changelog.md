@@ -28,3 +28,9 @@
   и [описание архитектуры](../04-explanation/architecture/contact-particle-particle.md).
   По умолчанию контакт выключен (`contact_force_type = 0`), поведение
   существующих кейсов не изменилось.
+- Рестарт расчёта из чекпоинта: модуль `include/checkpoint.hpp` / `src/checkpoint.cpp`,
+  хуки в `time_integration`, ключи `--checkpoint`, `--checkpoint-every`, `--restart`,
+  `--force` в `guo2019_shot`, поля `checkpoint_file`/`checkpoint_every_steps`/`restart_file`/
+  `restart_force` в `SimulationConfig`, тесты `checkpoint_test`, `checkpoint_energy_test`,
+  `checkpoint_cli_test`. Руководство с правилами и рекомендациями —
+  [`05-restart-checkpoints.md`](../02-how-to/05-restart-checkpoints.md).

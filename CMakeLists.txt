@@ -332,6 +332,46 @@ endif()
 add_test(NAME k_e2e_test COMMAND test_k_e2e)
 set_tests_properties(k_e2e_test PROPERTIES LABELS "3d")
 
+# --- Чекпоинт/рестарт: сцена tests/checkpoint_scene.hpp (Solid + нити из .fib с
+#     пластичностью и повреждённостью). Заготовка: тесты будут добавляться в
+#     tests/test_checkpoint.cpp. Вторая цель -- та же программа со SPH_ENERGY_LOG.
+add_executable(test_checkpoint tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_checkpoint PRIVATE SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_checkpoint PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_checkpoint PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint PRIVATE -fopenmp)
+    target_link_options(test_checkpoint PRIVATE -fopenmp)
+endif()
+add_test(NAME checkpoint_test COMMAND test_checkpoint)
+set_tests_properties(checkpoint_test PROPERTIES LABELS "3d" TIMEOUT 600
+    ENVIRONMENT OMP_NUM_THREADS=1)
+
+add_executable(test_checkpoint_energy tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_checkpoint_energy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_checkpoint_energy PRIVATE SPH_DIM=3
+    SPH_ENERGY_LOG
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint_energy PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_checkpoint_energy PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_checkpoint_energy PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint_energy PRIVATE -fopenmp)
+    target_link_options(test_checkpoint_energy PRIVATE -fopenmp)
+endif()
+add_test(NAME checkpoint_energy_test COMMAND test_checkpoint_energy)
+set_tests_properties(checkpoint_energy_test PROPERTIES LABELS "3d" TIMEOUT 600
+    ENVIRONMENT OMP_NUM_THREADS=1)
+
 # --- Закрепления из *BOUNDARY_SPC_* (readk/k-import-plan.md, этап K8).
 add_executable(test_k_clamp tests/test_k_clamp.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_k_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -796,6 +836,11 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(guo2019_shot PRIVATE -fopenmp)
     target_link_options(guo2019_shot PRIVATE -fopenmp)
 endif()
+
+# --- CLI чекпоинтов guo2019_shot: коды ошибок и сравнение раздельного прогона с непрерывным
+#     (tests/checkpoint_cli_test.sh; требует собранный guo2019_shot).
+add_test(NAME checkpoint_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint_cli_test.sh $<TARGET_FILE:guo2019_shot>)
+set_tests_properties(checkpoint_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
 
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).

@@ -126,6 +126,21 @@ struct EnergyChannels
     double w_p_fiber = 0, w_v_fiber = 0;
     double brk_contact = 0, clip = 0; // знаковые поправки учёта (см. шапку)
     double contact_fiber = 0;         // диссипация в контактах нитей с законом 1-3 (см. шапку)
+
+    // Чекпоинт (checkpoint::EnergyState::chan): порядок полей фиксирован -- 12 значений.
+    static constexpr std::size_t kCount = 12;
+    void to_array(double* a) const
+    {
+        const double v[kCount] = {friction, xsph, contact_ss, brk, u_clamp, q_av, w_plastic,
+                                  w_p_fiber, w_v_fiber, brk_contact, clip, contact_fiber};
+        for (std::size_t i = 0; i < kCount; ++i) a[i] = v[i];
+    }
+    void from_array(const double* a)
+    {
+        double* f[kCount] = {&friction, &xsph, &contact_ss, &brk, &u_clamp, &q_av, &w_plastic,
+                             &w_p_fiber, &w_v_fiber, &brk_contact, &clip, &contact_fiber};
+        for (std::size_t i = 0; i < kCount; ++i) *f[i] = a[i];
+    }
 };
 
 // Мгновенные запасы энергии.
@@ -351,11 +366,14 @@ class EnergyLogger
 public:
     // Открывает CSV (перезапись), пишет заголовок; бросает std::runtime_error,
     // если файл не открылся.
-    EnergyLogger(const std::string& path, std::size_t every) : every_(every)
+    // append = true (рестарт из чекпоинта): файл дописывается, без заголовка;
+    // базу E_mech0 вызывающий восстанавливает через restore_e0().
+    EnergyLogger(const std::string& path, std::size_t every, bool append = false) : every_(every)
     {
-        out_.open(path, std::ios::out | std::ios::trunc);
+        out_.open(path, append ? (std::ios::out | std::ios::app) : (std::ios::out | std::ios::trunc));
         if (!out_.is_open()) throw std::runtime_error("EnergyLogger: не удалось открыть файл " + path);
         out_ << std::setprecision(std::numeric_limits<double>::max_digits10);
+        if (append) return;
         out_ << "step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,"
                 "E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,"
                 "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber\n";
@@ -366,6 +384,15 @@ public:
     bool due(std::size_t step) const { return every_ > 0 && step % every_ == 0; }
 
     EnergyStockWorkspace& workspace() { return ws_; }
+
+    // База энергии для чекпоинта.
+    double e_mech0() const { return e_mech0_; }
+    bool have_e0() const { return have_e0_; }
+    void restore_e0(double e_mech0, bool have_e0)
+    {
+        e_mech0_ = e_mech0;
+        have_e0_ = have_e0;
+    }
 
     // Ускорение трения шага: перед стадией трения сюда копируется dv/dvx, после
     // неё (и повторной проекции зажимов) -- заменяется разностью «после - до».

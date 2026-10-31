@@ -120,6 +120,14 @@ struct SimulationConfig
     long long k_monitor_nid = -1;           // NID мониторной частицы; < 0 -- не задан
     std::string k_solid_elements = "skip";  // "skip" | "particles" (*ELEMENT_SOLID)
 
+    // --- Чекпоинты / рестарт (include/checkpoint.hpp) ---
+    // Настройки запуска, не физика: в чекпоинт не сериализуются и не сравниваются.
+    // Пустые/0 -- выключено, цикл побитово прежний.
+    std::string checkpoint_file;            // путь чекпоинта; пусто -- не писать
+    size_t checkpoint_every_steps = 0;      // период записи, в шагах интегрирования; 0 -- выкл.
+    std::string restart_file;               // чекпоинт для продолжения; пусто -- старт с нуля
+    bool restart_force = false;             // --force: разрешить менять физические настройки при рестарте
+
 #ifdef SPH_ENERGY_LOG
     // --- Лог механической энергии (include/energy_log.hpp) ---
     // Только в сборке с -DSPH_ENERGY_LOG=ON. energy_log_every = k > 0 -- строка
