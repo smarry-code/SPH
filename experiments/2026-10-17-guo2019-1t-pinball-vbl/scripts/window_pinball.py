@@ -99,6 +99,20 @@ def verdict(r):
     return None, "исход не определён (%s)" % out
 
 
+def has_checkpoint(sdir):
+    """Есть ли в каталоге выстрела sdir чекпоинт guo2019_shot (checkpoint.ckpt или .prev)."""
+    return bool(glob.glob(os.path.join(sdir, "*", "checkpoint.ckpt")) + glob.glob(os.path.join(sdir, "*", "checkpoint.ckpt.prev")))
+
+
+def drop_checkpoint(sdir):
+    """После определённого результата чекпоинты не нужны (сотни МБ на выстрел)."""
+    for f in glob.glob(os.path.join(sdir, "*", "checkpoint.ckpt*")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
 def shot_running(sdir):
     """Идёт ли уже guo2019_shot с --out=sdir (запущен вручную или прежним экземпляром драйвера)."""
     tag = ("--out=" + sdir).encode()
@@ -126,10 +140,15 @@ def run_shot(args, mu, v0, threads, tmax, suffix=""):
         if r is not None:
             log(args.work, "готово (внешний) mu=%g V0=%g%s: %s" % (mu, v0, suffix, verdict(r)[1]))
             return r
+    ck_every = getattr(args, "checkpoint_every", 0)
     for attempt in (1, 2):
-        if os.path.isdir(sdir):
-            shutil.rmtree(sdir)
-        os.makedirs(sdir)
+        # Чекпоинт от оборванного прогона (перезагрузка сервера, kill) -> продолжить, а не считать заново.
+        # Вторая попытка (первая упала) всегда с нуля: битый чекпоинт не должен зациклить выстрел.
+        restart = attempt == 1 and ck_every > 0 and has_checkpoint(sdir)
+        if not restart:
+            if os.path.isdir(sdir):
+                shutil.rmtree(sdir)
+            os.makedirs(sdir)
         cmd = [args.bin, "--config=" + getattr(args, "config", "1T"), "--level=" + args.level, "--v0=%g" % v0, "--mu=%g" % mu, "--out=" + sdir,
                "--frames=off", "--save-t=%g" % args.save_t, "--threads=%d" % threads, "--n-mon=10", "--n-diag=100",
                "--repeat=1", "--no-bracket", "--t-max=%g" % tmax, "--fiber-inelastic=" + args.fib,
@@ -138,15 +157,23 @@ def run_shot(args, mu, v0, threads, tmax, suffix=""):
         if args.energy_log > 0:
             cmd.append("--energy-log=%d" % args.energy_log)
         cmd += getattr(args, "extra", "").split()
+        if ck_every > 0:
+            cmd.append("--checkpoint-every=%d" % ck_every)
+        if restart:
+            cmd.append("--restart")
         env = dict(os.environ, OMP_NUM_THREADS=str(threads))
-        log(args.work, "старт mu=%g V0=%g%s (%d потоков, t_max=%g, попытка %d)" % (mu, v0, suffix, threads, tmax, attempt))
+        log(args.work, "%s mu=%g V0=%g%s (%d потоков, t_max=%g, попытка %d)" % (
+            "РЕСТАРТ из чекпоинта" if restart else "старт", mu, v0, suffix, threads, tmax, attempt))
         t0 = time.time()
-        with open(sdir + ".log", "w", encoding="utf-8") as lg:
+        with open(sdir + ".log", "a" if restart else "w", encoding="utf-8") as lg:
             rc = subprocess.run(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env).returncode
         r = read_result(sdir)
         if rc == 0 and r is not None:
             p, why = verdict(r)
+            if restart:
+                why += " [после рестарта: счётчики разрывов и wall неполные]"
             log(args.work, "готово mu=%g V0=%g%s: %s, %.0f с" % (mu, v0, suffix, why, time.time() - t0))
+            drop_checkpoint(sdir)
             return r
         log(args.work, "ПАДЕНИЕ mu=%g V0=%g%s: rc=%s, лог %s.log" % (mu, v0, suffix, rc, sdir))
         if attempt == 1 and os.path.exists(sdir + ".log"):

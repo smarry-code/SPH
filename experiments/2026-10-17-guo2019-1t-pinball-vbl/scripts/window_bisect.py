@@ -157,6 +157,8 @@ def main():
     ap.add_argument("--adaptive", action="store_true", help="потоки нового выстрела = свободные ядра / число выстрелов")
     ap.add_argument("--cores", type=int, default=8)
     ap.add_argument("--halves", action="store_true", help="половинное деление окна (одна точка в середине), а не трети")
+    ap.add_argument("--checkpoint-every", type=int, default=0,
+                    help="чекпоинт каждые N шагов и рестарт оборванных выстрелов из него (0 -- без чекпоинтов)")
     ap.add_argument("--extra", default="", help="доп. ключи guo2019_shot через пробел (например --impulse-push-tau=2e-6)")
     ap.add_argument("--verdict-ball", action="store_true", help="1T: вердикт по шару, без допуска на разрывы (как 2T)")
     args = ap.parse_args()
