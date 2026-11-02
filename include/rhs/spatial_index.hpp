@@ -363,19 +363,16 @@ private:
     }
 
     // Буферы worker'ов — mutable-член local_pairs_ (clear() сохраняет память);
-    // результат worker-major дописывается в out, предварительно очищенный.
+    // результат в порядке отрезков дописывается в out, предварительно очищенный.
     template <class Body>
     void parallel_merge(const CpuExecutor& exec, std::size_t range_n,
                          std::vector<std::pair<index_t, index_t>>& out, Body&& body) const
     {
-        const int nw = std::max(1, exec.num_workers());
-        if (local_pairs_.size() < static_cast<std::size_t>(nw)) local_pairs_.resize(static_cast<std::size_t>(nw));
+        // Детерминированно: отрезки диапазона фиксированы (не зависят от числа потоков), слияние -- в порядке отрезков.
+        const std::size_t nw = exec.det_segments();
+        if (local_pairs_.size() < nw) local_pairs_.resize(nw);
         for (auto& lp : local_pairs_) lp.v.clear();
-        exec.parallel_for(range_n, [&](std::size_t idx) {
-            int w = CpuExecutor::worker_id();
-            if (w < 0 || w >= nw) w = 0;
-            body(idx, local_pairs_[static_cast<std::size_t>(w)].v);
-        });
+        exec.parallel_for_segments(range_n, [&](std::size_t seg, std::size_t idx) { body(idx, local_pairs_[seg].v); });
         std::size_t total = 0;
         for (auto& lp : local_pairs_) total += lp.v.size();
         out.clear();

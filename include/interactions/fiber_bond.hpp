@@ -127,7 +127,7 @@ inline void compute_fiber_bond_contributions(
 #endif
 )
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
@@ -137,7 +137,7 @@ inline void compute_fiber_bond_contributions(
 #endif
     if (nbonds == 0) return;
 
-    exec.parallel_for(nbonds, [&](std::size_t k) {
+    exec.parallel_for_segments(nbonds, [&](std::size_t seg, std::size_t k) {
         const fiber::FiberBond& b = topology.bonds[k];
         const std::size_t i = b.i;
         const std::size_t j = b.j;
@@ -202,9 +202,7 @@ inline void compute_fiber_bond_contributions(
             }
         }
 
-        int w = rhs::CpuExecutor::worker_id();
-        if (w < 0 || static_cast<std::size_t>(w) >= thread_buffers.size()) w = 0;
-        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[static_cast<std::size_t>(w)],
+        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[seg],
                                                             kFiberBondInteractionType);
         writer.emit(i, delta_i, /*primitive_id=*/static_cast<std::uint64_t>(k), /*slot=*/0);
         writer.emit(j, delta_j, /*primitive_id=*/static_cast<std::uint64_t>(k), /*slot=*/1);

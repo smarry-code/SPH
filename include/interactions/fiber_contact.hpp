@@ -764,7 +764,7 @@ inline bool compute_fiber_contact_contributions(
     std::vector<FiberFrictionContact>& friction_contacts, const FiberContactStepParams& params = {})
 {
     fiber_fiber_check_params(params, state);
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
@@ -775,7 +775,7 @@ inline bool compute_fiber_contact_contributions(
     if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
     if (n == 0) return false;
 
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberFrictionContact{};
         const FiberContactPrimitive& prim = primitives[k];
         const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
@@ -809,9 +809,7 @@ inline bool compute_fiber_contact_contributions(
             slot.mu = mu;
         }
 
-        int w = rhs::CpuExecutor::worker_id();
-        if (w < 0 || static_cast<std::size_t>(w) >= thread_buffers.size()) w = 0;
-        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[static_cast<std::size_t>(w)],
+        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[seg],
                                                             kFiberFiberContactInteractionType);
 
         // --- Сторона A: +F, веса (1-s, s) -------------------------------------

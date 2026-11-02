@@ -92,6 +92,27 @@ public:
         for (std::size_t i = 0; i < n; ++i) f(i);
     }
 
+    // ------------------------------------------------------------------
+    // Детерминированное разбиение (результат не зависит от числа потоков и от порядка раздачи порций).
+    // Диапазон [0, n) режется на фиксированное число kDetSegments смежных отрезков; отрезок целиком
+    // обрабатывает ОДИН поток в порядке возрастания i, вклады кладутся в буфер с номером отрезка seg
+    // (а не worker_id()). Порядок суммирования на частицу в reduce_contributions_into -- shard -> номер
+    // буфера -> позиция в буфере -- тогда совпадает с последовательным при любом числе потоков.
+    // f(seg, i); число буферов под вызов -- det_segments().
+    // ------------------------------------------------------------------
+    static constexpr std::size_t kDetSegments = 64;
+    std::size_t det_segments() const { return kDetSegments; }
+
+    template <class Func>
+    void parallel_for_segments(std::size_t n, Func&& f) const
+    {
+        if (n == 0) return;
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            for (std::size_t i = b; i < e; ++i) f(s, i);
+        });
+    }
+
     template <class Func>
     void parallel_for(std::size_t n, Func&& f) const
     {
@@ -102,44 +123,25 @@ public:
     // parallel_reduce(n, init, map, combine): T map(i), T combine(a, b).
     // Контракт (как в TBB/std parallel reduce): `init` — нейтральный элемент
     // combine (combine(init, x) == x), combine ассоциативна и, для
-    // воспроизводимости порядка объединения частичных сумм по потокам,
-    // ожидается коммутативной. Каждый worker сворачивает свою часть
-    // диапазона в локальный аккумулятор, финальное объединение — по числу
-    // потоков (SPH.md, "ODE solver"/"Reduce" — общий паттерн CPU backend).
-    // Раздача итераций — schedule(dynamic, lchunk), lchunk = n/(8*nthreads)
-    // (около 8 порций на поток): при порции 1 каждая итерация — атомарная
-    // операция над общим счётчиком libgomp, и на лёгком map (единицы нс)
-    // потоки упираются в этот счётчик (speedup/contact.md).
+    // воспроизводимости ожидается коммутативной. Порядок объединения фиксирован
+    // (отрезки kDetSegments), см. комментарий у parallel_for_segments.
     // ------------------------------------------------------------------
     template <class T, class MapFunc, class CombineFunc>
     T parallel_reduce(std::size_t n, T init, MapFunc&& map, CombineFunc&& combine) const
     {
         if (n == 0) return init;
-#ifdef _OPENMP
-        if (num_threads_ > 1)
-        {
-            std::vector<T> partial(static_cast<std::size_t>(num_threads_), init);
-            const long long nn = static_cast<long long>(n);
-            const long long lchunk = static_cast<long long>(
-                std::max<std::size_t>(1, n / (8 * static_cast<std::size_t>(num_threads_))));
-#pragma omp parallel num_threads(num_threads_)
-            {
-                const int tid = omp_get_thread_num();
-                T local = init;
-#pragma omp for schedule(dynamic, lchunk)
-                for (long long i = 0; i < nn; ++i)
-                {
-                    local = combine(local, map(static_cast<std::size_t>(i)));
-                }
-                partial[static_cast<std::size_t>(tid)] = local;
-            }
-            T result = init;
-            for (auto& p : partial) result = combine(result, p);
-            return result;
-        }
-#endif
+        // Детерминированно: диапазон режется на kDetSegments смежных отрезков (не зависят от числа потоков),
+        // каждый отрезок сворачивает один поток по возрастанию i, затем отрезки объединяются по порядку.
+        // Результат (в т. ч. сумма double) одинаков при любом числе потоков и любой раздаче порций.
+        std::vector<T> partial(kDetSegments, init);
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            T local = init;
+            for (std::size_t i = b; i < e; ++i) local = combine(local, map(i));
+            partial[s] = local;
+        });
         T result = init;
-        for (std::size_t i = 0; i < n; ++i) result = combine(result, map(i));
+        for (auto& p : partial) result = combine(result, p);
         return result;
     }
 

@@ -342,17 +342,9 @@ namespace detail_friction
 template <class Delta>
 inline void prepare(const rhs::CpuExecutor& exec, std::vector<rhs::ContributionBuffer<Delta>>& buffers)
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (buffers.size() < nworkers) buffers.resize(nworkers);
     for (auto& buf : buffers) buf.clear();
-}
-
-template <class Delta>
-inline std::size_t worker_slot(const std::vector<rhs::ContributionBuffer<Delta>>& buffers)
-{
-    int w = rhs::CpuExecutor::worker_id();
-    if (w < 0 || static_cast<std::size_t>(w) >= buffers.size()) w = 0;
-    return static_cast<std::size_t>(w);
 }
 
 inline void emit_counts_fiber_fiber(const rhs::CpuExecutor& exec, const std::vector<FiberFrictionContact>& contacts,
@@ -360,10 +352,10 @@ inline void emit_counts_fiber_fiber(const rhs::CpuExecutor& exec, const std::vec
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         const FiberFrictionContact& c = contacts[k];
         if (!c.active) return;
-        rhs::ContributionWriter<FiberCountDelta> writer(count_buffers[worker_slot(count_buffers)],
+        rhs::ContributionWriter<FiberCountDelta> writer(count_buffers[seg],
                                                           kFiberFrictionInteractionType);
         FiberCountDelta one;
         one.c = 1.0;
@@ -379,12 +371,12 @@ inline void emit_counts_fiber_solid(const rhs::CpuExecutor& exec, const std::vec
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         const FiberSolidFrictionContact& c = contacts[k];
         if (!c.active) return;
-        rhs::ContributionWriter<FiberCountDelta> fw(fiber_count_buffers[worker_slot(fiber_count_buffers)],
+        rhs::ContributionWriter<FiberCountDelta> fw(fiber_count_buffers[seg],
                                                       kFiberSolidFrictionFiberType);
-        rhs::ContributionWriter<SolidCountDelta> sw(solid_count_buffers[worker_slot(solid_count_buffers)],
+        rhs::ContributionWriter<SolidCountDelta> sw(solid_count_buffers[seg],
                                                       kFiberSolidFrictionSolidType);
         FiberCountDelta one;
         one.c = 1.0;
@@ -487,7 +479,7 @@ inline void emit_fiber_fiber(const rhs::CpuExecutor& exec, const fiber::FiberSta
     const std::size_t n = contacts.size();
     if (n == 0) return;
 
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         const FiberFrictionContact& c = contacts[k];
         if (!c.active) return;
 
@@ -495,7 +487,7 @@ inline void emit_fiber_fiber(const rhs::CpuExecutor& exec, const fiber::FiberSta
         fiber_friction_impulse(state, upd, dv_no_friction, c, imp, bead_count.data());
         if (!imp.has_force) return;
 
-        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[worker_slot(thread_buffers)],
+        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[seg],
                                                             kFiberFrictionInteractionType);
 
         // Сторона A: +F_t, веса (1-s, s); сторона B: -F_t, веса (1-t, t).
@@ -521,7 +513,7 @@ inline void emit_fiber_solid(const rhs::CpuExecutor& exec, const fiber::FiberSta
     const std::size_t n = contacts.size();
     if (n == 0) return;
 
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         const FiberSolidFrictionContact& c = contacts[k];
         if (!c.active) return;
 
@@ -530,7 +522,7 @@ inline void emit_fiber_solid(const rhs::CpuExecutor& exec, const fiber::FiberSta
                                       solid_count.data(), solid_kinematic);
         if (!imp.has_force) return;
 
-        rhs::ContributionWriter<fiber::FiberDelta> fw(fiber_buffers[worker_slot(fiber_buffers)],
+        rhs::ContributionWriter<fiber::FiberDelta> fw(fiber_buffers[seg],
                                                         kFiberSolidFrictionFiberType);
 
         // Нить: +F_t, веса (1-lambda, lambda); Solid: -F_t.
@@ -543,7 +535,7 @@ inline void emit_fiber_solid(const rhs::CpuExecutor& exec, const fiber::FiberSta
 
         if (!solid_kinematic)
         {
-            rhs::ContributionWriter<SolidDelta> sw(solid_buffers[worker_slot(solid_buffers)],
+            rhs::ContributionWriter<SolidDelta> sw(solid_buffers[seg],
                                                      kFiberSolidFrictionSolidType);
             const double ms = sys.mass[c.s];
             SolidDelta ds{};
