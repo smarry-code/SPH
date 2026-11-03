@@ -436,6 +436,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 add_test(NAME fiber_plasticity_test COMMAND test_fiber_plasticity)
 
+# --- Джонсон-Кук, этап J1 (fiber/jc-implementation-plan.md §2, §3.1): чистый
+#     модуль include/strength/johnson_cook.hpp, тесты U1-U14. U10 сверяет
+#     возврат с prochnost_mises в геометрии сборки, поэтому три цели по SPH_DIM.
+foreach(_jc_dim 1 2 3)
+    add_executable(test_jc_strength_${_jc_dim}d tests/test_jc_strength.cpp src/ppochnost.cpp)
+    target_include_directories(test_jc_strength_${_jc_dim}d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(test_jc_strength_${_jc_dim}d PRIVATE SPH_DIM=${_jc_dim})
+    add_test(NAME jc_strength_${_jc_dim}d_test COMMAND test_jc_strength_${_jc_dim}d)
+endforeach()
+
+# --- Джонсон-Кук, этап J2 (fiber/jc-implementation-plan.md §3.3): УРС
+#     Linear и Shock (Ми-Грюнайзен), тесты U15-U17. Только src/eos.cpp.
+add_executable(test_jc_eos tests/test_jc_eos.cpp src/eos.cpp)
+target_include_directories(test_jc_eos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_jc_eos PRIVATE SPH_DIM=1)
+add_test(NAME jc_eos_test COMMAND test_jc_eos)
+
 # --- Пластичность нити, этап 2 (fiber/fiber-plasticity-design.md): поля
 #     состояния FiberBond, RHS-ядро, проход Postprocessing; Т0, Т8-Т11 +
 #     полный цикл пластики. По образцу test_fiber_bond.
