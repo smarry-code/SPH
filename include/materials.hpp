@@ -101,7 +101,10 @@ inline std::vector<JcMaterial> make_jc_library()
     // TODO(verify): D1-D5 (Johnson & Cook 1985) не сверены с первоисточником.
     v.push_back({"STEEL 4340", 7830.0, EosKind::Linear, LinearEos{159e9}, ShockEos{},
                  strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
-                 damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0)});
+                 damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0),
+                 // TODO(verify): p_min = -4 ГПа -- середина окна -2..-6 ГПа, в котором E3 даёт
+                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md); нужен Pmin из Autodyn.
+                 -4.0e9});
     // 13: STEEL 1006, Shock.
     // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- не сверены с Autodyn.
     v.push_back({"STEEL 1006", 7896.0, EosKind::Shock, LinearEos{}, ShockEos{2.17, 4569.0, 1.49},

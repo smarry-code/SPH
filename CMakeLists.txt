@@ -1312,11 +1312,10 @@ endif()
 set(_jc_plate_out ${CMAKE_CURRENT_BINARY_DIR}/jc_plate)
 add_test(NAME e2e_jc_hel COMMAND test_e2e_jc_plate --case=hel --outdir=${_jc_plate_out})
 add_test(NAME e2e_jc_spall_nodamage COMMAND test_e2e_jc_plate --case=spall_nodamage --outdir=${_jc_plate_out})
-# E3 с разрушением: ворота по месту D = 1 сейчас НЕ проходят — D у плоскости
-# откола останавливается на ~0.55 (johnson-cook/02-e2e.md, открытый вопрос).
+# E3 с разрушением проходит при пределе давления p_min материала 4340
+# (johnson-cook/03-pmin-energy.md); без него D у плоскости откола застревает на ~0.55.
 add_test(NAME e2e_jc_spall COMMAND test_e2e_jc_plate --case=spall --outdir=${_jc_plate_out})
-set_tests_properties(e2e_jc_hel e2e_jc_spall_nodamage PROPERTIES LABELS "e2e;jc" TIMEOUT 300)
-set_tests_properties(e2e_jc_spall PROPERTIES LABELS "e2e;jc;jc_open_issue" TIMEOUT 300)
+set_tests_properties(e2e_jc_hel e2e_jc_spall_nodamage e2e_jc_spall PROPERTIES LABELS "e2e;jc" TIMEOUT 300)
 
 # --- Джонсон-Кук E4/E5: тест Тейлора (tests/test_e2e_jc_taylor.cpp) ---------
 # Осесимметрия SPH_DIM=2, два одинаковых цилиндра навстречу (средняя плоскость
