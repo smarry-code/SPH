@@ -182,6 +182,8 @@ void eos_jc(const JcMaterial& m, double rho, double rho0, double u, double D, do
         eos_linear(m.lin, rho, rho0, p, c);
     else
         eos_shock(m.shock, rho, rho0, u, p, c);
+    // Предел растяжения по давлению (Hydro Pmin): p не опускается ниже p_min.
+    if (p < m.p_min) p = m.p_min;
     // Разрушенная частица: растягивающее давление обнуляется (аналог Hydro Pmin = 0).
     if (D >= 1.0 && p < 0.0) p = 0.0;
 }

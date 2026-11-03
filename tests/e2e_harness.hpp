@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -83,8 +84,10 @@ public:
     {
         std::ostringstream os;
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        // Случайный суффикс: одновременно запущенные процессы (ctest -j, перебор
+        // параметров) иначе могут получить одинаковый stamp и писать в один каталог.
         os << prefix << "_" << tag << "_" << static_cast<long long>(stamp)
-           << "_" << counter_++;
+           << "_" << std::random_device{}() << "_" << counter_++;
         dir_ = fs::temp_directory_path() / os.str();
         fs::remove_all(dir_);
         fs::create_directories(dir_);

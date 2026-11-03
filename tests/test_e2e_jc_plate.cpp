@@ -63,6 +63,7 @@ bool g_contact_override = false;   // --interface=...
 bool g_contact_value = false;
 int g_contact_type = 3;
 double g_contact_gamma = 0.5;
+double g_pmin = std::nan("");      // --pmin=<Па>: переопределить p_min материала (NaN = из библиотеки)
 
 struct RunResult
 {
@@ -98,6 +99,7 @@ RunResult run_case(const Case& c, double wall_limit_s, bool silence)
         cfg.contact_impulse_gamma = c.contact_gamma;
         cfg.sph_same_body_only = c.contact;   // SPH-суммы только внутри тела: растяжение через границу не передаётся
         cfg.mats.jc[0].d.enabled = c.damage;
+        if (std::isfinite(g_pmin)) cfg.mats.jc[0].p_min = g_pmin;
         res.mat = cfg.mats.jc[0];
 
         res.geom = build_geometry(sys, c);
@@ -383,6 +385,11 @@ int test_spall(bool damage, const fs::path& outdir, double dx, double t_total, d
     c.contact = g_contact_override ? g_contact_value : false;  // E3: по умолчанию континуум (контакт не дал корректной границы, см. отчёт)
     c.contact_type = g_contact_type; c.contact_gamma = g_contact_gamma;
     std::printf("  info : граница ударник-мишень: %s\n", c.contact ? "КОНТАКТ (разные тела)" : "континуум (сварены)");
+    {
+        const double pmin = std::isfinite(g_pmin) ? g_pmin : Materials{}.jc[0].p_min;
+        if (pmin > -1.0e20) std::printf("  info : p_min = %.3f ГПа\n", pmin / 1e9);
+        else std::printf("  info : p_min не задан (растяжение по давлению не ограничено)\n");
+    }
     if (c.contact) std::printf("  info : contact_force_type = %d, gamma = %.2f, sph_same_body_only = 1\n", c.contact_type, c.contact_gamma);
 
     const RunResult r = run_case(c, wall, !verbose);
@@ -564,6 +571,7 @@ int main(int argc, char** argv)
             }
             else if (a.rfind("--contact-type=", 0) == 0) g_contact_type = std::stoi(val("--contact-type="));
             else if (a.rfind("--contact-gamma=", 0) == 0) g_contact_gamma = std::stod(val("--contact-gamma="));
+            else if (a.rfind("--pmin=", 0) == 0) g_pmin = std::stod(val("--pmin="));
             else if (a == "--verbose") verbose = true;
             else { std::fprintf(stderr, "неизвестный ключ: %s\n", a.c_str()); return 2; }
         }

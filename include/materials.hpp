@@ -39,6 +39,9 @@ struct JcMaterial
     jc::JcStrength s;
     jc::JcDamage d;
     jc::JcThermal th;
+    // Нижняя граница давления, Па (аналог Autodyn Hydro Pmin; отрицательная = растяжение).
+    // eos_jc ограничивает p >= p_min; значение <= -1e20 -- без ограничения.
+    double p_min = -1.01e20;
 };
 
 // Библиотека материалов JC (fiber/jc-implementation-plan.md §3.2).
