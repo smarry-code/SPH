@@ -1291,6 +1291,33 @@ if(SPH_E2E_SLOW_TESTS)
     endforeach()
 endif()
 
+# --- Джонсон-Кук E2/E3: плоский удар 4340, SPH_DIM=1 (tests/test_e2e_jc_plate.cpp) ---
+# E2 — упругий предвестник (HEL), E3 — откол. Граница ударник/мишень по
+# умолчанию сплошная (--interface=contact — диагностический вариант).
+add_executable(test_e2e_jc_plate tests/test_e2e_jc_plate.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_e2e_jc_plate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_e2e_jc_plate PRIVATE
+    SPH_DIM=1
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_jc_plate PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_e2e_jc_plate PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_e2e_jc_plate PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_e2e_jc_plate PRIVATE -fopenmp)
+    target_link_options(test_e2e_jc_plate PRIVATE -fopenmp)
+endif()
+set(_jc_plate_out ${CMAKE_CURRENT_BINARY_DIR}/jc_plate)
+add_test(NAME e2e_jc_hel COMMAND test_e2e_jc_plate --case=hel --outdir=${_jc_plate_out})
+add_test(NAME e2e_jc_spall_nodamage COMMAND test_e2e_jc_plate --case=spall_nodamage --outdir=${_jc_plate_out})
+# E3 с разрушением: ворота по месту D = 1 сейчас НЕ проходят — D у плоскости
+# откола останавливается на ~0.55 (johnson-cook/02-e2e.md, открытый вопрос).
+add_test(NAME e2e_jc_spall COMMAND test_e2e_jc_plate --case=spall --outdir=${_jc_plate_out})
+set_tests_properties(e2e_jc_hel e2e_jc_spall_nodamage PROPERTIES LABELS "e2e;jc" TIMEOUT 300)
+set_tests_properties(e2e_jc_spall PROPERTIES LABELS "e2e;jc;jc_open_issue" TIMEOUT 300)
+
 # --- Джонсон-Кук E4/E5: тест Тейлора (tests/test_e2e_jc_taylor.cpp) ---------
 # Осесимметрия SPH_DIM=2, два одинаковых цилиндра навстречу (средняя плоскость
 # = жёсткая стенка). Вторая цель — с SPH_ENERGY_LOG (ворота баланса энергии E4).
