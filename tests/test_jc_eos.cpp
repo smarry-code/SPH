@@ -161,6 +161,29 @@ void test_u18()
     check(ok_intact, "D<1: p unchanged");
 }
 
+// U20: предел давления p_min: при сильном растяжении p = p_min, выше p_min -- без изменений.
+void test_u20()
+{
+    std::printf("U20 pressure cutoff p_min\n");
+    const Materials mats;
+    JcMaterial m = jc_material(mats, 12);
+    check(m.p_min < 0.0 && m.p_min > -1.0e20, "4340: p_min задан и отрицателен");
+    m.p_min = -1.0e9;
+    JcMaterial m_off = m;
+    m_off.p_min = -1.01e20;
+    double p, c, p_raw, c_raw;
+    const double rho_t = m.rho0 * (1.0 - 0.05);   // p_raw = K*mu ~ -8 ГПа
+    eos_jc(m_off, rho_t, m.rho0, 0.0, 0.0, p_raw, c_raw);
+    eos_jc(m, rho_t, m.rho0, 0.0, 0.0, p, c);
+    check(p_raw < m.p_min && same(p, m.p_min) && same(c, c_raw), "растяжение ниже p_min: p = p_min, c не меняется");
+    const double rho_w = m.rho0 * (1.0 - 0.001);  // p_raw ~ -0.16 ГПа, выше p_min
+    eos_jc(m_off, rho_w, m.rho0, 0.0, 0.0, p_raw, c_raw);
+    eos_jc(m, rho_w, m.rho0, 0.0, 0.0, p, c);
+    check(same(p, p_raw), "растяжение выше p_min: p не меняется");
+    eos_jc(m, rho_t, m.rho0, 0.0, 1.0, p, c);
+    check(same(p, 0.0), "разрушенная частица: p = 0 и при заданном p_min");
+}
+
 // U19: упругие константы библиотеки JC.
 void test_u19()
 {
@@ -197,6 +220,7 @@ int main()
     test_u17();
     test_u18();
     test_u19();
+    test_u20();
     std::printf("%s (%d failures)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures);
     return failures;
 }
