@@ -470,6 +470,33 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME jc_urs_consistency_test COMMAND test_jc_urs_consistency)
 
+# --- Джонсон-Кук, этапы J4/J5 (fiber/jc-implementation-plan.md §5.3): интеграционные
+#     тесты I1-I8 через apply_material_strength. SPH_DIM=1 (I1), SPH_DIM=3 (I2-I4, I6-I8),
+#     SPH_DIM=3 + SPH_ENERGY_LOG (те же + I5, лог пластической работы).
+foreach(_jc_var 1d 3d 3d_elog)
+    add_executable(test_jc_integration_${_jc_var} tests/test_jc_integration.cpp ${SPH_PIPELINE_SOURCES})
+    target_include_directories(test_jc_integration_${_jc_var} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    if(_jc_var STREQUAL "1d")
+        target_compile_definitions(test_jc_integration_${_jc_var} PRIVATE SPH_DIM=1)
+    else()
+        target_compile_definitions(test_jc_integration_${_jc_var} PRIVATE SPH_DIM=3)
+    endif()
+    if(_jc_var STREQUAL "3d_elog")
+        target_compile_definitions(test_jc_integration_${_jc_var} PRIVATE SPH_ENERGY_LOG)
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(test_jc_integration_${_jc_var} PRIVATE -fexceptions)
+    endif()
+    if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        target_compile_options(test_jc_integration_${_jc_var} PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+        target_link_options(test_jc_integration_${_jc_var} PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+    elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(test_jc_integration_${_jc_var} PRIVATE -fopenmp)
+        target_link_options(test_jc_integration_${_jc_var} PRIVATE -fopenmp)
+    endif()
+    add_test(NAME jc_integration_${_jc_var}_test COMMAND test_jc_integration_${_jc_var})
+endforeach()
+
 # --- Пластичность нити, этап 2 (fiber/fiber-plasticity-design.md): поля
 #     состояния FiberBond, RHS-ядро, проход Postprocessing; Т0, Т8-Т11 +
 #     полный цикл пластики. По образцу test_fiber_bond.
