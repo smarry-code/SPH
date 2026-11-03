@@ -210,6 +210,10 @@ struct Measure
     double p_min_face = 0.0;    // минимум давления в слое у торца
     double z_min = 0.0;         // наименьший z частицы половины (проникание через плоскость < 0)
     double vz_com = 0.0;        // масс-взвешенная осевая скорость половины
+    // Полная энергия половины sum m (|v|^2/2 + u) с разными весами (диагностика баланса):
+    // e_flat -- без веса (как energy_log), e_r0 -- вес r0/R0 (масса кольца ~ 2 pi r0 m),
+    // e_r -- вес r/R0 по текущему радиусу.
+    double e_flat = 0.0, e_r0 = 0.0, e_r = 0.0;
 };
 
 inline Measure measure_half(const ParticleSystem& sys, const Geometry& g)
@@ -230,6 +234,10 @@ inline Measure measure_half(const ParticleSystem& sys, const Geometry& g)
         mass += sys.mass[k];
         mvz += sys.mass[k] * vz;
         const size_t ir = k / g.n_z;
+        const double e_k = sys.mass[k] * (0.5 * (vr * vr + vz * vz) + sys.u[k]);
+        m.e_flat += e_k;
+        m.e_r0 += e_k * (static_cast<double>(ir) + 0.5) * g.dx / kR0;
+        m.e_r += e_k * sys.x[0][k] / kR0;
         if (ir <= 1)
         {
             zb = std::max(zb, sys.x[1][k]);

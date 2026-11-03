@@ -111,6 +111,7 @@ struct RunResult
     jct::Measure fin;          // состояние в момент останова
     double t_end = 0.0;
     double ke0 = 0.0;
+    jct::Measure m0;           // начальное состояние
     bool stopped = false;      // сработал критерий KE
     size_t steps = 0;
     double wall_s = 0.0;
@@ -221,7 +222,8 @@ RunResult run_case(const RunSettings& rs)
     }
 
     const jct::Geometry& g = res.geom;
-    res.ke0 = jct::measure_half(sys, g).ke;
+    res.m0 = jct::measure_half(sys, g);
+    res.ke0 = res.m0.ke;
     const double ke_stop = jct::kStopKeFrac * res.ke0;
 
     RunGuard guard(rs.wall_limit_s, 2.0e6, 200);
@@ -310,11 +312,12 @@ void write_summary(const RunSettings& rs, const RunResult& r)
     const fs::path hp = rs.outdir / ("jc_taylor_" + rs.tag + "_history.txt");
     {
         std::ofstream h(hp);
-        h << "# t[с] KE[Дж] L[м] R_face[м] e_pl_max z_min[м] p_min_face[Па] T_max[К]\n";
+        h << "# t[с] KE[Дж] L[м] R_face[м] e_pl_max z_min[м] p_min_face[Па] T_max[К] E_flat E_r0 E_r\n";
         h.precision(9);
         for (const auto& s : r.hist)
             h << s.t << ' ' << s.m.ke << ' ' << s.m.L << ' ' << s.m.R_face << ' ' << s.m.e_pl_max << ' '
-              << s.m.z_min << ' ' << s.m.p_min_face << ' ' << s.m.T_max << '\n';
+              << s.m.z_min << ' ' << s.m.p_min_face << ' ' << s.m.T_max << ' ' << s.m.e_flat << ' '
+              << s.m.e_r0 << ' ' << s.m.e_r << '\n';
     }
     const fs::path sp = rs.outdir / ("jc_taylor_" + rs.tag + "_summary.txt");
     std::ofstream s(sp);
@@ -355,6 +358,11 @@ void report(const RunSettings& rs, const RunResult& r)
     std::printf("  info : KE_конец/KE_0 = %.4f; минимум давления в приторцевом слое %.3g Па; "
                 "наименьший z половины %.3e м; наибольшее убывание R_face %.3e м\n",
                 r.ke0 > 0 ? r.fin.ke / r.ke0 : 0.0, r.fin.p_min_face, r.z_min_all, r.R_running_dip);
+    // Полная энергия половины (KE + U) на конец относительно начальной, при разных весах
+    // частиц: без веса (как energy_log) и с весом радиуса (масса кольца).
+    const auto rel = [](double e, double e0) { return e0 > 0 ? 100.0 * (e / e0 - 1.0) : 0.0; };
+    std::printf("  info : (KE+U)_конец/(KE+U)_0 - 1: без веса %+.2f %%, вес r0 %+.2f %%, вес r %+.2f %%\n",
+                rel(r.fin.e_flat, r.m0.e_flat), rel(r.fin.e_r0, r.m0.e_r0), rel(r.fin.e_r, r.m0.e_r));
 }
 
 void check_health(const RunSettings& rs, const RunResult& r)
