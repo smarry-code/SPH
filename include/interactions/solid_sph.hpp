@@ -43,6 +43,7 @@
 #include <vector>
 
 #include "eos.hpp"
+#include "interactions/jc_strength.hpp"
 #include "kernel.hpp"
 #include "materials.hpp"
 #include "param.hpp"
@@ -1004,7 +1005,8 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
         // Закон Гука + производная Яуманна (int_force.cpp, финальный блок).
         if (sys.itype[i] > 2)
         {
-            const double G_ = shear_modulus_by_itype(mats, sys.itype[i]);
+            // JC: разрушенная частица (D >= 1) имеет G = 0; для остальных -- прежний G.
+            const double G_ = effective_shear_modulus(mats, sys, i);
             if constexpr (dim > 1)
             {
                 f.dsxx = 2.0 * G_ * (exx + drho / (3.0 * sys.rho[i])) + 2.0 * (sys.sxy[i] * rxy + sys.sxz[i] * rxz);

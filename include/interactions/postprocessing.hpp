@@ -71,6 +71,7 @@
 #include "fiber/fiber_system.hpp"
 #include "h_upgrade.hpp"
 #include "interactions/fiber_bond.hpp"
+#include "interactions/jc_strength.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
 #include "ppochnost.hpp"
@@ -131,6 +132,16 @@ inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem&
         else if (sys.itype[i] == 10 || sys.itype[i] == 11)
         {
             prochnost_cem_JH2(cfg.mats, sys, i, dt, drho[i]);
+        }
+        else if (is_jc_itype(sys.itype[i]))
+        {
+            // Джонсон-Кук (itype 12-15): interactions/jc_strength.hpp. Под
+            // SPH_ENERGY_LOG пластическая работа Y*dε_p копится в plastic_acc.
+#ifdef SPH_ENERGY_LOG
+            apply_jc_strength(cfg.mats, sys, i, dt, plastic_acc);
+#else
+            apply_jc_strength(cfg.mats, sys, i, dt);
+#endif
         }
     }
 }
