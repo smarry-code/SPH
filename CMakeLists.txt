@@ -453,6 +453,23 @@ target_include_directories(test_jc_eos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inclu
 target_compile_definitions(test_jc_eos PRIVATE SPH_DIM=1)
 add_test(NAME jc_eos_test COMMAND test_jc_eos)
 
+# --- Джонсон-Кук, этап J2: urs() и solid_eos() дают одинаковые p, c для
+#     itype 12-15 (обе зовут eos_jc). По образцу test_axisym, но SPH_DIM=3.
+add_executable(test_jc_urs_consistency tests/test_jc_urs_consistency.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_jc_urs_consistency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_jc_urs_consistency PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jc_urs_consistency PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_jc_urs_consistency PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_jc_urs_consistency PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jc_urs_consistency PRIVATE -fopenmp)
+    target_link_options(test_jc_urs_consistency PRIVATE -fopenmp)
+endif()
+add_test(NAME jc_urs_consistency_test COMMAND test_jc_urs_consistency)
+
 # --- Пластичность нити, этап 2 (fiber/fiber-plasticity-design.md): поля
 #     состояния FiberBond, RHS-ядро, проход Postprocessing; Т0, Т8-Т11 +
 #     полный цикл пластики. По образцу test_fiber_bond.

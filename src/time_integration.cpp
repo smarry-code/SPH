@@ -3,6 +3,7 @@
 // Объявления — в time_integration.hpp.
 #include "time_integration.hpp"
 #include "checkpoint.hpp"
+#include "jc_state.hpp"
 #include "output.hpp"
 #include "fiber/fiber_output.hpp"
 #include "interactions/clamp.hpp"
@@ -220,6 +221,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // При рестарте eps_prev берётся из чекпоинта (BondState восстановлен), не пересчитывается.
     const checkpoint::Payload* const restart = (ckpt != nullptr) ? ckpt->restart : nullptr;
     if (nfiber > 0 && restart == nullptr) interactions::init_fiber_bond_state(fb, topology, materials);
+    // Начальная температура JC-частиц T = T_r (при рестарте T, edot берутся из чекпоинта).
+    if (restart == nullptr) init_jc_state(cfg.mats, sys, ntotal);
 
     size_t current_ts = 0;
     double next_output_time = 0.0;

@@ -175,3 +175,13 @@ void eos_shock(const ShockEos& eos, double rho, double rho0, double u, double& p
     const double c2 = dpdrho + (p / (rho * rho)) * gam;
     c = (std::isfinite(c2) && c2 > 0.0) ? std::sqrt(c2) : eos.c0;
 }
+
+void eos_jc(const JcMaterial& m, double rho, double rho0, double u, double D, double& p, double& c)
+{
+    if (m.eos == EosKind::Linear)
+        eos_linear(m.lin, rho, rho0, p, c);
+    else
+        eos_shock(m.shock, rho, rho0, u, p, c);
+    // Разрушенная частица: растягивающее давление обнуляется (аналог Hydro Pmin = 0).
+    if (D >= 1.0 && p < 0.0) p = 0.0;
+}

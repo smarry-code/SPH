@@ -12,14 +12,113 @@
 // Формальная нумерация материалов (поле itype частицы):
 //   3 - тантал, 4 - алюминий, 5 - LiF,
 //   6 - полиуретан 160, 7 - полиуретан 320, 8 - полиуретан 626,
-//   9 - PMMA, 10 - B4C, 11 - Al2O3.
+//   9 - PMMA, 10 - B4C, 11 - Al2O3,
+//   12 - сталь 4340, 13 - сталь 1006, 14 - Al 7039, 15 - Al 5083-H116
+//   (модель Джонсона-Кука, Materials::jc; индекс в jc = itype - n_JC).
 // Индексация массивов металлов/полимеров ведётся через смещение n_Me (itype - n_Me).
 #include <vector>
 #include <cstddef>
 #include <optional>
+#include <string>
+#include <cmath>
+#include "eos_types.hpp"
+#include "strength/johnson_cook.hpp"
+
+// Тип УРС материала Джонсона-Кука.
+enum class EosKind { Linear, Shock };
+
+// Материал Джонсона-Кука (itype 12-15): УРС + прочность + разрушение + тепло.
+// Единицы СИ (Па, К, кг/м^3, Дж/(кг К)).
+struct JcMaterial
+{
+    std::string name;
+    double rho0;
+    EosKind eos;
+    LinearEos lin;   // используется при eos == Linear
+    ShockEos shock;  // используется при eos == Shock
+    jc::JcStrength s;
+    jc::JcDamage d;
+    jc::JcThermal th;
+};
+
+// Библиотека материалов JC (fiber/jc-implementation-plan.md §3.2).
+// Источники:
+//   - значения Autodyn: скриншоты Mary от 27.10.2026 (G, A, B, n, C, m, T_m,
+//     T_r, c_p, K; в Autodyn разрушение у всех None, D1-D5 = 1.01e20);
+//   - Johnson & Cook 1983 (плотность Al 7039, T_r и c_p стали 1006);
+//   - Johnson & Cook 1985 (D1-D5 стали 4340);
+//   - Grytten et al. 2006 (D1-D5 Al 5083-H116, критерий Борвика);
+//   - параметры Shock для 1006 и 7039 -- ориентир из литературы (Steinberg).
+// Общее: edot0 = 1 1/с, форма скорости 1st Order, скорость по полной
+// деформации, нагрев через энергию u, chi = 0.9.
+inline std::vector<JcMaterial> make_jc_library()
+{
+    using jc::DamageRateForm;
+    using jc::Heating;
+    using jc::JcDamage;
+    using jc::JcStrength;
+    using jc::JcThermal;
+    using jc::RateForm;
+    using jc::RateSource;
+    constexpr double kOff = 1.01e20; // плейсхолдер Autodyn "не задано"
+
+    auto strength = [](double G, double A, double B, double n, double C, double m, double Tm, double Tr)
+    {
+        JcStrength s;
+        s.G = G; s.A = A; s.B = B; s.n = n; s.C = C; s.m = m; s.Tm = Tm; s.Tr = Tr;
+        s.edot0 = 1.0;
+        s.rate_form = RateForm::FirstOrder;
+        s.rate_source = RateSource::Total;
+        return s;
+    };
+    auto thermal = [](double cp)
+    {
+        JcThermal t;
+        t.cp = cp; t.heating = Heating::Energy; t.chi = 0.9;
+        return t;
+    };
+    auto damage_on = [](double D1, double D2, double D3, double D4, double D5, double Tm_f, DamageRateForm f)
+    {
+        JcDamage d;
+        d.enabled = true;
+        d.D1 = D1; d.D2 = D2; d.D3 = D3; d.D4 = D4; d.D5 = D5;
+        d.Tm_f = Tm_f; d.edot0_f = 1.0; d.form = f;
+        return d;
+    };
+    auto damage_off = [kOff]()
+    {
+        JcDamage d;
+        d.enabled = false;
+        d.D1 = d.D2 = d.D3 = d.D4 = d.D5 = kOff;
+        return d;
+    };
+
+    std::vector<JcMaterial> v;
+    // 12: STEEL 4340, Linear.
+    // TODO(verify): D1-D5 (Johnson & Cook 1985) не сверены с первоисточником.
+    v.push_back({"STEEL 4340", 7830.0, EosKind::Linear, LinearEos{159e9}, ShockEos{},
+                 strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
+                 damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0)});
+    // 13: STEEL 1006, Shock.
+    // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- не сверены с Autodyn.
+    v.push_back({"STEEL 1006", 7896.0, EosKind::Shock, LinearEos{}, ShockEos{2.17, 4569.0, 1.49},
+                 strength(81.8e9, 350e6, 275e6, 0.36, 0.022, 1.00, 1811.0, 300.0), damage_off(), thermal(452.0)});
+    // 14: AL 7039, Shock.
+    // TODO(verify): плотность (JC 1983) и Gamma0, c0, S1 (Steinberg) -- не сверены.
+    v.push_back({"AL 7039", 2770.0, EosKind::Shock, LinearEos{}, ShockEos{2.0, 5328.0, 1.338},
+                 strength(27.6e9, 337e6, 343e6, 0.41, 0.010, 1.00, 877.0, 300.0), damage_off(), thermal(875.0)});
+    // 15: AL5083H116, Linear, разрушение по Борвику (Grytten et al. 2006).
+    v.push_back({"AL5083H116", 2700.0, EosKind::Linear, LinearEos{58.33e9}, ShockEos{},
+                 strength(26.92e9, 167e6, 596e6, 0.551, 0.001, 0.859, 893.0, 293.0),
+                 damage_on(0.178, 0.389, -2.25, 0.147, 0.0, 893.0, DamageRateForm::Borvik), thermal(910.0)});
+    return v;
+}
 
 struct Materials
 {
+    // Смещение индекса материала JC: itype 12-15 -> jc[itype - n_JC].
+    static constexpr int n_JC = 12;
+
     // Смещение индекса материала: itype металла/полимера -> [itype - n_Me].
     static constexpr size_t n_Me = 3;
 
@@ -49,7 +148,22 @@ struct Materials
     std::vector<std::vector<double>> const_JH_2{
         {2517, 199.4e9, 8.71e9, 15.44e9, 0.03, 0.927, 0.67, 0.70, 0.85, 0.2, 0.005, 0.001, 0.5, 230.5e9, -593e9, 2800e9, 0.26e9},
         {3555, 1.165e11, 2.626e9, 3.561e9, 0.137, 0.930, 0.600, 0.110, 0.600, 1.0, 0.0, 0.005, 1.000, 1.692e11, 0.0, 0.0, 0.2e9}};
+
+    // Материалы Джонсона-Кука (itype 12-15), см. make_jc_library.
+    std::vector<JcMaterial> jc = make_jc_library();
 };
+
+// itype принадлежит модели Джонсона-Кука (12-15).
+inline bool is_jc_itype(int itype)
+{
+    return itype >= Materials::n_JC && itype < Materials::n_JC + 4;
+}
+
+// Материал JC по itype; вызывающая сторона обязана проверить is_jc_itype.
+inline const JcMaterial& jc_material(const Materials& m, int itype)
+{
+    return m.jc.at(static_cast<size_t>(itype - Materials::n_JC));
+}
 
 // Модуль сдвига по номеру материала (поле itype частицы).
 // Реестр разложен по двум массивам; диспетчер воспроизводит логику
@@ -68,6 +182,7 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
         const size_t k = static_cast<size_t>(itype - 10);
         return k < m.const_JH_2.size() ? m.const_JH_2[k][1] : 0.0;
     }
+    if (is_jc_itype(itype)) return jc_material(m, itype).s.G; // табличный G (неповреждённый)
     return 0.0;
 }
 
@@ -85,6 +200,7 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
 //     обоих УРС, как того требует fiber/SPH.md);
 //   - itype 10-11 (керамика JH-2): K = K1 = const_JH_2[itype-10][13]
 //     (см. таблицу столбцов в комментарии у Materials::const_JH_2 выше);
+//   - itype 12-15 (JC): K = lin.K (Linear) или rho0*c0^2 (Shock);
 //   - itype 1-2 (газ/вода) и любой прочий itype без G или K -- НЕ ОПРЕДЕЛЕНО
 //     (std::nullopt). Fiber-Solid-Contact с такими частицами не формируется
 //     (fiber/SPH.md, тот же раздел, последний абзац подраздела K_fs).
@@ -120,6 +236,13 @@ inline std::optional<ElasticProps> elastic_by_itype(const Materials& m, int ityp
             K = m.const_JH_2[k][13];
             have_K = true;
         }
+    }
+    else if (is_jc_itype(itype))
+    {
+        // Linear: K из таблицы; Shock: K = rho0 * c0^2 (наклон адиабаты при mu = 0).
+        const JcMaterial& jm = jc_material(m, itype);
+        K = (jm.eos == EosKind::Linear) ? jm.lin.K : jm.rho0 * jm.shock.c0 * jm.shock.c0;
+        have_K = true;
     }
     if (!have_K || !(K > 0.0)) return std::nullopt;
 
