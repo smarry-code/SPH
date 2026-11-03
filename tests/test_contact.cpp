@@ -41,11 +41,13 @@ void test_shear_modulus_registry()
     check(rel_close(shear_modulus_by_itype(m, 4), 26e9), "M1 itype 4 -> 26e9");
     check(rel_close(shear_modulus_by_itype(m, 10), 199.4e9), "M1 itype 10 -> 199.4e9");
     check(rel_close(shear_modulus_by_itype(m, 11), 1.165e11), "M1 itype 11 -> 1.165e11");
+    // itype 12 (STEEL 4340, Джонсон-Кук) -- G из таблицы JC.
+    check(rel_close(shear_modulus_by_itype(m, 12), 81.8e9), "M1 itype 12 -> 81.8e9");
 
-    // M2: itype 1, 2, 12, 99, -3 -> 0.0 (без выхода за границы массивов)
+    // M2: itype 1, 2, 16, 99, -3 -> 0.0 (без выхода за границы массивов)
     check(shear_modulus_by_itype(m, 1) == 0.0, "M2 itype 1 -> 0");
     check(shear_modulus_by_itype(m, 2) == 0.0, "M2 itype 2 -> 0");
-    check(shear_modulus_by_itype(m, 12) == 0.0, "M2 itype 12 -> 0");
+    check(shear_modulus_by_itype(m, 16) == 0.0, "M2 itype 16 -> 0");
     check(shear_modulus_by_itype(m, 99) == 0.0, "M2 itype 99 -> 0");
     check(shear_modulus_by_itype(m, -3) == 0.0, "M2 itype -3 -> 0");
 }
