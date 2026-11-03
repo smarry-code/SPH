@@ -133,6 +133,61 @@ void test_u17()
     check(std::isfinite(p) && std::isfinite(c), "singularity D->0 gives finite p, c");
 }
 
+// U18: разрушенная частица (D >= 1): p >= 0 при растяжении, при сжатии p не меняется.
+void test_u18()
+{
+    std::printf("U18 failed particle\n");
+    const Materials mats;
+    bool ok_tension = true, ok_compr = true, ok_intact = true;
+    for (int it = 12; it <= 15; ++it)
+    {
+        const JcMaterial& m = jc_material(mats, it);
+        for (double mu : {-0.05, -0.01, 0.01, 0.05})
+            for (double u : {0.0, 1.0e5})
+            {
+                const double rho = m.rho0 * (1.0 + mu);
+                double p0, c0, p1, c1, p2, c2;
+                eos_jc(m, rho, m.rho0, u, 0.0, p0, c0);     // целая
+                eos_jc(m, rho, m.rho0, u, 1.0, p1, c1);     // разрушена
+                eos_jc(m, rho, m.rho0, u, 0.5, p2, c2);     // повреждена, но не разрушена
+                if (p1 < 0.0) ok_tension = false;
+                if (p0 >= 0.0 && !(same(p1, p0) && same(c1, c0))) ok_compr = false;
+                if (p0 < 0.0 && !same(p1, 0.0)) ok_tension = false;
+                if (!same(p2, p0)) ok_intact = false;
+            }
+    }
+    check(ok_tension, "D=1: p >= 0 (tension clamped to 0)");
+    check(ok_compr, "D=1: p, c unchanged in compression");
+    check(ok_intact, "D<1: p unchanged");
+}
+
+// U19: упругие константы библиотеки JC.
+void test_u19()
+{
+    std::printf("U19 elastic_by_itype / shear modulus\n");
+    const Materials mats;
+    for (int it = 12; it <= 15; ++it)
+    {
+        const JcMaterial& m = jc_material(mats, it);
+        const auto e = elastic_by_itype(mats, it);
+        check(is_jc_itype(it) && e.has_value(), m.name + ": elastic_by_itype defined");
+        if (!e) continue;
+        check(e->E > 50e9 && e->E < 300e9 && e->nu > 0.2 && e->nu < 0.5,
+              m.name + ": E, nu physical (E=" + std::to_string(e->E / 1e9) + " GPa, nu=" + std::to_string(e->nu) + ")");
+        check(same(shear_modulus_by_itype(mats, it), m.s.G), m.name + ": G equals table");
+    }
+    const auto e4340 = elastic_by_itype(mats, 12);
+    check(e4340 && near_rel(e4340->E, 209.5e9, 0.005) && near_rel(e4340->nu, 0.280, 0.005),
+          "4340: E ~ 209.5 GPa, nu ~ 0.280 (0.5%)");
+    // Shock: K = rho0 c0^2.
+    const JcMaterial& m13 = jc_material(mats, 13);
+    const double K13 = m13.rho0 * m13.shock.c0 * m13.shock.c0;
+    const double G13 = m13.s.G;
+    const auto e13 = elastic_by_itype(mats, 13);
+    check(e13 && near_rel(e13->E, 9.0 * K13 * G13 / (3.0 * K13 + G13), 1e-12), "1006: K = rho0 c0^2");
+    check(!is_jc_itype(11) && !is_jc_itype(16) && is_jc_itype(15), "is_jc_itype range 12..15");
+}
+
 } // namespace
 
 int main()
@@ -140,6 +195,8 @@ int main()
     test_u15();
     test_u16();
     test_u17();
+    test_u18();
+    test_u19();
     std::printf("%s (%d failures)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures);
     return failures;
 }

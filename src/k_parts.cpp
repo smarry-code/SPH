@@ -90,8 +90,8 @@ KPartsTable read_k_parts_from_string(const std::string& text, const std::string&
             if (!parse_ll(ti, itype)) fail(t.file, line_no, "SOLID_PART: itype не целое: '" + ti + "'");
             if (!parse_double(tr, p.rho))
                 fail(t.file, line_no, "SOLID_PART: rho не конечное число: '" + tr + "'");
-            if (itype < 1 || itype > 11)
-                fail(t.file, line_no, "SOLID_PART: itype=" + ti + " вне диапазона 1..11");
+            if (itype < 1 || itype > 15)
+                fail(t.file, line_no, "SOLID_PART: itype=" + ti + " вне диапазона 1..15");
             p.itype = static_cast<int>(itype);
             if (!(p.rho > 0.0)) fail(t.file, line_no, "SOLID_PART: rho должно быть > 0");
 

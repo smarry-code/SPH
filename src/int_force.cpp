@@ -30,6 +30,9 @@ void urs(const Materials& mats, ParticleSystem& sys, size_t i)
         case 10: case 11: // B4C, Al2O3
             urs_cem_JH2(mats, static_cast<size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.dp[i], sys.c[i], sys.p[i], sys.D[i]);
             break;
+        case 12: case 13: case 14: case 15: // Джонсон-Кук
+            eos_jc(jc_material(mats, sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.u[i], sys.D[i], sys.p[i], sys.c[i]);
+            break;
         default:
             throw std::runtime_error("urs(): неизвестный itype=" + std::to_string(sys.itype[i]));
     }

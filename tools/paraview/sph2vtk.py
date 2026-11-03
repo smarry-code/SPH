@@ -292,7 +292,7 @@ def solid_stats(cols: list[str], d: np.ndarray) -> dict:
         out[pre + "z_min"] = float(pos[:, 2].min())
         out[pre + "z_max"] = float(pos[:, 2].max())
         out[pre + "speed_max"] = float(np.linalg.norm(vel, axis=1).max())
-        for n in ("p", "sigma_i", "e_pl", "D"):
+        for n in ("p", "sigma_i", "e_pl", "D", "T", "edot"):
             if n in ci:
                 if n == "p":
                     out[pre + "p_min"] = float(s[:, ci[n]].min())
@@ -448,6 +448,8 @@ COLUMN_DOC = {
     "sigma_i_max": "наибольшая интенсивность напряжений, Па",
     "e_pl_max": "наибольшая интенсивность пластических деформаций",
     "D_max": "наибольшая повреждённость",
+    "T_max": "наибольшая температура (модель Джонсона-Кука), К",
+    "edot_max": "наибольшая эквивалентная скорость деформации (Джонсон-Кук), 1/с",
     "fiber_n_beads": "число бусин",
     "fiber_n_bonds": "число целых связей",
     "fiber_n_broken": "порвано связей с первого кадра серии (накопительно)",

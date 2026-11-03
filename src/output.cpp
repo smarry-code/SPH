@@ -77,7 +77,7 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
         file << "vx" << " " << "vy" << " " << "vz" << " ";
     }
     file << "rho" << " " << "p" << " " << "u" << " " << "c" << " " << "sigma_i" << " " << "e_pl" << " " << "D" << " " << "hsml" << " "
-         << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << "\n";
+         << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << " " << "T" << " " << "edot" << "\n";
     for (size_t i = 0; i < ntotal; ++i)
     {
         // Запись основных данных

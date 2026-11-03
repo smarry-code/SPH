@@ -174,6 +174,7 @@ inline bool solid_itype_known(int itype)
     switch (itype)
     {
         case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8: case 9: case 10: case 11:
+        case 12: case 13: case 14: case 15: // JC
             return true;
         default:
             return false;
@@ -205,6 +206,9 @@ inline void solid_eos(const Materials& mats, const ParticleSystem& sys, std::siz
             urs_cem_JH2(mats, static_cast<std::size_t>(sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.dp[i], c, p, D_local);
             break;
         }
+        case 12: case 13: case 14: case 15: // Джонсон-Кук (единая eos_jc, как в urs())
+            eos_jc(jc_material(mats, sys.itype[i]), sys.rho[i], sys.rho_0[i], sys.u[i], sys.D[i], p, c);
+            break;
         default:
             throw std::runtime_error("solid_eos: неизвестный itype=" + std::to_string(sys.itype[i]));
     }

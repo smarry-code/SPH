@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <sstream>
 #include <fstream>
+#include <string>
+#include <vector>
 
 int main()
 {
@@ -60,6 +62,31 @@ int main()
         if (content.empty()) { std::printf("FAIL vuvod_index: пустой вывод\n"); ++failures; }
     }
 
+    // --- поля Джонсона-Кука T, edot: размер, обнуление, вывод в конец строки ---
+    {
+        sys.resize(N);
+        if (sys.T.size() != N || sys.edot.size() != N) { std::printf("FAIL resize T/edot\n"); ++failures; }
+        sys.T[3] = 123.0; sys.edot[3] = 4.5;
+        sys.inzializ_index(3);
+        if (sys.T[3] != 0.0 || sys.edot[3] != 0.0) { std::printf("FAIL obnul T/edot\n"); ++failures; }
+        sys.T[0] = 300.0; sys.edot[0] = 7.0;
+        std::ofstream tmp("__ps_test_out2.txt");
+        sys.vuvod_index(0, tmp);
+        tmp.close();
+        std::ifstream chk("__ps_test_out2.txt");
+        std::string line;
+        std::getline(chk, line);
+        std::istringstream ss(line);
+        std::vector<double> v;
+        double x;
+        while (ss >> x) v.push_back(x);
+        // itype mass x[dim] vx[dim] + 8 скаляров + hsml + 6 компонент s + T edot
+        const size_t expect = 2 + 2 * dim + 5 + 3 + 6 + 2;
+        if (v.size() != expect) { std::printf("FAIL vuvod столбцов %zu != %zu\n", v.size(), expect); ++failures; }
+        else if (v[expect - 2] != 300.0 || v[expect - 1] != 7.0) { std::printf("FAIL vuvod T/edot в конце\n"); ++failures; }
+        std::remove("__ps_test_out2.txt");
+    }
+
     // --- inzializ_2d_symm_index: корректность зеркалирования (проверяем поля, общие для любого dim) ---
     // Для dim>=1: x[0] отражается, x[1..] копируется. itype/mass/rho копируются.
     if (dim >= 1)
@@ -70,10 +97,12 @@ int main()
         sys.x[0][0] = 5.0;   // src
         sys.mass[0] = 2.5;
         sys.itype[0] = 4;
+        sys.T[0] = 321.0; sys.edot[0] = 9.0;
         sys.inzializ_2d_symm_index(1, 0);  // dst=1 = образ src=0
         // x[0] отражается: -5.0
         if (std::fabs(sys.x[0][1] - (-5.0)) > 1e-12) { std::printf("FAIL inzializ_2d_symm x[0] mirror: %g\n", sys.x[0][1]); ++failures; }
         if (std::fabs(sys.mass[1] - 2.5) > 1e-12)    { std::printf("FAIL inzializ_2d_symm mass copy\n"); ++failures; }
+        if (sys.T[1] != 321.0 || sys.edot[1] != 9.0) { std::printf("FAIL inzializ_2d_symm T/edot copy\n"); ++failures; }
         if (sys.itype[1] != 4)                       { std::printf("FAIL inzializ_2d_symm itype copy\n"); ++failures; }
     }
 

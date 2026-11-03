@@ -59,6 +59,9 @@ void test_example()
     check(p1 && p1->line == 2, "PID 1: строка 2");
     const SolidPart* p4 = t.find_solid(4);
     check(p4 && p4->itype == 5 && p4->rho == 2638.0 && !p4->has_v && p4->nv == 0, "PID 4 без v");
+    // itype 12-15 (Джонсон-Кук) принимаются.
+    check(parse("SOLID_PART 7 12 7830\n").find_solid(7) != nullptr, "itype = 12 принят");
+    check(parse("SOLID_PART 7 15 2700\n").find_solid(7) != nullptr, "itype = 15 принят");
     check(t.find_solid(5) == nullptr && t.find_fiber(5) && t.find_fiber(5)->material_id == 0,
           "PID 5 - нить с материалом 0");
     check(t.find_fiber(1) == nullptr && t.find_solid(99) == nullptr, "поиск отсутствующего PID");
@@ -94,7 +97,7 @@ void test_errors()
     expect_error("# c\nBOGUS 1 2\n", "BOGUS", "2", "неизвестная директива");
     expect_error("solid_part 1 3 1\n", "solid_part", "1", "регистрозависимость");
     expect_error("\nSOLID_PART 1 0 100\n", "itype", "2", "itype = 0");
-    expect_error("SOLID_PART 1 12 100\n", "itype", "1", "itype = 12");
+    expect_error("SOLID_PART 1 16 100\n", "itype", "1", "itype = 16");
     expect_error("SOLID_PART 1 3 0\n", "rho", "1", "rho = 0");
     expect_error("SOLID_PART 1 3 -5\n", "rho", "1", "rho < 0");
     expect_error("SOLID_PART 1 3 100 hsml=0\n", "hsml", "1", "hsml = 0");

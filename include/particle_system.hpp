@@ -40,6 +40,9 @@ struct ParticleSystem
 
     // --- термодинамика / скаляры ---
     std::vector<double> mass, rho, rho_0, p, u, c, s, e, hsml, dp, e_pl, D;
+    // Модель Джонсона-Кука: температура, К (T_r при создании JC-частицы,
+    // 0 для прочих материалов) и эквивалентная скорость деформации, 1/с.
+    std::vector<double> T, edot;
 
     // --- тензор напряжений (девиатор) ---
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
@@ -79,6 +82,7 @@ struct ParticleSystem
         mass.resize(n);   rho.resize(n);   rho_0.resize(n);
         p.resize(n);      u.resize(n);     c.resize(n);     s.resize(n);     e.resize(n);
         hsml.resize(n);   dp.resize(n);    e_pl.resize(n);  D.resize(n);
+        T.resize(n);      edot.resize(n);
         sxx.resize(n);    syy.resize(n);   szz.resize(n);
         sxy.resize(n);    syz.resize(n);   sxz.resize(n);
         exx.resize(n);    eyy.resize(n);   ezz.resize(n);
@@ -111,6 +115,7 @@ struct ParticleSystem
         itype[i] = 0; mass[i] = 0.0; rho[i] = 0.0; rho_0[i] = 0.0;
         p[i] = 0.0; u[i] = 0.0; c[i] = 0.0; s[i] = 0.0; e[i] = 0.0;
         hsml[i] = 0.0; dp[i] = 0.0; e_pl[i] = 0.0; D[i] = 0.0;
+        T[i] = 0.0; edot[i] = 0.0;
         sxx[i] = 0.0; syy[i] = 0.0; szz[i] = 0.0;
         sxy[i] = 0.0; syz[i] = 0.0; sxz[i] = 0.0;
         exx[i] = 0.0; eyy[i] = 0.0; ezz[i] = 0.0;
@@ -139,7 +144,8 @@ struct ParticleSystem
         filename << " " << rho[i] << " " << p[i] << " " << u[i] << " " << c[i] << " " << sigma_i
                  << " " << e_pl[i] << " " << D[i] << " " << hsml[i]
                  << " " << sxx[i] << " " << syy[i] << " " << szz[i]
-                 << " " << sxy[i] << " " << syz[i] << " " << sxz[i] << "\n";
+                 << " " << sxy[i] << " " << syz[i] << " " << sxz[i]
+                 << " " << T[i] << " " << edot[i] << "\n";
     }
 
     // Осесимметричное зеркалирование: частица dst = симметричный образ src
@@ -162,6 +168,7 @@ struct ParticleSystem
         eyz[dst] = eyz[src]; exz[dst] = exz[src];
         rxz[dst] = rxz[src]; ryz[dst] = ryz[src];
         D[dst] = D[src]; dp[dst] = dp[src]; hsml[dst] = hsml[src]; e_pl[dst] = e_pl[src];
+        T[dst] = T[src]; edot[dst] = edot[src];
         body[dst] = body[src];
     }
 };

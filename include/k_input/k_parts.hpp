@@ -26,7 +26,7 @@ namespace k_input
 struct SolidPart
 {
     long long pid = 0;
-    int itype = 0;                    // 1..11
+    int itype = 0;                    // 1..15 (12..15 - Джонсон-Кук)
     double rho = 0.0;                 // > 0
     bool has_hsml = false;
     double hsml = 0.0;                // > 0, если has_hsml
