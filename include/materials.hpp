@@ -103,10 +103,11 @@ inline std::vector<JcMaterial> make_jc_library()
                  strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
                  damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0),
                  // TODO(verify): p_min = -4 ГПа -- середина окна -2..-6 ГПа, в котором E3 даёт
-                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md); нужен Pmin из Autodyn.
+                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md). Данных Autodyn не будет:
+                 // заменить на литературную откольную прочность 4340 (с источником).
                  -4.0e9});
     // 13: STEEL 1006, Shock.
-    // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- не сверены с Autodyn.
+    // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- литературные, не проверены.
     v.push_back({"STEEL 1006", 7896.0, EosKind::Shock, LinearEos{}, ShockEos{2.17, 4569.0, 1.49},
                  strength(81.8e9, 350e6, 275e6, 0.36, 0.022, 1.00, 1811.0, 300.0), damage_off(), thermal(452.0)});
     // 14: AL 7039, Shock.
