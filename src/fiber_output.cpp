@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -71,6 +72,9 @@ void fiber_output(const FiberState& fiber, const FiberTopology& topology, const 
     {
         throw std::runtime_error("fiber::fiber_output: не удалось открыть файл для вывода данных нитей");
     }
+    // Отладка расхождения траекторий: SPH_FRAME_PRECISION=<n> -- число значащих цифр кадра
+    // (по умолчанию точность потока, 6 цифр; для сравнения прогонов по бусинам нужно 17).
+    if (const char* p = std::getenv("SPH_FRAME_PRECISION")) file.precision(std::atoi(p));
 
     const std::size_t n = fiber.size();
     const std::size_t nb = topology.bonds.size();
