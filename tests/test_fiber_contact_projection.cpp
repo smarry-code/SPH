@@ -1177,6 +1177,10 @@ void make_random(Sim& s, std::uint64_t seed, bool with_fixed)
         c.b1 = (rng.uni() < 0.2) ? -1 : static_cast<long long>(idx[3]);
         weight(c.s);
         weight(c.t);
+        // Точечный сегмент: геометрия даёт параметр 0 (fiber_segment_closest_params,
+        // вырожденный отрезок), вес второй бусины не задан -- иначе сцена нефизична.
+        if (c.a1 == -1) c.s = 0.0;
+        if (c.b1 == -1) c.t = 0.0;
         rng.unit(c.n);
         c.mu = 0.3;
         c.key = make_ff_pair_key(static_cast<long long>(c.a0), c.a1, static_cast<long long>(c.b0), c.b1);
@@ -1193,6 +1197,7 @@ void make_random(Sim& s, std::uint64_t seed, bool with_fixed)
         c.b = (rng.uni() < 0.2) ? -1 : static_cast<long long>(b);
         c.s = rng.index(ns);
         weight(c.lambda);
+        if (c.b == -1) c.lambda = 0.0; // точечный контакт: lambda = 0 (fiber_solid_contact.hpp)
         rng.unit(c.n);
         c.mu = 0.3;
         c.key = make_fs_pair_key(static_cast<long long>(c.a), c.b, static_cast<long long>(c.s));
