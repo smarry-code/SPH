@@ -161,7 +161,7 @@ Probe probe(const VelocityField& vfield, const StressField& sfield = zero_stress
     const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
 
     std::vector<interactions::SolidFinal> finalres;
-    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, finalres);
+    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, derived.p, finalres);
 
     const size_t p = flat_index(kProbe, kProbe, kProbe);
     const interactions::SolidFinal& f = finalres[p];

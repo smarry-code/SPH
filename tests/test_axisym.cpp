@@ -184,7 +184,7 @@ Rates probe_rates(const VelocityField& field,
     const std::vector<interactions::SolidDelta> reduced = rhs::reduce_contributions(exec, sph_buffers, n);
 
     std::vector<interactions::SolidFinal> finalres;
-    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, finalres);
+    interactions::finalize_solid(exec, cfg.mats, sys, n, reduced, derived.p, finalres);
 
     const size_t probe = flat_index(kProbeIr, kProbeIz);
     const interactions::SolidFinal& f = finalres[probe];
@@ -442,6 +442,37 @@ void test_search_threads()
           "F6 множества real_pairs и число примитивов совпадают при 1 и 7 потоках");
 }
 
+// --- G. Работа давления на окружной деформации ------------------------------
+// du/dt = -(p/rho) div v, а div v в осесимметрии = плоская дивергенция + v_r/r.
+// Плоская часть приходит из парной суммы (SolidDelta::du), окружную
+// finalize_solid добавляет сам: -(p/rho) v_r/r. Одна частица, парные суммы
+// нулевые, девиатор нулевой -- du должно быть ровно этим членом.
+void test_hoop_pressure_work()
+{
+    std::printf("\n[G] Работа давления на окружной деформации -(p/rho) v_r/r\n");
+    ParticleSystem sys;
+    sys.resize(1);
+    constexpr double r = 3.0e-3, vr = 50.0, rho = 2600.0, P = 2.0e9;
+    sys.x[0][0] = r;     sys.x[1][0] = 1.0e-3;
+    sys.vx[0][0] = vr;   sys.vx[1][0] = -10.0;
+    sys.rho[0] = rho;    sys.rho_0[0] = kRho0;
+    sys.mass[0] = kRho0 * kDx * kDx;
+    sys.itype[0] = kItype;
+
+    rhs::CpuExecutor exec;
+    SimulationConfig cfg;
+    const std::vector<interactions::SolidDelta> reduced(1);
+    std::vector<interactions::SolidFinal> f0, fp;
+    interactions::finalize_solid(exec, cfg.mats, sys, 1, reduced, std::vector<double>{0.0}, f0);
+    interactions::finalize_solid(exec, cfg.mats, sys, 1, reduced, std::vector<double>{P}, fp);
+
+    const double expect = -P / rho * vr / r;
+    std::printf("        du(p=0) = %.6e  du(p) = %.6e  ожидается %.6e (Дж/(кг*с))\n", f0[0].du, fp[0].du, expect);
+    check(f0[0].du == 0.0, "G1 p = 0: du = 0 (нет парных сумм и девиатора)");
+    check(near_rel(fp[0].du, expect, expect, 1e-14), "G2 du = -(p/rho) v_r/r");
+    check(fp[0].drho == f0[0].drho, "G3 drho от p не зависит");
+}
+
 } // namespace
 
 int main()
@@ -454,6 +485,7 @@ int main()
     test_axial_source_at_rest();
     test_shear_source_at_rest();
     test_search_threads();
+    test_hoop_pressure_work();
 
     std::printf("\n=== %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);
