@@ -498,6 +498,100 @@ int main()
     });
 #endif
 
+    // 7. Проекция контакта (формат v2): таблица тёплого старта, поля конфига, чтение файла v1
+    run_case("7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается", [] {
+        e2e::ScopedWorkDir wd("sph_ckpt", "proj");
+        const std::string root = wd.dir().string();
+        const std::string ck = root + "/proj.ckpt";
+        const auto set_proj = [](SimulationConfig& c) {
+            c.fiber_fiber_contact_type = 3;
+            c.fiber_fiber_contact_predictor = 1;
+            c.fiber_contact_projection_iters = 17;
+            c.fiber_contact_projection_warm = 0;
+        };
+        const auto make_entries = [] {
+            std::vector<interactions::NormalWarmEntry> v(2);
+            v[0].key = interactions::make_ff_pair_key(7, 8, 3, -1);
+            v[0].P = 1.25e-7;
+            v[1].key = interactions::make_fs_pair_key(4, 5, 99);
+            v[1].P = -0.0;
+            return v;
+        };
+        // Запись без интегрирования: состояние сцены сразу после построения.
+        const auto write_ck = [&](const std::string& wdir, const std::string& path, bool empty) {
+            CkptScene sc = build_checkpoint_scene(wdir, 0.5, 0);
+            set_proj(sc.cfg);
+            checkpoint::Payload pl;
+            if (!empty) pl.proj_warm = make_entries();
+            pl.proj_h_prev = empty ? 0.0 : 3.5e-9;
+            checkpoint::write(path, sc.cfg, sc.model, sc.ntotal, pl);
+        };
+
+        write_ck(root + "/w0", ck, false);
+        checkpoint::Payload out;
+        e2e::check(try_read(root + "/w1", ck, false, set_proj, &out).empty(), "v2 читается");
+        const auto ref = make_entries();
+        bool same = out.proj_warm.size() == ref.size() && out.proj_h_prev == 3.5e-9;
+        for (std::size_t k = 0; same && k < ref.size(); ++k)
+            same = out.proj_warm[k].key == ref[k].key && out.proj_warm[k].P == ref[k].P;
+        e2e::check(same, "proj_warm и proj_h_prev совпадают побитово");
+
+        // Пустая таблица
+        write_ck(root + "/w2", root + "/empty.ckpt", true);
+        checkpoint::Payload out_e;
+        out_e.proj_warm = make_entries();
+        e2e::check(try_read(root + "/w3", root + "/empty.ckpt", false, set_proj, &out_e).empty() &&
+                       out_e.proj_warm.empty() && out_e.proj_h_prev == 0.0,
+                   "пустая таблица round-trip");
+
+        // Смена поля проекции без --force запрещена
+        const std::string e = try_read(root + "/w4", ck, false, [&](SimulationConfig& c) {
+            set_proj(c);
+            c.fiber_contact_projection_iters = 8;
+        });
+        e2e::check(e.find("fiber_contact_projection_iters") != std::string::npos, "смена iters без force -> ошибка");
+
+        // Файл v1: версия 1, из CONF убраны 4 последних int, блок PROJ удалён, CRC пересчитан.
+        std::vector<char> raw = slurp(ck);
+        auto rd64 = [&](std::size_t off) { std::uint64_t v; std::memcpy(&v, raw.data() + off, 8); return v; };
+        std::size_t pos = 24;
+        const std::uint64_t conf_len = rd64(pos + 4);
+        std::size_t proj_pos = pos;
+        while (true)
+        {
+            std::uint64_t len = rd64(proj_pos + 4);
+            if (proj_pos + 12 + len + 4 >= raw.size()) break;
+            proj_pos += 12 + static_cast<std::size_t>(len);
+        }
+        raw.resize(proj_pos);      // отрезали PROJ и CRC
+        const std::uint64_t nl = conf_len - 16;
+        std::memcpy(raw.data() + pos + 4, &nl, 8);
+        std::uint32_t cnt;
+        std::memcpy(&cnt, raw.data() + pos + 12, 4);
+        cnt -= 4;
+        std::memcpy(raw.data() + pos + 12, &cnt, 4);
+        raw.erase(raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len - 16),
+                  raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len));
+        const std::uint32_t one = 1;
+        std::memcpy(raw.data() + 8, &one, 4);
+        std::uint32_t crc = 0xFFFFFFFFu;
+        for (unsigned char c : raw)
+        {
+            crc ^= c;
+            for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+        crc = ~crc;
+        raw.resize(raw.size() + 4);
+        std::memcpy(raw.data() + raw.size() - 4, &crc, 4);
+        spit(root + "/v1.ckpt", raw);
+
+        checkpoint::Payload out1;
+        checkpoint::ConfigDiff diff1;
+        const std::string e1 = try_read(root + "/w5", root + "/v1.ckpt", false, set_proj, &out1, &diff1);
+        e2e::check(e1.empty(), "файл v1 читается" + (e1.empty() ? std::string() : ": " + e1));
+        e2e::check(out1.proj_warm.empty() && diff1.forbidden.empty(), "v1: таблицы нет, различий новых полей нет");
+    });
+
     std::printf("\nпровалено кейсов: %d\n", g_failed_cases);
     return (g_failed_cases == 0 && e2e::failures == 0) ? 0 : 1;
 }

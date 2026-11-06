@@ -134,6 +134,9 @@ struct Options
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
     int fs_contact = -1;
     int ff_contact = -1;
+    // Нормальная сила законов 1-3 как проекция скорости: -1 -- не задано (берётся из конфига).
+    int ff_predictor = -1, fs_predictor = -1;
+    int proj_iters = -1, proj_warm = -1;
     std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
     bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
     bool checkpoint = false;       // писать чекпоинты (--checkpoint или --checkpoint-every)
@@ -180,6 +183,8 @@ void print_usage()
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
                 "                   [--fs-contact=0..4] [--ff-contact=0..4]  (закон контакта нитей, 0 = Герц, 4 = Герц + демпфер)\n"
+                "                   [--ff-contact-predictor=0|1] [--fs-contact-predictor=0|1] [--contact-proj-iters=1..100] [--contact-proj-warm=0|1]\n"
+                "                   (нормальная сила законов 1-3 как проекция скорости; по умолчанию 0)\n"
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
@@ -330,6 +335,26 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 4) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--ff-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--ff-contact-predictor="), n) || n < 0 || n > 1) return bad("--ff-contact-predictor");
+            o.ff_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--fs-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--fs-contact-predictor="), n) || n < 0 || n > 1) return bad("--fs-contact-predictor");
+            o.fs_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-iters=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-iters="), n) || n < 1 || n > 100) return bad("--contact-proj-iters");
+            o.proj_iters = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-warm=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-warm="), n) || n < 0 || n > 1) return bad("--contact-proj-warm");
+            o.proj_warm = static_cast<int>(n);
         }
         else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")
         {
@@ -571,6 +596,13 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
     info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
     info.emplace_back("dt_scale", fmtg(opt.dt_scale));
+    if (opt.ff_predictor == 1 || opt.fs_predictor == 1)
+    {
+        info.emplace_back("ff_contact_predictor", std::to_string(opt.ff_predictor == 1 ? 1 : 0));
+        info.emplace_back("fs_contact_predictor", std::to_string(opt.fs_predictor == 1 ? 1 : 0));
+        info.emplace_back("contact_proj_iters", std::to_string(opt.proj_iters >= 0 ? opt.proj_iters : 8));
+        info.emplace_back("contact_proj_warm", std::to_string(opt.proj_warm >= 0 ? opt.proj_warm : 1));
+    }
     return info;
 }
 
@@ -639,6 +671,11 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         if (opt.impulse_gamma > 0.0)
             sc.cfg.fiber_solid_contact_impulse_gamma = sc.cfg.fiber_fiber_contact_impulse_gamma = opt.impulse_gamma;
         sc.cfg.dt_scale = opt.dt_scale;
+        if (opt.ff_predictor >= 0) sc.cfg.fiber_fiber_contact_predictor = opt.ff_predictor;
+        if (opt.fs_predictor >= 0) sc.cfg.fiber_solid_contact_predictor = opt.fs_predictor;
+        if (opt.proj_iters >= 0) sc.cfg.fiber_contact_projection_iters = opt.proj_iters;
+        if (opt.proj_warm >= 0) sc.cfg.fiber_contact_projection_warm = opt.proj_warm;
+        validate_fiber_contact_projection(sc.cfg); // ошибка настроек -- исключение выстрела (ОШИБКА)
 #ifdef SPH_CONTACT_STATS
         // Статистика контактов -- в подкаталог выстрела (CWD).
         sc.cfg.contact_stats_every = opt.contact_stats;

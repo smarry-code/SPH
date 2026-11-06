@@ -36,6 +36,7 @@
 #include "contact_force.hpp"
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_bond.hpp" // fiber_bond_pair_dt
+#include "interactions/fiber_normal_projection_types.hpp" // FiberNormalContact, FiberSolidNormalContact
 #include "rhs/cpu_executor.hpp"
 #include "simulation_config.hpp" // dt_scale (impulse_unscaled_limit)
 
@@ -99,6 +100,13 @@ struct FiberContactStepParams
     std::vector<double>* pair_dt_limit = nullptr;
     // Только для типа 4 и лога энергии: ядро считает лишь вязкую часть силы.
     bool damper_only = false;
+    // РЕЖИМ ПРОЕКЦИИ (законы 1-3, fiber/TZ_LAW3_PROJECTION.md): если задан, ядро НЕ считает
+    // нормальную силу, а заполняет нормальные слоты (по одному на primitive, индекс k) для
+    // стадии run_normal_projection; вкладов в ускорение, слота трения и предела шага (в
+    // pair_dt_limit -- kNoLimit) нет. normal_ff -- ядро нить-нить, normal_fs -- нить-Solid.
+    // nullptr -- прежний путь, побитово.
+    std::vector<FiberNormalContact>* normal_ff = nullptr;
+    std::vector<FiberSolidNormalContact>* normal_fs = nullptr;
 };
 
 // Есть ли у закона новые (не Герц) типы -- нужен ли dt_bead.

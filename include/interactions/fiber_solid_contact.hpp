@@ -689,13 +689,36 @@ inline bool compute_fiber_solid_contact_contributions(
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
     if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
+    // Режим проекции: нормальные слоты по primitive (сбрасываются на каждом вызове).
+    std::vector<FiberSolidNormalContact>* const normal = penalty ? params.normal_fs : nullptr;
+    if (normal) normal->resize(n);
     if (n == 0) return false;
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberSolidFrictionContact{};
+        if (normal) (*normal)[k] = FiberSolidNormalContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Режим проекции: только нормальный слот, силы и слота трения нет ---
+        if (normal)
+        {
+            if (!(geom.delta > 0.0)) return;
+            FiberSolidNormalContact& slot = (*normal)[k];
+            slot.active = true;
+            slot.a = prim.a;
+            slot.b = prim.has_b ? static_cast<long long>(prim.b) : -1;
+            slot.s = prim.s;
+            slot.lambda = prim.has_b ? geom.lambda : 0.0;
+            for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
+            slot.delta = geom.delta;
+            slot.mu = fiber_solid_friction_coefficient(
+                materials[static_cast<std::size_t>(state.material_id[prim.a])], sys.itype[prim.s]);
+            slot.key = make_fs_pair_key(prim.a, slot.b, prim.s);
+            if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
+            return;
+        }
 
         // --- Нормальная сила: тип 0 -- Герц из геометрии, 1-3 -- закон -----
         double F = geom.F;

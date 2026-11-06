@@ -165,6 +165,12 @@ struct MonitorStats
 
     // Собственная стоимость монитора
     double monitor_wall_s = 0.0;
+
+    // Проекция скорости нормального контакта (fiber_*_contact_predictor = 1): максимумы за ВЕСЬ
+    // прогон по шагам (из fiber::Model::proj_stats). При выключенной проекции не заполняются.
+    double proj_resid_max = 0.0, proj_resid_rel_max = 0.0;
+    double W_proj_pos_max = 0.0;      // max(0, max W_stage): положительная работа стадии (теоретически 0)
+    std::size_t proj_slots_max = 0;   // max (n_slots_ff + n_slots_fs) за шаг
 };
 
 namespace mon_detail
@@ -183,7 +189,8 @@ class GuoShotMonitor
 {
 public:
     GuoShotMonitor(const GuoScene& sc, const MonitorOptions& opt)
-        : sc_(sc), m_(sc.model), opt_(opt), nt_(sc.ntotal), nb_(sc.model.fiber.size())
+        : sc_(sc), m_(sc.model), opt_(opt), nt_(sc.ntotal), nb_(sc.model.fiber.size()),
+          proj_on_(sc.cfg.fiber_fiber_contact_predictor == 1 || sc.cfg.fiber_solid_contact_predictor == 1)
     {
         if (!(opt_.wp_radius > 0.0)) opt_.wp_radius = sc.spec.wp_radius;
         const ParticleSystem& s = m_.solid;
@@ -258,6 +265,10 @@ public:
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",n_broken_h_p%d", k);
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",w_f_p%d", k);
                 }
+                // Только в режиме проекции: столбцы после всех прежних (при выключенной -- заголовок прежний).
+                if (proj_on_)
+                    std::fprintf(csv_, ",proj_n_ff,proj_n_fs,proj_max_ck,proj_max_cs,proj_resid,proj_resid_rel,"
+                                       "proj_warm_frac,W_proj_pos_max");
                 std::fprintf(csv_, "\n");
             }
         }
@@ -430,6 +441,9 @@ public:
         // --- исход
         update_outcome(time, r.v_z, r.z_c);
 
+        // --- проекция нормального контакта: накопление за окно между строками csv
+        if (proj_on_ && m_.proj_stats.enabled) accumulate_proj(m_.proj_stats);
+
         // --- csv
         last_ = r;
         if (opt_.n_mon <= 1 || step == 1 || step % opt_.n_mon == 0)
@@ -540,7 +554,7 @@ public:
                      st_.n_broken_v, st_.n_broken_h, st_.w_f_max, st_.t_first_break < 0.0 ? nan : st_.t_first_break,
                      st_.t_first_break < 0.0 ? nan : st_.w_f_at_first_break, st_.w_p_max, st_.m_ej, st_.n_tunnel,
                      st_.max_delta_ff_d, st_.max_delta_fs_d, st_.contacts_per_crossing, guard_reason.c_str(), st_.eps_p_max,
-                     st_.W_p_total, st_.n_bonds_plastic, nply_ >= 2 ? "" : "\n");
+                     st_.W_p_total, st_.n_bonds_plastic, (nply_ >= 2 || proj_on_) ? "" : "\n");
         if (nply_ >= 2)
         {
             // Новые ключи ТЗ 2T/4T §4.3 -- строго в конец строки (парсер tools/guo2019 читает по ключам).
@@ -558,9 +572,16 @@ public:
             }
             std::fprintf(f,
                          " contacts_per_crossing_inter=%.9g max_delta_ff_inter/d=%.9g ply_order_violations=%zu "
-                         "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e\n",
+                         "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e%s",
                          st_.contacts_per_crossing_inter, st_.max_delta_ff_inter_d, st_.ply_order_violations,
-                         st_.t_ply_order_first < 0.0 ? nan : st_.t_ply_order_first, st_.ply_gap_min, st_.ply_gap_max);
+                         st_.t_ply_order_first < 0.0 ? nan : st_.t_ply_order_first, st_.ply_gap_min, st_.ply_gap_max,
+                         proj_on_ ? "" : "\n");
+        }
+        if (proj_on_)
+        {
+            // Ключи режима проекции -- строго в конец строки.
+            std::fprintf(f, " proj_resid_max=%.9g proj_resid_rel_max=%.9g W_proj_pos_max=%.9g proj_slots_max=%zu\n",
+                         st_.proj_resid_max, st_.proj_resid_rel_max, st_.W_proj_pos_max, st_.proj_slots_max);
         }
         std::fclose(f);
     }
@@ -1038,14 +1059,51 @@ private:
                      "%zu,%.12e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%zu,%zu,%zu,%.9e,%.9e%s",
                      r.step, r.t, r.dt, r.z_c, r.v_z, r.KE_s, r.KE_p, r.KE_f, r.U_b, r.U_int, r.E_tot, r.Fs[0], r.Fs[1],
                      r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p,
-                     nply_ >= 2 ? "" : "\n");
+                     (nply_ >= 2 || proj_on_) ? "" : "\n");
         if (nply_ >= 2)
         {
             for (std::size_t k = 0; k < r.pv.size(); ++k) std::fprintf(csv_, ",%zu", r.pv[k]);
             for (std::size_t k = 0; k < r.ph.size(); ++k) std::fprintf(csv_, ",%zu", r.ph[k]);
             for (std::size_t k = 0; k < r.wp.size(); ++k) std::fprintf(csv_, ",%.9e", r.wp[k]);
-            std::fprintf(csv_, "\n");
+            std::fprintf(csv_, "%s", proj_on_ ? "" : "\n");
         }
+        if (proj_on_)
+        {
+            // Окно -- с прошлой записанной строки; пустое окно (нет шагов с проекцией) -- нули, warm_frac = 1.
+            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n", pw_.n_ff, pw_.n_fs, pw_.max_ck, pw_.max_cs,
+                         pw_.resid, pw_.resid_rel, pw_.warm_frac, pw_.W_pos);
+            pw_ = ProjWindow{};
+        }
+    }
+
+    // Окно накопления столбцов проекции между записанными строками monitor.csv.
+    //   n_ff, n_fs, max_ck, max_cs, resid, resid_rel -- максимумы по шагам окна;
+    //   warm_frac -- МИНИМУМ по шагам окна с активными слотами (1, если слотов не было);
+    //   W_pos     -- max(0, max W_stage по шагам окна): положительная работа стадии (теоретически 0).
+    struct ProjWindow
+    {
+        std::size_t n_ff = 0, n_fs = 0;
+        double max_ck = 0.0, max_cs = 0.0, resid = 0.0, resid_rel = 0.0;
+        double warm_frac = 1.0;
+        double W_pos = 0.0;
+    };
+
+    void accumulate_proj(const interactions::NormalProjectionStats& ps)
+    {
+        pw_.n_ff = std::max(pw_.n_ff, ps.n_slots_ff);
+        pw_.n_fs = std::max(pw_.n_fs, ps.n_slots_fs);
+        pw_.max_ck = std::max(pw_.max_ck, ps.max_ck);
+        pw_.max_cs = std::max(pw_.max_cs, ps.max_cs);
+        pw_.resid = std::max(pw_.resid, ps.resid);
+        pw_.resid_rel = std::max(pw_.resid_rel, ps.resid_rel);
+        const std::size_t n_slots = ps.n_slots_ff + ps.n_slots_fs;
+        if (n_slots > 0) pw_.warm_frac = std::min(pw_.warm_frac, ps.warm_frac);
+        pw_.W_pos = std::max(pw_.W_pos, ps.W_stage);
+        // весь прогон
+        st_.proj_resid_max = std::max(st_.proj_resid_max, ps.resid);
+        st_.proj_resid_rel_max = std::max(st_.proj_resid_rel_max, ps.resid_rel);
+        st_.W_proj_pos_max = std::max(st_.W_proj_pos_max, ps.W_stage);
+        st_.proj_slots_max = std::max(st_.proj_slots_max, n_slots);
     }
 
     const GuoScene& sc_;
@@ -1075,6 +1133,8 @@ private:
     double t_pos_ = -1.0;
 
     std::FILE* csv_ = nullptr;
+    bool proj_on_ = false; // режим проекции нормального контакта включён в конфиге сцены
+    ProjWindow pw_;
     Row last_;
     bool last_written_ = true;
 

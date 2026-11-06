@@ -9,6 +9,7 @@
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/fiber_friction.hpp"
+#include "interactions/fiber_normal_projection.hpp"
 #include "interactions/fiber_solid_contact.hpp"
 #include "interactions/postprocessing.hpp"
 #include "ode/ode_solver.hpp"
@@ -114,12 +115,21 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                            fiber::FiberTopology& topology, std::vector<fiber::FiberMaterial>& materials,
                            size_t ntotal, double& dt, double& time, double /*delta_x*/, RunGuard* guard,
                            const interactions::ClampSet& clamps, interactions::ClampReport* clamp_report,
-                           const CheckpointHooks* ckpt = nullptr)
+                           const CheckpointHooks* ckpt = nullptr,
+                           interactions::NormalProjectionStats* proj_stats = nullptr)
 {
 #ifdef _WIN32
     SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
 #endif
     const size_t nfiber = fb.size();
+
+    // Проекция скорости нормального контакта (законы 1-3, fiber/TZ_LAW3_PROJECTION.md):
+    // стадия между выбором dt и стадией трения. Оба ключа 0 -- proj_on == false, ни одна
+    // строка ниже не выполняется, результат побитово прежний.
+    validate_fiber_contact_projection(cfg);
+    const bool proj_ff = cfg.fiber_fiber_contact_predictor == 1;
+    const bool proj_fs = cfg.fiber_solid_contact_predictor == 1;
+    const bool proj_on = nfiber > 0 && (proj_ff || proj_fs);
 
     const double t_total = cfg.t_total;
     const size_t print_step = cfg.print_step;
@@ -164,6 +174,12 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // Переиспользуются между шагами (память только растёт).
     interactions::FiberContactSearchResult fiber_contact_search;
     std::vector<interactions::FiberFrictionContact> friction_contacts;
+    // Нормальные слоты и рабочая память стадии проекции (заполняются ядрами только при
+    // predictor = 1 соответствующего вида; иначе остаются пустыми) и таблица тёплого старта.
+    std::vector<interactions::FiberNormalContact> normal_ff;
+    std::vector<interactions::FiberSolidNormalContact> normal_fs;
+    interactions::NormalProjectionWorkspace proj_ws;
+    interactions::NormalWarmStart proj_warm;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> fiber_solid_solid_buffers;
     std::vector<std::vector<interactions::FiberBreakEvent>> fiber_break_thread_buffers;
@@ -249,6 +265,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         }
         solver.set_first_step(H.first_step);
         if (guard != nullptr) guard->restore_progress(L.guard_steps, L.guard_dt_first, L.guard_dt_min);
+        proj_warm.set(restart->proj_warm, restart->proj_h_prev);
     }
 
     // Периодические и финальные чекпоинты. Выключено -- ckpt_on == false, в цикле одна ветка.
@@ -271,6 +288,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     std::vector<interactions::FiberSolidFrictionContact> elog_damp_fs_slots;
     std::vector<fiber::FiberDelta> elog_damp_ff_delta, elog_damp_fs_fdelta;
     std::vector<interactions::SolidDelta> elog_damp_fs_sdelta;
+    // Стадия проекции: ускорения до стадии (для разности -> канал D_contact_fiber).
+    std::vector<double> proj_dv_fiber_before[dim], proj_dv_solid_before[dim];
     if (cfg.energy_log_every > 0)
     {
         elog = std::make_unique<energy::EnergyLogger>(cfg.energy_log_file, cfg.energy_log_every, restart != nullptr);
@@ -312,6 +331,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         pl.loop.dt = dt;
         pl.loop.step = current_ts;
         pl.loop.next_output_time = next_output_time;
+        pl.proj_warm = proj_warm.entries();
+        pl.proj_h_prev = proj_warm.h_prev();
         if (guard != nullptr)
         {
             pl.loop.guard_steps = guard->steps();
@@ -358,8 +379,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // contact_hold_n только читает состояние; сводка пишется в деструкторе.
     std::unique_ptr<interactions::contact_stats::Collector> cstats;
     if (cfg.contact_stats_every > 0 && nfiber > 0)
+    {
+        if (proj_on)
+            throw std::runtime_error(
+                "contact_stats не поддерживается в режиме проекции нормального контакта (fiber_*_contact_predictor = 1)");
         cstats = std::make_unique<interactions::contact_stats::Collector>(
             cfg, cfg.contact_stats_every, cfg.contact_stats_file, cfg.contact_stats_summary, cfg.contact_hold_n);
+    }
 #endif
 
     // Основной цикл по времени
@@ -434,6 +460,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             fiber_fiber_params.cfg = &cfg;
             fiber_fiber_params.bead_dt_ref = &fiber_bead_dt_ref;
             fiber_fiber_params.pair_dt_limit = &fiber_contact_search.pair_dt_limit;
+            fiber_fiber_params.normal_ff = proj_ff ? &normal_ff : nullptr; // проекция: слоты вместо силы
             // Только нормальная сила; заполняет слоты трения friction_contacts.
             has_active_friction_contacts = interactions::compute_fiber_contact_contributions(
                 fiber_exec, fb, materials, fiber_contact_search.primitives, fiber_contact_thread_buffers,
@@ -466,6 +493,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             fiber_solid_params.cfg = &cfg;
             fiber_solid_params.bead_dt_ref = &fiber_bead_dt_ref;
             fiber_solid_params.pair_dt_limit = &fiber_solid_search.pair_dt_limit;
+            fiber_solid_params.normal_fs = proj_fs ? &normal_fs : nullptr; // проекция: слоты вместо силы
             has_active_solid_friction_contacts = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
                 fiber_solid_solid_buffers, fiber_solid_search, fiber_solid_fiber_delta, fiber_solid_solid_delta,
@@ -587,6 +615,75 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;
         if (fiber_dt_limit < dt) dt = fiber_dt_limit;
         if (cfg.dt_scale < 1.0) dt *= cfg.dt_scale; // проверка сходимости по шагу
+
+        // Стадия нормального контакта законов 1-3 как ПРОЕКЦИЯ СКОРОСТИ
+        // (include/interactions/fiber_normal_projection.hpp): ядра RHS для видов с
+        // predictor = 1 не дали силы, а заполнили нормальные слоты. Стадия стоит после
+        // выбора dt (нужен h) и ДО трения: добавляет Δv/h в solver.fiber_rhs.dv и
+        // solver.solid_rhs.dvx (после зажимов [1]); затем слоты трения проецируемых видов
+        // заполняются из нормальных (N = P/h), слоты трения остальных видов не трогаются.
+        // Работа стадии идёт в канал D_contact_fiber лога энергии.
+        if (proj_on)
+        {
+            const auto fupd = solver.fiber_velocity_update(fb, dt);
+            const auto supd = solver.solid_velocity_update(sys, dt);
+            const double h_proj = fupd.h;
+#ifdef SPH_ENERGY_LOG
+            if (elog)
+            {
+                for (size_t d = 0; d < dim; ++d)
+                {
+                    proj_dv_fiber_before[d].assign(solver.fiber_rhs.dv[d].begin(),
+                                                   solver.fiber_rhs.dv[d].begin() + static_cast<std::ptrdiff_t>(nfiber));
+                    proj_dv_solid_before[d].assign(solver.solid_rhs.dvx[d].begin(),
+                                                   solver.solid_rhs.dvx[d].begin() + static_cast<std::ptrdiff_t>(ntotal));
+                }
+            }
+#endif
+            proj_warm.apply(fiber_exec, normal_ff, normal_fs, h_proj, cfg.fiber_contact_projection_warm == 1);
+            interactions::compute_normal_counts(fiber_exec, nfiber, ntotal, normal_ff, normal_fs, proj_ws);
+            if (has_clamps)
+                interactions::apply_clamp_friction_counts(fiber_exec, clamp_ws, proj_ws.bead_count,
+                                                          proj_ws.solid_count);
+            interactions::NormalProjectionStats stage_stats;
+            interactions::run_normal_projection(fiber_exec, fb, fupd, solver.fiber_rhs.dv, normal_ff, sys, supd,
+                                                solver.solid_rhs.dvx, normal_fs, cfg.fiber_contact_projection_iters,
+                                                proj_ws, stage_stats);
+            if (proj_stats != nullptr) *proj_stats = stage_stats;
+            // [3] Вклад стадии в зажатые компоненты -- часть реакции: повторная проекция.
+            if (has_clamps)
+            {
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, solver.solid_rhs.dvx,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, clamp_solid_force);
+                interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
+                                                     static_cast<std::vector<std::vector<double>>*>(nullptr),
+                                                     clamp_ws, clamp_fiber_force);
+            }
+#ifdef SPH_ENERGY_LOG
+            // Фактически применённое ускорение стадии -- в канал D_contact_fiber (после проекции
+            // зажимов). Для проецируемых видов ядра RHS силу не давали, поэтому прибавка
+            // к уже снятому ускорению остальных контактов нитей.
+            if (elog && elog->has_contact_fiber)
+            {
+                for (size_t d = 0; d < dim; ++d)
+                {
+                    for (size_t i = 0; i < nfiber; ++i)
+                        elog->contact_fiber_acc[d][i] += solver.fiber_rhs.dv[d][i] - proj_dv_fiber_before[d][i];
+                    for (size_t i = 0; i < ntotal; ++i)
+                        elog->contact_solid_acc[d][i] += solver.solid_rhs.dvx[d][i] - proj_dv_solid_before[d][i];
+                }
+            }
+#endif
+            proj_warm.rebuild(normal_ff, normal_fs, h_proj);
+            // Слоты трения проецируемых видов из нормальных; остальные вид -- как дало ядро.
+            if (proj_ff)
+                has_active_friction_contacts = interactions::fill_friction_slots_from_normal_ff(
+                    fiber_exec, h_proj, normal_ff, friction_contacts);
+            if (proj_fs)
+                has_active_solid_friction_contacts = interactions::fill_friction_slots_from_normal_fs(
+                    fiber_exec, h_proj, normal_fs, friction_solid_contacts);
+        }
 
         // Единая стадия трения (fiber/fiber_friction_projection.md, §5;
         // fiber/fiber_solid_friction_implementation.md, §5): проекция на
@@ -879,9 +976,10 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
     if (cfg.ode_solver == 1)
         detail::run_time_integration<ode::EulerSolver>(cfg, model.solid, model.fiber, model.topology, model.materials,
                                                         ntotal, dt, time, delta_x, guard, model.clamps,
-                                                        &model.clamp_report, h);
+                                                        &model.clamp_report, h, &model.proj_stats);
     else
         detail::run_time_integration<ode::PredictorCorrectorSolver>(cfg, model.solid, model.fiber, model.topology,
                                                                      model.materials, ntotal, dt, time, delta_x, guard,
-                                                                     model.clamps, &model.clamp_report, h);
+                                                                     model.clamps, &model.clamp_report, h,
+                                                                     &model.proj_stats);
 }
