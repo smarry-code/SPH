@@ -43,6 +43,11 @@ struct ParticleSystem
     // Модель Джонсона-Кука: температура, К (T_r при создании JC-частицы,
     // 0 для прочих материалов) и эквивалентная скорость деформации, 1/с.
     std::vector<double> T, edot;
+    // Начальная координата x[0] (в 2D осесимметрии -- начальный радиус r0).
+    // Задаётся один раз до цикла по времени (init_reference_radius), хранится
+    // в чекпоинте. Нужна для учёта энергии: в осесимметрии масса частицы
+    // «плоская» (m = rho0*dx^2), физическая масса кольца -- 2*pi*r0*m (energy_mass).
+    std::vector<double> r0;
 
     // --- тензор напряжений (девиатор) ---
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
@@ -82,7 +87,7 @@ struct ParticleSystem
         mass.resize(n);   rho.resize(n);   rho_0.resize(n);
         p.resize(n);      u.resize(n);     c.resize(n);     s.resize(n);     e.resize(n);
         hsml.resize(n);   dp.resize(n);    e_pl.resize(n);  D.resize(n);
-        T.resize(n);      edot.resize(n);
+        T.resize(n);      edot.resize(n);  r0.resize(n);
         sxx.resize(n);    syy.resize(n);   szz.resize(n);
         sxy.resize(n);    syz.resize(n);   sxz.resize(n);
         exx.resize(n);    eyy.resize(n);   ezz.resize(n);
@@ -115,7 +120,7 @@ struct ParticleSystem
         itype[i] = 0; mass[i] = 0.0; rho[i] = 0.0; rho_0[i] = 0.0;
         p[i] = 0.0; u[i] = 0.0; c[i] = 0.0; s[i] = 0.0; e[i] = 0.0;
         hsml[i] = 0.0; dp[i] = 0.0; e_pl[i] = 0.0; D[i] = 0.0;
-        T[i] = 0.0; edot[i] = 0.0;
+        T[i] = 0.0; edot[i] = 0.0; r0[i] = 0.0;
         sxx[i] = 0.0; syy[i] = 0.0; szz[i] = 0.0;
         sxy[i] = 0.0; syz[i] = 0.0; sxz[i] = 0.0;
         exx[i] = 0.0; eyy[i] = 0.0; ezz[i] = 0.0;
@@ -168,7 +173,27 @@ struct ParticleSystem
         eyz[dst] = eyz[src]; exz[dst] = exz[src];
         rxz[dst] = rxz[src]; ryz[dst] = ryz[src];
         D[dst] = D[src]; dp[dst] = dp[src]; hsml[dst] = hsml[src]; e_pl[dst] = e_pl[src];
-        T[dst] = T[src]; edot[dst] = edot[src];
+        T[dst] = T[src]; edot[dst] = edot[src]; r0[dst] = -r0[src];
         body[dst] = body[src];
     }
+
+    // r0 = текущая x[0] для частиц [0, count). Вызывается ОДИН раз до цикла по
+    // времени и НЕ вызывается при рестарте (r0 восстанавливается из чекпоинта).
+    void init_reference_radius(size_t count)
+    {
+        for (size_t i = 0; i < count; ++i) r0[i] = x[0][i];
+    }
 };
+
+// Масса частицы i для учёта энергии (лог энергии и его каналы).
+// 2D осесимметрия: масса кольца 2*pi*r0*m постоянна во времени, поэтому
+// sum energy_mass*(|v|^2/2 + u) -- физическая энергия тела, которая должна
+// сохраняться; сумма с «плоской» массой m сохраняющейся величиной не является
+// (johnson-cook/03-pmin-energy.md, §2.1). Остальные постановки: m.
+inline double energy_mass(const ParticleSystem& sys, size_t i)
+{
+    if constexpr (axis_sim && dim == 2)
+        return 2.0 * 3.14159265358979323846 * sys.r0[i] * sys.mass[i];
+    else
+        return sys.mass[i];
+}

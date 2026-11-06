@@ -359,7 +359,7 @@ void report(const RunSettings& rs, const RunResult& r)
                 "наименьший z половины %.3e м; наибольшее убывание R_face %.3e м\n",
                 r.ke0 > 0 ? r.fin.ke / r.ke0 : 0.0, r.fin.p_min_face, r.z_min_all, r.R_running_dip);
     // Полная энергия половины (KE + U) на конец относительно начальной, при разных весах
-    // частиц: без веса (как energy_log) и с весом радиуса (масса кольца).
+    // частиц: без веса (как energy_log до веса r0) и с весом радиуса (масса кольца; energy_log теперь так).
     const auto rel = [](double e, double e0) { return e0 > 0 ? 100.0 * (e / e0 - 1.0) : 0.0; };
     std::printf("  info : (KE+U)_конец/(KE+U)_0 - 1: без веса %+.2f %%, вес r0 %+.2f %%, вес r %+.2f %%\n",
                 rel(r.fin.e_flat, r.m0.e_flat), rel(r.fin.e_r0, r.m0.e_r0), rel(r.fin.e_r, r.m0.e_r));

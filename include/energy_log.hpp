@@ -11,6 +11,12 @@
 // ВЕСЬ файл находится под #ifdef SPH_ENERGY_LOG: без этого макроса заголовок
 // пуст и на сборку/производительность не влияет.
 //
+// Масса Solid-частицы во всех суммах и каналах -- energy_mass (particle_system.hpp).
+// В 2D осесимметрии это масса кольца 2*pi*r0*m: «плоская» масса m = rho0*dx^2
+// не даёт сохраняющейся энергии (johnson-cook/03-pmin-energy.md, §2.1), а
+// 2*pi*r0*m -- физическая масса, и столбцы Solid -- энергия всего тела (Дж).
+// В 1D и 3D energy_mass = m, лог прежний.
+//
 // Столбцы CSV (энергии в единицах решателя, Дж):
 //   step, time, dt   -- номер шага, время, шаг по времени
 //   KE_solid         -- sum 1/2 m |v|^2 по реальным частицам Solid
@@ -230,7 +236,7 @@ inline EnergyStocks compute_energy_stocks(const rhs::CpuExecutor& exec, const Si
             ntotal, detail::SolidAcc{},
             [&](std::size_t i) -> detail::SolidAcc {
                 detail::SolidAcc a;
-                const double m = sys.mass[i];
+                const double m = energy_mass(sys, i); // 2D осесимметрия: масса кольца
                 double v2 = 0.0;
                 for (std::size_t d = 0; d < dim; ++d) v2 += sys.vx[d][i] * sys.vx[d][i];
                 a.ke = 0.5 * m * v2;
@@ -346,17 +352,17 @@ inline double work_mid_solid(const rhs::CpuExecutor& exec, const ParticleSystem&
                 const double v_mid = (*upd.base[d])[i] + 0.5 * dv_step;
                 w += k * inc[d][i] * v_mid;
             }
-            return sys.mass[i] * w;
+            return energy_mass(sys, i) * w;
         },
         [](double a, double b) { return a + b; });
 }
 
-// Sum_i m_i * x_i для i < n.
-inline double mass_weighted_sum(const rhs::CpuExecutor& exec, const std::vector<double>& mass,
+// Sum_i energy_mass_i * x_i для i < n (в 2D осесимметрии -- масса кольца).
+inline double mass_weighted_sum(const rhs::CpuExecutor& exec, const ParticleSystem& sys,
                                 const std::vector<double>& x, std::size_t n)
 {
     return exec.parallel_reduce(
-        n, 0.0, [&](std::size_t i) -> double { return mass[i] * x[i]; },
+        n, 0.0, [&](std::size_t i) -> double { return energy_mass(sys, i) * x[i]; },
         [](double a, double b) { return a + b; });
 }
 

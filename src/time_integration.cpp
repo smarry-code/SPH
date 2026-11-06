@@ -223,6 +223,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     if (nfiber > 0 && restart == nullptr) interactions::init_fiber_bond_state(fb, topology, materials);
     // Начальная температура JC-частиц T = T_r (при рестарте T, edot берутся из чекпоинта).
     if (restart == nullptr) init_jc_state(cfg.mats, sys, ntotal);
+    // Начальный радиус r0 = x[0] -- вес энергии в 2D осесимметрии (energy_mass); при рестарте -- из чекпоинта.
+    if (restart == nullptr) sys.init_reference_radius(ntotal);
 
     size_t current_ts = 0;
     double next_output_time = 0.0;
@@ -715,7 +717,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             if (supd.av != nullptr && ntotal > 0)
                 echan.xsph -= energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, *supd.av, true);
             if (wb.du_av.size() >= ntotal)
-                echan.q_av += energy::mass_weighted_sum(fiber_exec, sys.mass, wb.du_av, ntotal) * supd.h;
+                echan.q_av += energy::mass_weighted_sum(fiber_exec, sys, wb.du_av, ntotal) * supd.h;
         }
 #endif
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/

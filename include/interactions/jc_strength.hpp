@@ -117,7 +117,7 @@ inline void apply_jc_strength(const Materials& mats, ParticleSystem& sys, std::s
     // 6) Лог энергии. Для JC логируется именно пластическая работа Y*Δε_p/rho
     // (а не упругая энергия, снятая возвратом, как у Мизеса): при упрочнении и
     // чувствительности к скорости они различаются, а тест I5 сверяет Y*Δε_p.
-    if (plastic_acc && sys.rho[i] > 0.0) *plastic_acc += sys.mass[i] * r.Y * r.d_eps_p / sys.rho[i];
+    if (plastic_acc && sys.rho[i] > 0.0) *plastic_acc += energy_mass(sys, i) * r.Y * r.d_eps_p / sys.rho[i];
 }
 
 } // namespace interactions
