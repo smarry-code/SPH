@@ -147,7 +147,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
 
     // --- Finalize (parallel_for по реальным частицам) -----------------------
     std::vector<interactions::SolidFinal>& finalres = ws.finalres;
-    interactions::finalize_solid(exec, cfg.mats, sys, ntotal, reduced, finalres);
+    interactions::finalize_solid(exec, cfg.mats, sys, ntotal, reduced, derived.p, finalres);
 
     // --- Диагностика контакта -- заполняет wb (ADR-007), как старый
     // ext_force: min_dt_contact ограничивает шаг в time_integration.cpp,

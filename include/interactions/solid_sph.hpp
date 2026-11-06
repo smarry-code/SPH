@@ -923,10 +923,13 @@ inline void compute_solid_sph_contributions(
 // осевые члены (dim==2), закон Гука с производной Яуманна (ИСПРАВЛЕННЫЙ
 // знак у syz*ryz, как в текущем src/int_force.cpp), девиаторная работа
 // s:eps/rho в du, домножение накопленной энергии на 0.5.
+// p -- давление УРС этого RHS (SolidDerived::p): в осесимметрии нужно для
+// работы давления на окружной деформации -(p/rho)*v_r/r в du.
 // ----------------------------------------------------------------------
 inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                             const ParticleSystem& sys, std::size_t nreal,
-                            const std::vector<SolidDelta>& reduced, std::vector<SolidFinal>& out)
+                            const std::vector<SolidDelta>& reduced, const std::vector<double>& p,
+                            std::vector<SolidFinal>& out)
 {
     out.assign(nreal, SolidFinal{});
 
@@ -998,6 +1001,15 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                          + 2.0 * sys.sxy[i] * exy + 2.0 * sys.syz[i] * eyz + 2.0 * sys.sxz[i] * exz) / sys.rho[i];
         }
         f.du = dedt_half + deviatoric;
+        if constexpr (axis_sim && dim == 2)
+        {
+            // Работа давления на окружной деформации: du/dt = -(p/rho) div v,
+            // div v = (плоская дивергенция, она в парной сумме d.du) + v_r/r.
+            // Парная сумма окружную часть не содержит; без этого члена p
+            // меняется с ezz через rho (drho выше), а u -- нет
+            // (johnson-cook/03-pmin-energy.md, §2.2). Аналог temp_u в 1D (nsym).
+            f.du -= p[i] / sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
+        }
 #ifdef SPH_ENERGY_LOG
         f.du_av = 0.5 * d.du_av;
 #endif
