@@ -106,6 +106,23 @@ int main()
         if (sys.itype[1] != 4)                       { std::printf("FAIL inzializ_2d_symm itype copy\n"); ++failures; }
     }
 
+    // --- r0 (начальный радиус) и energy_mass ---
+    {
+        sys.resize(3);
+        if (sys.r0.size() < 3) { std::printf("FAIL resize r0\n"); ++failures; }
+        for (size_t i = 0; i < 3; ++i) { sys.inzializ_index(i); sys.x[0][i] = 1.0 + static_cast<double>(i); sys.mass[i] = 2.0; }
+        sys.init_reference_radius(2);
+        if (sys.r0[0] != 1.0 || sys.r0[1] != 2.0 || sys.r0[2] != 0.0) { std::printf("FAIL init_reference_radius\n"); ++failures; }
+        sys.x[0][0] = 7.0; // r0 -- начальная координата, от текущей не зависит
+        const double em = energy_mass(sys, 0);
+        const double em_expect = (axis_sim && dim == 2) ? 2.0 * 3.14159265358979323846 * 1.0 * 2.0 : 2.0;
+        if (std::fabs(em - em_expect) > 1e-14 * em_expect) { std::printf("FAIL energy_mass %g != %g\n", em, em_expect); ++failures; }
+        sys.inzializ_2d_symm_index(2, 1);
+        if (sys.r0[2] != -2.0) { std::printf("FAIL inzializ_2d_symm r0 mirror\n"); ++failures; }
+        sys.inzializ_index(1);
+        if (sys.r0[1] != 0.0) { std::printf("FAIL obnul r0\n"); ++failures; }
+    }
+
     if (failures == 0)
     {
         std::printf("particle_system_test: OK (size=%zu, dim=%zu)\n", N, dim);

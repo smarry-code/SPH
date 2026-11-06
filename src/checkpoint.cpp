@@ -24,7 +24,7 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 #endif
 
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
-constexpr std::uint32_t kFormatVersion = 2; // v2: в конец double-полей добавлены T, edot (Джонсон-Кук)
+constexpr std::uint32_t kFormatVersion = 3; // v2: в конец double-полей добавлены T, edot (Джонсон-Кук); v3: r0 (вес энергии в осесимметрии)
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -371,7 +371,7 @@ auto double_fields(S& s)
     for (size_t d = 0; d < dim; ++d) v.push_back(&s.vx[d]);
     for (auto* p : {&s.mass, &s.rho, &s.rho_0, &s.p, &s.u, &s.c, &s.s, &s.e, &s.hsml, &s.dp, &s.e_pl, &s.D,
                     &s.sxx, &s.syy, &s.szz, &s.sxy, &s.syz, &s.sxz, &s.exx, &s.eyy, &s.ezz, &s.exy, &s.exz,
-                    &s.eyz, &s.rxy, &s.rxz, &s.ryz, &s.T, &s.edot})
+                    &s.eyz, &s.rxy, &s.rxz, &s.ryz, &s.T, &s.edot, &s.r0})
         v.push_back(p);
     return v;
 }

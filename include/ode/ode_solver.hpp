@@ -309,7 +309,7 @@ public:
 #ifdef SPH_ENERGY_LOG
             if (sys.u[i] < 0)
             {
-                if (u_clamp_acc) *u_clamp_acc += sys.mass[i] * (-sys.u[i]);
+                if (u_clamp_acc) *u_clamp_acc += energy_mass(sys, i) * (-sys.u[i]);
                 sys.u[i] = 0.0;
             }
 #else
@@ -469,7 +469,7 @@ public:
 #ifdef SPH_ENERGY_LOG
             if (sys.u[i] < 0)
             {
-                if (u_clamp_acc) *u_clamp_acc += sys.mass[i] * (-sys.u[i]);
+                if (u_clamp_acc) *u_clamp_acc += energy_mass(sys, i) * (-sys.u[i]);
                 sys.u[i] = 0.0;
             }
 #else

@@ -125,7 +125,7 @@ inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem&
                     2.0 * (sys.sxy[i] * sys.sxy[i] + sys.syz[i] * sys.syz[i] + sys.sxz[i] * sys.sxz[i]);
                 const double G = shear_modulus_by_itype(cfg.mats, sys.itype[i]);
                 if (G > 0.0 && sys.rho[i] > 0.0)
-                    *plastic_acc += sys.mass[i] * (ss_before - ss_after) / (4.0 * G * sys.rho[i]);
+                    *plastic_acc += energy_mass(sys, i) * (ss_before - ss_after) / (4.0 * G * sys.rho[i]);
             }
 #endif
         }
