@@ -251,6 +251,33 @@ void spit(const std::string& p, const std::vector<char>& v)
     out.write(v.data(), static_cast<std::streamsize>(v.size()));
 }
 
+// Смещения начал блоков верхнего уровня (тег u32 + длина u64 + тело) после заголовка 24 байта; CRC -- последние 4.
+std::vector<std::size_t> block_starts(const std::vector<char>& raw)
+{
+    std::vector<std::size_t> v;
+    std::size_t pos = 24;
+    while (pos + 12 + 4 <= raw.size())
+    {
+        std::uint64_t len;
+        std::memcpy(&len, raw.data() + pos + 4, 8);
+        v.push_back(pos);
+        pos += 12 + static_cast<std::size_t>(len);
+    }
+    return v;
+}
+
+// CRC32 (IEEE, как в src/checkpoint.cpp) по всему буферу.
+std::uint32_t crc32_of(const std::vector<char>& raw)
+{
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (char ch : raw)
+    {
+        crc ^= static_cast<unsigned char>(ch);
+        for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
 // Пишет чекпоинт после N шагов в path; сцена остаётся в cwd workdir.
 void make_checkpoint(const std::string& workdir, const std::string& path, std::size_t steps, std::size_t every)
 {
@@ -551,19 +578,14 @@ int main()
         });
         e2e::check(e.find("fiber_contact_projection_iters") != std::string::npos, "смена iters без force -> ошибка");
 
-        // Файл v1: версия 1, из CONF убраны 4 последних int, блок PROJ удалён, CRC пересчитан.
+        // Файл v1: версия 1, из CONF убраны 4 последних int, блоки PROJ и USER удалены, CRC пересчитан.
         std::vector<char> raw = slurp(ck);
         auto rd64 = [&](std::size_t off) { std::uint64_t v; std::memcpy(&v, raw.data() + off, 8); return v; };
         std::size_t pos = 24;
         const std::uint64_t conf_len = rd64(pos + 4);
-        std::size_t proj_pos = pos;
-        while (true)
-        {
-            std::uint64_t len = rd64(proj_pos + 4);
-            if (proj_pos + 12 + len + 4 >= raw.size()) break;
-            proj_pos += 12 + static_cast<std::size_t>(len);
-        }
-        raw.resize(proj_pos);      // отрезали PROJ и CRC
+        const std::vector<std::size_t> starts = block_starts(raw);
+        const std::size_t proj_pos = starts[starts.size() - 2]; // предпоследний блок -- PROJ, последний -- USER
+        raw.resize(proj_pos);      // отрезали PROJ, USER и CRC
         const std::uint64_t nl = conf_len - 16;
         std::memcpy(raw.data() + pos + 4, &nl, 8);
         std::uint32_t cnt;
@@ -590,6 +612,41 @@ int main()
         const std::string e1 = try_read(root + "/w5", root + "/v1.ckpt", false, set_proj, &out1, &diff1);
         e2e::check(e1.empty(), "файл v1 читается" + (e1.empty() ? std::string() : ": " + e1));
         e2e::check(out1.proj_warm.empty() && diff1.forbidden.empty(), "v1: таблицы нет, различий новых полей нет");
+    });
+
+    // 8. Блок USER (формат v3): состояние вызывающего round-trip; файл v2 (без USER) читается с пустым состоянием
+    run_case("8. v3: user_state round-trip (в т.ч. нулевые байты); файл v2 читается", [] {
+        e2e::ScopedWorkDir wd("sph_ckpt", "user");
+        const std::string root = wd.dir().string();
+        const std::string ck = root + "/user.ckpt";
+        std::string blob("MONx\0\x01\xff", 7);
+        blob += std::string(1000, '\x7f');
+        {
+            CkptScene sc = build_checkpoint_scene(root + "/w0", 0.5, 0);
+            checkpoint::Payload pl;
+            pl.user_state = blob;
+            checkpoint::write(ck, sc.cfg, sc.model, sc.ntotal, pl);
+        }
+        checkpoint::Payload out;
+        const std::string e = try_read(root + "/w1", ck, false, [](SimulationConfig&) {}, &out);
+        e2e::check(e.empty(), "v3 читается" + (e.empty() ? std::string() : ": " + e));
+        e2e::check(out.user_state == blob, "user_state совпадает побайтно");
+
+        // Файл v2: версия 2, блок USER удалён, CRC пересчитан.
+        std::vector<char> raw = slurp(ck);
+        const std::vector<std::size_t> starts = block_starts(raw);
+        raw.resize(starts.back());
+        const std::uint32_t two = 2;
+        std::memcpy(raw.data() + 8, &two, 4);
+        const std::uint32_t crc = crc32_of(raw);
+        raw.resize(raw.size() + 4);
+        std::memcpy(raw.data() + raw.size() - 4, &crc, 4);
+        spit(root + "/v2.ckpt", raw);
+        checkpoint::Payload out2;
+        out2.user_state = "мусор";
+        const std::string e2 = try_read(root + "/w2", root + "/v2.ckpt", false, [](SimulationConfig&) {}, &out2);
+        e2e::check(e2.empty(), "файл v2 читается" + (e2.empty() ? std::string() : ": " + e2));
+        e2e::check(out2.user_state.empty(), "v2: user_state пуст");
     });
 
     std::printf("\nпровалено кейсов: %d\n", g_failed_cases);

@@ -20,7 +20,8 @@
 //   --checkpoint / --checkpoint-every=N -- чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev) каждые N шагов
 //   интегрирования (N >= 1, по умолчанию 10000) и финальный при останове; --restart -- продолжить выстрел из него
 //   (нет файла -- ошибка); --force -- разрешить менять физические настройки при --restart (только с --restart).
-//   Состояние монитора пока не сохраняется: после --restart monitor.csv и вердикт по шару неполные.
+//   Состояние монитора хранится в чекпоинте (блок USER, формат v3): после --restart вердикт, максимумы (n_tunnel,
+//   max_delta_*) и monitor.csv -- как при непрерывном счёте; из чекпоинта v1/v2 -- только с шага рестарта.
 //   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
 //   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
 //   (и l_break всех связей = (1+eps_break) l0).
@@ -194,7 +195,8 @@ void print_usage()
                 "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
                 "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
                 "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
-                "  Состояние монитора пока не сохраняется: monitor.csv и вердикт по шару после --restart неполные.\n"
+                "  Состояние монитора хранится в чекпоинте (v3): вердикт, максимумы и monitor.csv после --restart полные\n"
+                "  (из чекпоинта v1/v2 -- только с шага рестарта).\n"
                 "  --force: при --restart разрешить менять физические настройки (без него любое отличие -- отказ со списком полей).\n"
                 "  --force без --restart -- ошибка. Риски --force:\n%s"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
@@ -714,9 +716,6 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                 throw std::runtime_error("--restart: нет чекпоинта " + ckpt_path.string() + " (и .prev) в каталоге выстрела");
             sc.cfg.restart_file = (fs::exists(ckpt_path) ? ckpt_path : prev).string();
             sc.cfg.restart_force = opt.force;
-            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --restart: состояние монитора не сохраняется -- monitor.csv и вердикт по "
-                                 "шару для %s после рестарта неполные (monitor.csv перезаписывается с шага рестарта).\n",
-                         sub.string().c_str());
         }
 
         double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
@@ -728,14 +727,20 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         mo.t_max = t_max;
         mo.csv_path = (sub / "monitor.csv").string();
         mo.guard = &guard;
+        mo.restart = opt.restart;
         GuoShotMonitor monitor(sc, mo);
         guard.set_step_observer([&](double d, double t) { monitor.on_step(d, t); });
+        // Состояние монитора -- в блоке USER чекпоинта (только при --checkpoint / --restart).
+        checkpoint::UserState mon_state;
+        mon_state.save = [&monitor] { return monitor.save_state(); };
+        mon_state.restore = [&monitor](const std::string& b, std::size_t n) { monitor.restore_state(b, n); };
+        const checkpoint::UserState* mon_state_ptr = (opt.checkpoint || opt.restart) ? &mon_state : nullptr;
 
         // ---- прогон
         const auto w0 = std::chrono::steady_clock::now();
         {
             e2e::ScopedSilence silence(true);
-            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard);
+            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard, mon_state_ptr);
         }
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
         monitor.finalize();
@@ -806,6 +811,8 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         add("wall_forecast_h", fmtg(wall_fc_h, 6));
         add("monitor_wall_s", fmtg(st.monitor_wall_s, 6));
         add("monitor_share_pct", fmtg(mon_share, 4));
+        // Только при --restart: restored -- вердикт и максимумы за весь выстрел; partial -- только с шага рестарта.
+        if (opt.restart) add("monitor_state", monitor.state_restored() ? "restored" : "partial");
         add("frames_sph_n", std::to_string(fz.n_sph));
         add("frames_fiber_n", std::to_string(fz.n_fiber));
         add("frames_bytes_total", std::to_string(fz.bytes_sph + fz.bytes_fiber));

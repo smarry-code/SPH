@@ -62,7 +62,7 @@ namespace detail
 struct CheckpointHooks
 {
     const checkpoint::Payload* restart = nullptr;
-    std::function<void(const checkpoint::Payload&)> on_checkpoint;
+    std::function<void(checkpoint::Payload&&)> on_checkpoint;
 };
 
 // Копия вектора истории в буфер решателя: пустой источник -- пропуск (EulerSolver),
@@ -937,7 +937,7 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
 //   - cfg.checkpoint_file непуст и checkpoint_every_steps > 0: запись каждые N шагов
 //     и финальная (останов сторожа / конец расчёта).
 void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
-                      double delta_x, RunGuard* guard)
+                      double delta_x, RunGuard* guard, const checkpoint::UserState* user_state)
 {
     detail::CheckpointHooks hooks;
     checkpoint::Payload restored;
@@ -965,10 +965,12 @@ void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t n
             checkpoint::read(prev, eff, model, nt, restored, opt);
         }
         hooks.restart = &restored;
+        if (user_state != nullptr && user_state->restore) user_state->restore(restored.user_state, restored.loop.guard_steps);
     }
     if (want_write)
     {
-        hooks.on_checkpoint = [&cfg, &model, ntotal](const checkpoint::Payload& pl) {
+        hooks.on_checkpoint = [&cfg, &model, ntotal, user_state](checkpoint::Payload&& pl) {
+            if (user_state != nullptr && user_state->save) pl.user_state = user_state->save();
             checkpoint::write(cfg.checkpoint_file, cfg, model, ntotal, pl);
         };
     }

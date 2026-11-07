@@ -33,12 +33,19 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
+#include <fstream>
+#include <stdexcept>
+#include <type_traits>
 #include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <unistd.h> // fsync
 
 namespace guo2019
 {
@@ -83,6 +90,9 @@ struct MonitorOptions
     bool stop_on_outcome = true; // останавливать расчёт при определённом исходе или t >= t_max
     RunGuard* guard = nullptr;   // для request_stop
     double wp_radius = 0.0;      // круг для w_p; <= 0 -- sc.spec.wp_radius (30 мм, ТЗ Guo 2019 §6.1; scaled 7.5 мм)
+    // Продолжение из чекпоинта: monitor.csv не перезаписывается в конструкторе; restore_state() оставляет в нём
+    // строки до шага чекпоинта и дописывает дальше (без restore_state -- файл заводится заново на первом шаге).
+    bool restart = false;
 };
 
 // Все накопленные величины (читаются после finalize()).
@@ -183,6 +193,80 @@ inline double since(clock::time_point t0)
     return std::chrono::duration<double>(clock::now() - t0).count();
 }
 
+template <class T>
+struct is_std_vector : std::false_type
+{
+};
+template <class T, class A>
+struct is_std_vector<std::vector<T, A>> : std::true_type
+{
+};
+
+// Побайтовая (де)сериализация состояния монитора для блока USER чекпоинта: тривиально копируемые
+// значения -- как есть, std::string и std::vector -- длина u64 и элементы.
+struct StateOut
+{
+    std::string b;
+    template <class T>
+    void operator()(T& v)
+    {
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            std::uint64_t n = v.size();
+            (*this)(n);
+            b.append(v);
+        }
+        else if constexpr (is_std_vector<T>::value)
+        {
+            std::uint64_t n = v.size();
+            (*this)(n);
+            for (auto& e : v) (*this)(e);
+        }
+        else
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "состояние монитора: неподдерживаемый тип");
+            b.append(reinterpret_cast<const char*>(&v), sizeof(T));
+        }
+    }
+};
+
+struct StateIn
+{
+    const std::string& b;
+    std::size_t pos = 0;
+    void take(void* dst, std::size_t n)
+    {
+        if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+        std::memcpy(dst, b.data() + pos, n);
+        pos += n;
+    }
+    template <class T>
+    void operator()(T& v)
+    {
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            std::uint64_t n = 0;
+            (*this)(n);
+            if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+            v.assign(b.data() + pos, static_cast<std::size_t>(n));
+            pos += static_cast<std::size_t>(n);
+        }
+        else if constexpr (is_std_vector<T>::value)
+        {
+            std::uint64_t n = 0;
+            (*this)(n);
+            if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+            v.resize(static_cast<std::size_t>(n));
+            for (auto& e : v) (*this)(e);
+        }
+        else
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "состояние монитора: неподдерживаемый тип");
+            take(&v, sizeof(T));
+        }
+    }
+};
+
 } // namespace mon_detail
 
 class GuoShotMonitor
@@ -252,6 +336,18 @@ public:
 
         if (!opt_.csv_path.empty())
         {
+            if (opt_.restart)
+                csv_pending_ = true; // открывается в restore_state() или на первом шаге
+            else
+                open_csv_fresh();
+        }
+    }
+
+    // Новый monitor.csv с заголовком.
+    void open_csv_fresh()
+    {
+        csv_pending_ = false;
+        {
             csv_ = std::fopen(opt_.csv_path.c_str(), "w");
             if (csv_)
                 std::fprintf(csv_,
@@ -289,6 +385,12 @@ public:
         const fiber::FiberState& fb = m_.fiber;
         ++st_.steps;
         const std::size_t step = st_.steps;
+        if (csv_pending_)
+        {
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: монитор: рестарт без состояния монитора -- monitor.csv заводится заново, "
+                                 "вердикт и максимумы по шару только с шага рестарта.\n");
+            open_csv_fresh();
+        }
         st_.t_end = time;
         if (st_.dt_first <= 0.0 && dt > 0.0) st_.dt_first = dt;
         if (dt > 0.0) st_.dt_min = std::min(st_.dt_min, dt);
@@ -480,6 +582,66 @@ public:
     }
 
     const MonitorStats& stats() const { return st_; }
+
+    // ---- состояние для чекпоинта (блок USER, checkpoint::UserState) ----------------------------------
+    // Зовётся при записи чекпоинта ПОСЛЕ on_step того же шага. Заодно сбрасывает monitor.csv на диск,
+    // чтобы строки до шага чекпоинта пережили аварию.
+    std::string save_state()
+    {
+        if (csv_)
+        {
+            std::fflush(csv_);
+            fsync(fileno(csv_));
+        }
+        mon_detail::StateOut o;
+        std::uint64_t magic = kStateMagic, nt = nt_, nb = nb_;
+        std::int32_t nply = nply_;
+        std::uint8_t proj = proj_on_ ? 1 : 0;
+        o(magic);
+        o(nt);
+        o(nb);
+        o(nply);
+        o(proj);
+        state_io(o);
+        return std::move(o.b);
+    }
+
+    // После чтения чекпоинта (до первого шага). blob пуст -- состояния нет (старый чекпоинт): monitor.csv
+    // заводится заново. Иначе состояние восстанавливается побитово, а в monitor.csv остаются строки до шага
+    // чекпоинта включительно (после него -- дописываются). Несовпадение сцены или шага -- исключение.
+    void restore_state(const std::string& blob, std::size_t guard_steps)
+    {
+        if (blob.empty())
+        {
+            if (csv_pending_)
+            {
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: в чекпоинте нет состояния монитора (формат v1/v2): monitor.csv "
+                                     "заводится заново, вердикт и максимумы по шару только с шага рестарта.\n");
+                open_csv_fresh();
+            }
+            return;
+        }
+        mon_detail::StateIn in{blob};
+        std::uint64_t magic = 0, nt = 0, nb = 0;
+        std::int32_t nply = 0;
+        std::uint8_t proj = 0;
+        in(magic);
+        in(nt);
+        in(nb);
+        in(nply);
+        in(proj);
+        if (magic != kStateMagic) throw std::runtime_error("состояние монитора в чекпоинте: неизвестный формат");
+        if (nt != nt_ || nb != nb_ || nply != nply_ || (proj != 0) != proj_on_)
+            throw std::runtime_error("состояние монитора в чекпоинте от другой сцены (частицы, бусины, слои или проекция)");
+        state_io(in);
+        if (in.pos != blob.size()) throw std::runtime_error("состояние монитора в чекпоинте: лишние байты");
+        if (st_.steps != guard_steps)
+            throw std::runtime_error("состояние монитора в чекпоинте: шагов " + std::to_string(st_.steps) +
+                                     ", у сторожа " + std::to_string(guard_steps));
+        restored_ = true;
+        if (csv_pending_) reopen_csv_after_restart();
+    }
+    bool state_restored() const { return restored_; }
     double ball_mass() const { return ball_mass_; }
     double ball_Reff() const { return sc_.R_eff; }
     double ball_z_c0() const { return sc_.z_c0; }
@@ -1106,6 +1268,116 @@ private:
         st_.proj_slots_max = std::max(st_.proj_slots_max, n_slots);
     }
 
+    static constexpr std::uint64_t kStateMagic = 0x3130'4e4f'4d4f'5547ull; // "GUOMON01"
+
+    // Все поля, меняющиеся после конструктора (накопленные величины, исход, окно проекции, последняя строка).
+    // Величины конструктора (x0 зажатых, массы, z0, U_int0, пакет слоёв) -- от исходной сцены, она та же.
+    // ДОБАВЛЯЯ поле в MonitorStats или изменяемый член класса -- добавить его сюда.
+    template <class F>
+    void state_io(F& f)
+    {
+        MonitorStats& s = st_;
+        f(s.steps), f(s.t_end), f(s.dt_first), f(s.dt_min);
+        f(s.E_tot_0), f(s.E_tot_max), f(s.E_tot_end);
+        f(s.KE_s_0), f(s.KE_s_end), f(s.KE_p_end), f(s.KE_f_end), f(s.U_b_end), f(s.U_int_end);
+        f(s.z_c_end), f(s.v_z_end);
+        f(s.F_s_z_max), f(s.F_s_z_max_t), f(s.F_f_z_max), f(s.F_f_z_max_t), f(s.n_clamped_s), f(s.n_clamped_f);
+        f(s.n_bonds_0), f(s.n_bonds_end), f(s.n_broken_v), f(s.n_broken_h);
+        f(s.t_first_break), f(s.w_f_at_first_break), f(s.w_f_max), f(s.w_p_max), f(s.w_f_end);
+        f(s.eps_p_max), f(s.W_p_total), f(s.n_bonds_plastic);
+        f(s.n_plies), f(s.n_broken_v_p), f(s.n_broken_h_p), f(s.t_first_break_p), f(s.w_f_at_first_break_p);
+        f(s.pullin_at_first_break_p), f(s.pullin_end_p), f(s.w_f_end_p);
+        f(s.contacts_per_crossing_inter), f(s.contacts_per_crossing_inter_step1), f(s.max_delta_ff_inter_d);
+        f(s.ff_intra_initial), f(s.ff_inter_initial), f(s.ff_intra_step1), f(s.ff_inter_step1);
+        f(s.ff_intra_last), f(s.ff_inter_last), f(s.ply_order_violations), f(s.ply_order_violations_step1);
+        f(s.t_ply_order_first), f(s.ply_gap_min), f(s.ply_gap_max);
+        f(s.m_ej), f(s.m_ej_max), f(s.n_tunnel), f(s.max_delta_ff_d), f(s.max_delta_fs_d);
+        f(s.contacts_per_crossing), f(s.contacts_per_crossing_step1), f(s.ff_contacts_initial), f(s.ff_delta_d_initial);
+        f(s.ff_contacts_step1), f(s.ff_delta_d_step1), f(s.ff_contacts_max);
+        f(s.plate_vmax_step1), f(s.bead_vmax_step1);
+        f(s.clamp_violations), f(s.clamp_first_violation), f(s.mass_violations);
+        f(s.outcome), f(s.V_R), f(s.t_outcome), f(s.stopped_by_monitor);
+        f(s.monitor_wall_s);
+        f(s.proj_resid_max), f(s.proj_resid_rel_max), f(s.W_proj_pos_max), f(s.proj_slots_max);
+
+        f(last_bonds_), f(broken_v_), f(broken_h_), f(cnt_), f(brk_pv_), f(brk_ph_), f(pullin_cur_);
+        f(t_pos_), f(pw_), f(last_written_);
+        Row& r = last_;
+        f(r.step), f(r.t), f(r.dt), f(r.z_c), f(r.v_z), f(r.KE_s), f(r.KE_p), f(r.KE_f), f(r.U_b), f(r.U_int), f(r.E_tot);
+        f(r.Fs), f(r.Ff), f(r.n_bonds), f(r.n_broken_v), f(r.n_broken_h), f(r.w_f), f(r.w_p), f(r.pv), f(r.ph), f(r.wp);
+
+        // окно исхода (deque) и пластическая работа по связям (unordered_map, в файле -- по возрастанию ключа)
+        std::vector<double> h;
+        std::vector<std::uint64_t> keys;
+        std::vector<double> vals;
+        if constexpr (std::is_same_v<F, mon_detail::StateOut>)
+        {
+            for (const auto& e : hist_) h.push_back(e.first), h.push_back(e.second);
+            for (const auto& kv : wp_bond_) keys.push_back(kv.first);
+            std::sort(keys.begin(), keys.end());
+            for (std::uint64_t k : keys) vals.push_back(wp_bond_.at(k));
+        }
+        f(h), f(keys), f(vals);
+        if constexpr (!std::is_same_v<F, mon_detail::StateOut>)
+        {
+            if (h.size() % 2 != 0 || keys.size() != vals.size())
+                throw std::runtime_error("состояние монитора в чекпоинте повреждено");
+            hist_.clear();
+            for (std::size_t i = 0; i < h.size(); i += 2) hist_.emplace_back(h[i], h[i + 1]);
+            wp_bond_.clear();
+            for (std::size_t i = 0; i < keys.size(); ++i) wp_bond_[keys[i]] = vals[i];
+        }
+    }
+
+    // monitor.csv после рестарта с состоянием: заголовок и строки с шагом <= st_.steps (полные: столько же
+    // полей, сколько в заголовке) сохраняются, дальше файл дописывается. Нет файла -- заводится заново.
+    void reopen_csv_after_restart()
+    {
+        csv_pending_ = false;
+        std::ifstream in(opt_.csv_path);
+        if (!in)
+        {
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: монитор: нет %s -- строки до шага рестарта потеряны.\n",
+                         opt_.csv_path.c_str());
+            open_csv_fresh();
+            return;
+        }
+        std::vector<std::string> keep;
+        std::string line;
+        std::size_t ncomma = 0, last_step = 0, dropped_tail = 0;
+        while (std::getline(in, line))
+        {
+            if (keep.empty())
+            {
+                ncomma = static_cast<std::size_t>(std::count(line.begin(), line.end(), ','));
+                keep.push_back(line);
+                continue;
+            }
+            char* end = nullptr;
+            const unsigned long long st = std::strtoull(line.c_str(), &end, 10);
+            const bool full = end != line.c_str() && *end == ',' &&
+                              static_cast<std::size_t>(std::count(line.begin(), line.end(), ',')) == ncomma;
+            if (full && st <= st_.steps)
+            {
+                keep.push_back(line);
+                last_step = static_cast<std::size_t>(st);
+            }
+            else
+                ++dropped_tail;
+        }
+        in.close();
+        const std::string tmp = opt_.csv_path + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::trunc);
+            for (const auto& l : keep) out << l << '\n';
+        }
+        std::rename(tmp.c_str(), opt_.csv_path.c_str());
+        csv_ = std::fopen(opt_.csv_path.c_str(), "a");
+        std::fprintf(stderr, "монитор: состояние восстановлено на шаге %zu; monitor.csv: оставлено строк %zu (последняя -- шаг %zu), "
+                             "отброшено после чекпоинта %zu.\n", st_.steps, keep.empty() ? 0 : keep.size() - 1, last_step,
+                     dropped_tail);
+    }
+
     const GuoScene& sc_;
     const fiber::Model& m_;
     MonitorOptions opt_;
@@ -1133,6 +1405,8 @@ private:
     double t_pos_ = -1.0;
 
     std::FILE* csv_ = nullptr;
+    bool csv_pending_ = false; // restart: monitor.csv ещё не открыт (ждём restore_state или первого шага)
+    bool restored_ = false;    // состояние восстановлено из чекпоинта
     bool proj_on_ = false; // режим проекции нормального контакта включён в конфиге сцены
     ProjWindow pw_;
     Row last_;

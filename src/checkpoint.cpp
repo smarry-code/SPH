@@ -25,8 +25,9 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
 // Версия 2: в CONF добавлены поля проекции скорости контакта (в конце списка), в конце файла
-// блок PROJ (таблица тёплого старта). Читаются обе версии (v1: новых полей и PROJ нет).
-constexpr std::uint32_t kFormatVersion = 2;
+// блок PROJ (таблица тёплого старта). Версия 3: после PROJ блок USER (непрозрачное состояние
+// вызывающего, Payload::user_state). Читаются все три (v1: новых полей, PROJ и USER нет; v2: нет USER).
+constexpr std::uint32_t kFormatVersion = 3;
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -59,6 +60,7 @@ constexpr std::uint32_t kTagLoop = make_tag('L', 'O', 'O', 'P');
 constexpr std::uint32_t kTagHist = make_tag('H', 'I', 'S', 'T');
 constexpr std::uint32_t kTagEnrg = make_tag('E', 'N', 'R', 'G');
 constexpr std::uint32_t kTagProj = make_tag('P', 'R', 'O', 'J');
+constexpr std::uint32_t kTagUser = make_tag('U', 'S', 'E', 'R');
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error("чекпоинт: " + msg); }
 
@@ -552,6 +554,13 @@ void write_proj(Writer& w, const Payload& p)
     w.end_block(b);
 }
 
+void write_user(Writer& w, const Payload& p)
+{
+    const size_t b = w.begin_block(kTagUser);
+    w.str(p.user_state);
+    w.end_block(b);
+}
+
 // Проверка длины вектора истории: 0 (нет истории) или n.
 void check_hist_len(const std::vector<double>& v, size_t n, const char* name)
 {
@@ -604,6 +613,7 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     write_hist(w, payload.hist);
     write_energy(w, payload);
     write_proj(w, payload);
+    write_user(w, payload);
     w.u32(crc32(w.buf().data(), w.buf().size()));
 
     const std::string tmp = temp_path(path);
@@ -651,8 +661,8 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     Reader hr(data.data() + 8, kHeader - 8);
     const std::uint32_t ver = hr.u32(), fdim = hr.u32(), flags = hr.u32(), dsz = hr.u32();
-    if (ver != 1 && ver != kFormatVersion)
-        fail("версия формата " + std::to_string(ver) + " не поддерживается (поддерживаются 1 и " +
+    if (ver < 1 || ver > kFormatVersion)
+        fail("версия формата " + std::to_string(ver) + " не поддерживается (поддерживаются 1.." +
              std::to_string(kFormatVersion) + ")");
     if (fdim != dim)
         fail("SPH_DIM чекпоинта (" + std::to_string(fdim) + ") не равен SPH_DIM сборки (" + std::to_string(dim) + ")");
@@ -828,6 +838,12 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
             e.P = rj.f64();
         }
         rj.expect_end("PROJ");
+    }
+    if (ver >= 3)
+    {
+        Reader ru = top.block(kTagUser, "USER");
+        pl.user_state = ru.str();
+        ru.expect_end("USER");
     }
     top.expect_end("файл");
 
