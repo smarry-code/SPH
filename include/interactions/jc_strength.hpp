@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <set>
 #include <stdexcept>
 
 #include "materials.hpp"
@@ -37,7 +38,10 @@ constexpr jc::Geom jc_build_geom()
 }
 
 // Один шаг прочности JC для частицы i. Порядок:
-//   1) T = Tr + u/cp (heating = Energy, §2.3), sys.T[i];
+//   1) T: heating = Energy -- T = Tr + u/cp (§2.3), пишется в sys.T[i];
+//      heating = TaylorQuinney (§2.4) -- T = sys.T[i] (температура с начала шага,
+//      явная схема), u не трогается; после radial return (п. 4)
+//      sys.T[i] += chi*Y*Δε_p/(rho*cp);
 //   2) edot: Total -- эквивалентная скорость полной девиаторной деформации из
 //      sys.exx..eyz (в осесимметрии sys.ezz = vr/r: finalize_solid пишет
 //      окружную компоненту в f.ezz, single_step переносит её в sys.ezz);
@@ -55,12 +59,26 @@ inline void apply_jc_strength(const Materials& mats, ParticleSystem& sys, std::s
 {
     constexpr jc::Geom geom = jc_build_geom();
     const JcMaterial& m = jc_material(mats, sys.itype[i]);
-    if (m.th.heating != jc::Heating::Energy)
-        throw std::runtime_error("JC: heating = TaylorQuinney not implemented");
+    const bool tq = m.th.heating == jc::Heating::TaylorQuinney;
 
-    // 1) Температура из внутренней энергии.
-    const double T = m.s.Tr + sys.u[i] / m.th.cp;
-    sys.T[i] = T;
+    // Разрушение без собственной Tm_f берёт Tm прочности: говорим об этом один раз на itype.
+    if (jc::jc_damage_active(m.d) && m.d.Tm_f <= 0.0)
+    {
+        static std::set<int> warned_tm;
+        if (warned_tm.insert(static_cast<int>(sys.itype[i])).second)
+            std::fprintf(stderr, "JC itype %d: Tm_f <= 0, для разрушения берётся Tm прочности = %g\n",
+                         static_cast<int>(sys.itype[i]), m.s.Tm);
+    }
+
+    // 1) Температура: из внутренней энергии (Energy) или накопленная (Тейлор-Куинни).
+    double T;
+    if (tq)
+        T = sys.T[i];
+    else
+    {
+        T = m.s.Tr + sys.u[i] / m.th.cp;
+        sys.T[i] = T;
+    }
 
     // 2) Скорость деформации.
     double edot;
@@ -94,6 +112,7 @@ inline void apply_jc_strength(const Materials& mats, ParticleSystem& sys, std::s
         sys.sxy[i] *= r.scale; sys.syz[i] *= r.scale; sys.sxz[i] *= r.scale;
     }
     sys.e_pl[i] += r.d_eps_p;
+    if (tq && r.d_eps_p > 0.0 && sys.rho[i] > 0.0) sys.T[i] += m.th.chi * r.Y * r.d_eps_p / (sys.rho[i] * m.th.cp);
     if (!r.converged)
     {
         static bool warned = false; // одно предупреждение на запуск

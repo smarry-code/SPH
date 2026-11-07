@@ -377,6 +377,30 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             }
             cfg.k_solid_elements = value;
         }
+        else if (key == "jc_heating")
+        {
+            if (value == "energy") cfg.jc_heating = 0;
+            else if (value == "taylor_quinney") cfg.jc_heating = 1;
+            else throw std::runtime_error("jc_heating: допустимы energy и taylor_quinney, получено '" + value + "'");
+        }
+        else if (key == "jc_chi")
+        {
+            std::size_t pos = 0;
+            double v = 0.0;
+            try
+            {
+                v = std::stod(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            if (pos == 0 || pos != value.size() || !(v >= 0.0 && v <= 1.0))
+            {
+                throw std::runtime_error("jc_chi: ожидается число в [0, 1], получено '" + value + "'");
+            }
+            cfg.jc_chi = v;
+        }
 #ifdef SPH_ENERGY_LOG
         else if (key == "energy_log_every")
         {
@@ -395,6 +419,14 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 #endif
     }
     in.close();
+
+    // Нагрев JC (itype 12-15) -- в таблицу материалов. Рестарт: cfg и при нём собирается
+    // этим же разбором; чекпоинт лишь сверяет jc_heating/jc_chi (visit_cfg).
+    for (JcMaterial& m : cfg.mats.jc)
+    {
+        m.th.heating = cfg.jc_heating == 1 ? jc::Heating::TaylorQuinney : jc::Heating::Energy;
+        m.th.chi = cfg.jc_chi;
+    }
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)

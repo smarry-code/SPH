@@ -318,6 +318,8 @@ void visit_cfg(C& c, F&& f)
     f("k_mass_scale", c.k_mass_scale, false);
     f("k_monitor_nid", c.k_monitor_nid, false);
     f("k_solid_elements", c.k_solid_elements, false);
+    f("jc_heating", c.jc_heating, false);
+    f("jc_chi", c.jc_chi, false);
 #ifdef SPH_ENERGY_LOG
     f("energy_log_every", c.energy_log_every, true);
     f("energy_log_file", c.energy_log_file, true);

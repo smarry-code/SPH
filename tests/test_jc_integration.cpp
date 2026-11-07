@@ -12,7 +12,7 @@
 // через effective_shear_modulus (0 для разрушенной частицы, как в решателе).
 // Затем s += ds*dt и один вызов apply_material_strength. Давление и энергия
 // задаются тестом (p, u), уравнения состояния и энергии не интегрируются.
-// I1 -- сборка SPH_DIM=1, I2-I8 -- SPH_DIM=3, I5 -- только при SPH_ENERGY_LOG.
+// I1 -- сборка SPH_DIM=1, I2-I9 -- SPH_DIM=3, I5 -- только при SPH_ENERGY_LOG.
 #include "interactions/postprocessing.hpp"
 
 #include "eos.hpp"
@@ -64,13 +64,13 @@ ParticleSystem make_sys(std::size_t n, int itype)
 
 // Шаг драйвера: закон Гука без поворота + apply_material_strength.
 // dt, e* уже записаны в sys.exx..; drho = -rho*tr(e).
-void step(ParticleSystem& sys, double dt, double* acc = nullptr)
+void step(ParticleSystem& sys, double dt, double* acc = nullptr, const SimulationConfig& c = cfg())
 {
     const std::size_t n = sys.size();
     std::vector<double> drho(n, 0.0);
     for (std::size_t i = 0; i < n; ++i)
     {
-        const double G = effective_shear_modulus(cfg().mats, sys, i);
+        const double G = effective_shear_modulus(c.mats, sys, i);
         if constexpr (dim == 1)
         {
             drho[i] = -sys.rho[i] * sys.exx[i];
@@ -92,10 +92,10 @@ void step(ParticleSystem& sys, double dt, double* acc = nullptr)
         }
     }
 #ifdef SPH_ENERGY_LOG
-    interactions::apply_material_strength(cfg(), sys, n, dt, drho, acc);
+    interactions::apply_material_strength(c, sys, n, dt, drho, acc);
 #else
     (void)acc;
-    interactions::apply_material_strength(cfg(), sys, n, dt, drho);
+    interactions::apply_material_strength(c, sys, n, dt, drho);
 #endif
 }
 
@@ -227,6 +227,55 @@ void test_i4()
           "при T >= Tm девиатор = 0");
 }
 
+// ---------------------------------------------------------------- I9: нагрев Тейлора-Куинни (3D)
+// heating = TaylorQuinney: T интегрируется отдельно, u не трогается;
+// T - Tr = chi * sum(Y_k * d_eps_p,k) / (rho * cp), Y_k -- напряжение текучести
+// после шага (девиатор лежит на поверхности текучести), rho = const.
+void test_i9()
+{
+    std::printf("I9 нагрев Тейлора-Куинни\n");
+    const JcMaterial& m = mat(12);
+    const double exy = 50.0, dt = 1.0e-5;
+    for (int variant = 0; variant < 2; ++variant)
+    {
+        const double chi = variant == 0 ? 0.9 : 0.0;
+        SimulationConfig c;
+        for (JcMaterial& jm : c.mats.jc)
+        {
+            jm.th.heating = jc::Heating::TaylorQuinney;
+            jm.th.chi = chi;
+        }
+        ParticleSystem sys = make_sys(1, 12);
+        sys.u[0] = 123.0; // в режиме TQ энергия не влияет на T и не меняется
+        const double u0 = sys.u[0];
+        double sum_Yd = 0.0, T_prev = sys.T[0];
+        bool monotone = true;
+        for (int k = 0; k < 300; ++k)
+        {
+            const double ep_before = sys.e_pl[0];
+            sys.exy[0] = exy;
+            step(sys, dt, nullptr, c);
+            sum_Yd += sigma_eq3(sys, 0) * (sys.e_pl[0] - ep_before);
+            if (sys.T[0] < T_prev) monotone = false;
+            T_prev = sys.T[0];
+        }
+        const double dT_ref = chi * sum_Yd / (sys.rho[0] * m.th.cp);
+        const std::string tag = "chi=" + std::to_string(chi) + ": ";
+        check(sys.e_pl[0] > 0.01, tag + "пластическая деформация накоплена");
+        check(sys.u[0] == u0, tag + "u не меняется");
+        check(monotone, tag + "T не убывает");
+        if (variant == 0)
+        {
+            check(dT_ref > 0.0 && near_rel(sys.T[0] - m.s.Tr, dT_ref, 1.0e-9),
+                  tag + "T - Tr = chi*sum(Y*d_eps_p)/(rho*cp), dT=" + std::to_string(sys.T[0] - m.s.Tr));
+        }
+        else
+        {
+            check(sys.T[0] == m.s.Tr, tag + "T == Tr точно");
+        }
+    }
+}
+
 #ifdef SPH_ENERGY_LOG
 void test_i5()
 {
@@ -334,6 +383,7 @@ int main()
         test_i2();
         test_i3();
         test_i4();
+        test_i9();
 #ifdef SPH_ENERGY_LOG
         test_i5();
 #endif

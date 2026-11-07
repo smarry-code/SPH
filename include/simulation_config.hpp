@@ -136,6 +136,13 @@ struct SimulationConfig
     std::string energy_log_file = "energy_log.csv";
 #endif
 
+    // --- Нагрев Джонсона-Кука (itype 12-15), fiber/jc-implementation-plan.md §2.4 ---
+    // jc_heating: 0 = energy (T = Tr + u/cp), 1 = taylor_quinney (T интегрируется
+    // отдельно: dT = chi*Y*d_eps_p/(rho*cp)). Применяется к cfg.mats.jc[*].th в
+    // конце parse_sph_config. jc_chi -- доля пластической работы, идущая в тепло.
+    int jc_heating = 0;
+    double jc_chi = 0.9;
+
 #ifdef SPH_CONTACT_STATS
     // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
     // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
@@ -175,6 +182,7 @@ inline void SimulationConfig::apply_defaults()
     k_file.clear();  k_mode = "solid";  k_parts_file.clear();
     k_length_scale = 1.0;  k_mass_scale = 1.0;  k_monitor_nid = -1;
     k_solid_elements = "skip";
+    jc_heating = 0;  jc_chi = 0.9;
 #ifdef SPH_ENERGY_LOG
     energy_log_every = 0;  energy_log_file = "energy_log.csv";
 #endif
