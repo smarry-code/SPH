@@ -473,6 +473,26 @@ void test_hoop_pressure_work()
     check(fp[0].drho == f0[0].drho, "G3 drho от p не зависит");
 }
 
+// --- G4. Масса кольца для учёта энергии ------------------------------------
+// energy_mass = 2*pi*r0*m, где r0 -- начальный радиус (init_reference_radius),
+// а не текущий: масса кольца постоянна, даже когда частица смещается по r.
+void test_energy_mass_ring()
+{
+    std::printf("\n[G4] energy_mass = 2*pi*r0*m (r0 фиксирован)\n");
+    ParticleSystem sys;
+    sys.resize(2);
+    sys.x[0][0] = 1.0e-3;  sys.x[0][1] = 4.0e-3;
+    sys.mass[0] = 2.0;     sys.mass[1] = 3.0;
+    sys.init_reference_radius(2);
+    sys.x[0][0] = 2.5e-3;  sys.x[0][1] = 7.0e-3; // сдвиг: r0 меняться не должен
+
+    constexpr double pi = 3.14159265358979323846;
+    const double e0 = 2.0 * pi * 1.0e-3 * 2.0, e1 = 2.0 * pi * 4.0e-3 * 3.0;
+    check(sys.r0[0] == 1.0e-3 && sys.r0[1] == 4.0e-3, "G4a r0 не изменился после сдвига x");
+    check(near_rel(energy_mass(sys, 0), e0, e0, 1e-14), "G4b energy_mass(0) = 2*pi*r0*m");
+    check(near_rel(energy_mass(sys, 1), e1, e1, 1e-14), "G4c energy_mass(1) = 2*pi*r0*m");
+}
+
 } // namespace
 
 int main()
@@ -486,6 +506,7 @@ int main()
     test_shear_source_at_rest();
     test_search_threads();
     test_hoop_pressure_work();
+    test_energy_mass_ring();
 
     std::printf("\n=== %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);
