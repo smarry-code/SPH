@@ -115,6 +115,9 @@ std::vector<Blob> snapshot(const CkptScene& sc, double time)
     add_vec(o, "solid.e_pl", s.e_pl, n);
     add_vec(o, "solid.D", s.D, n);
     add_vec(o, "solid.dp", s.dp, n);
+    add_vec(o, "solid.T", s.T, n);
+    add_vec(o, "solid.edot", s.edot, n);
+    add_vec(o, "solid.r0", s.r0, n);
 
     const fiber::FiberState& f = sc.model.fiber;
     for (std::size_t d = 0; d < dim; ++d)
@@ -186,7 +189,10 @@ fs::path scratch_root(const char* tag)
 
 // Общая часть кейсов 1 и 2: A -- 2N шагов подряд; B -- N шагов с чекпоинтом, затем рестарт.
 // Возвращает число связей в A на шаге N (до рестарта оно же) для проверки разрыва.
-void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_break)
+//   solid_itype/extra_ic -- как в build_checkpoint_scene (по умолчанию прежняя сцена);
+//   check_heated -- сообщить, нагрелись ли частицы JC (T > Tr) в прогоне A (JC + TQ).
+void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_break, int solid_itype = 10,
+               const std::string& extra_ic = "", bool check_heated = false)
 {
     e2e::ScopedWorkDir wd("sph_ckpt", tag);
     const fs::path root = wd.dir();
@@ -195,7 +201,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     // Прогон A: непрерывный 2N. Заодно запомним число связей на шаге N отдельным прогоном A_N.
     std::size_t bonds_initial = 0, bonds_at_N = 0;
     {
-        CkptScene sc = build_checkpoint_scene((root / "probe").string(), eps_break, ode_solver);
+        CkptScene sc = build_checkpoint_scene((root / "probe").string(), eps_break, ode_solver, solid_itype, extra_ic);
         bonds_initial = sc.model.topology.bonds.size();
         double time = 0.0;
         e2e::check(run_steps(sc, N, time), "зонд: N шагов выполнены");
@@ -211,15 +217,24 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
 
     std::vector<Blob> snap_a;
     {
-        CkptScene sc = build_checkpoint_scene((root / "A").string(), eps_break, ode_solver);
+        CkptScene sc = build_checkpoint_scene((root / "A").string(), eps_break, ode_solver, solid_itype, extra_ic);
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "A: 2N шагов выполнены");
         snap_a = snapshot(sc, time);
+        if (check_heated)
+        {
+            const double Tr = jc_material(sc.cfg.mats, solid_itype).s.Tr;
+            std::size_t hot = 0;
+            for (std::size_t i = 0; i < sc.ntotal; ++i)
+                if (sc.model.solid.T[i] > Tr) ++hot;
+            e2e::note("нагрев JC: частиц с T > Tr = " + std::to_string(hot) + " из " + std::to_string(sc.ntotal) +
+                      (hot == 0 ? " (пластики нет: тест проверяет побитовую сохранность T/edot/r0)" : ""));
+        }
     }
 
     // Прогон B, часть 1: N шагов, чекпоинт на шаге N (периодический = финальный).
     {
-        CkptScene sc = build_checkpoint_scene((root / "B1").string(), eps_break, ode_solver);
+        CkptScene sc = build_checkpoint_scene((root / "B1").string(), eps_break, ode_solver, solid_itype, extra_ic);
         sc.cfg.checkpoint_file = ck;
         sc.cfg.checkpoint_every_steps = N;
         double time = 0.0;
@@ -230,7 +245,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     // Часть 2: новая сцена в отдельном каталоге, рестарт, лимит 2N (ПОЛНЫЙ).
     std::vector<Blob> snap_b;
     {
-        CkptScene sc = build_checkpoint_scene((root / "B2").string(), eps_break, ode_solver);
+        CkptScene sc = build_checkpoint_scene((root / "B2").string(), eps_break, ode_solver, solid_itype, extra_ic);
         sc.cfg.restart_file = ck;
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "B2: рестарт дошёл до 2N шагов");
@@ -304,6 +319,11 @@ int main()
     // 2. Разрыв связей до чекпоинта (eps_break=0.002 рвёт 4 из 6 связей за 40 шагов -- проверяется зондом)
     run_case("2a. round-trip PC, связи рвутся до шага N", [] { roundtrip("brk_pc", 0.002, 0, true); });
     run_case("2b. round-trip Euler, связи рвутся до шага N", [] { roundtrip("brk_eu", 0.002, 1, true); });
+
+    // 2c. JC 4340 + нагрев Тейлора-Куинни: T, edot, r0 переживают рестарт побитово
+    run_case("3. round-trip PC, JC 4340 + Тейлор-Куинни", [] {
+        roundtrip("rt_jc_tq", 0.5, 0, false, 12, "jc_heating = taylor_quinney\njc_chi = 0.9", true);
+    });
 
     // 3. Целостность
     run_case("3. целостность: порча байта, обрезка, неверный magic", [] {
