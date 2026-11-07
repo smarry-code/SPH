@@ -73,6 +73,16 @@ inline fiber::ViscoParams fiber_bond_visco(const fiber::FiberMaterial& mat, doub
     return vp;
 }
 
+// Участок разупрочнения Δε_f ЭТОЙ связи (fiber/plan-fiber-damage.md): DEPS_F напрямую или
+// из энергии разрушения GF: Δε_f = 2·GF/(σ_u·l0) -- энергия разрыва связи не зависит от l0.
+// 0, если повреждённость выключена.
+inline double fiber_bond_damage_deps_f(const fiber::FiberMaterial& mat, double l0)
+{
+    if (!mat.damage.enabled() || !(mat.failure.sigma_u > 0.0)) return 0.0;
+    if (mat.damage.deps_f > 0.0) return mat.damage.deps_f;
+    return l0 > 0.0 ? 2.0 * mat.damage.gf / (mat.failure.sigma_u * l0) : 0.0;
+}
+
 // Критический безразмерный шаг h = omega*dt схемы проекта (предиктор -> RHS ->
 // корректор) для линейного осциллятора с демпфером Кельвина, доля критического
 // демпфирования xi: h_cr = 2 (sqrt(1+4 xi^2) - 2 xi). xi = 0 даёт 2, при
@@ -117,7 +127,7 @@ inline void compute_fiber_bond_contributions(
 #endif
 )
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
@@ -127,7 +137,7 @@ inline void compute_fiber_bond_contributions(
 #endif
     if (nbonds == 0) return;
 
-    exec.parallel_for(nbonds, [&](std::size_t k) {
+    exec.parallel_for_segments(nbonds, [&](std::size_t seg, std::size_t k) {
         const fiber::FiberBond& b = topology.bonds[k];
         const std::size_t i = b.i;
         const std::size_t j = b.j;
@@ -163,7 +173,7 @@ inline void compute_fiber_bond_contributions(
                     for (std::size_t d = 0; d < dim; ++d) vrel += (state.vx[d][j] - state.vx[d][i]) * xij[d];
                     eps_dot = (vrel / l) / b.l0;
                 }
-                const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+                const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure, mat.damage, fiber_bond_damage_deps_f(mat, b.l0));
                 const double sigma = fiber::bond_stress(law, b.st, strain, eps_dot);
 #ifdef SPH_ENERGY_LOG
                 if (sigma_clip && strain > b.st.eps_p)
@@ -192,9 +202,7 @@ inline void compute_fiber_bond_contributions(
             }
         }
 
-        int w = rhs::CpuExecutor::worker_id();
-        if (w < 0 || static_cast<std::size_t>(w) >= thread_buffers.size()) w = 0;
-        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[static_cast<std::size_t>(w)],
+        rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[seg],
                                                             kFiberBondInteractionType);
         writer.emit(i, delta_i, /*primitive_id=*/static_cast<std::uint64_t>(k), /*slot=*/0);
         writer.emit(j, delta_j, /*primitive_id=*/static_cast<std::uint64_t>(k), /*slot=*/1);
@@ -237,6 +245,28 @@ inline std::vector<fiber::FiberDelta> compute_fiber_bond(
     return output;
 }
 
+// Член минимума compute_fiber_bond_dt_limit для одной связи (формула -- в шапке
+// compute_fiber_bond_dt_limit ниже: упругий 0.8/omega_inst и, при демпфере
+// Кельвина, предел Белычко по старшей моде цепочки). Общий с dt_ref нити в
+// законах контакта (interactions/fiber_contact_law.hpp, compute_fiber_bead_dt_ref).
+inline double fiber_bond_pair_dt(const fiber::FiberMaterial& mat, double l0, double mi, double mj)
+{
+    const double A = fiber_cross_section_area(mat);
+    const double k_eff = fiber_instant_modulus(mat) * A / l0; // E1 = 0 => ровно прежнее E*A/l0
+    const double m_red = (mi * mj) / (mi + mj);
+    const double omega = std::sqrt(k_eff / m_red);
+    double dt_b = 0.8 / omega;
+    if (mat.visco.xi > 0.0 || mat.visco.eta > 0.0)
+    {
+        const double xi = mat.visco.xi > 0.0 ? mat.visco.xi
+                                             : (mat.visco.eta * A / l0) / (2.0 * std::sqrt(k_eff * m_red));
+        // Старшая мода цепочки: omega*sqrt2, xi*sqrt2 (см. шапку compute_fiber_bond_dt_limit).
+        constexpr double kSqrt2 = 1.4142135623730951;
+        dt_b = std::min(dt_b, 0.8 * fiber_kelvin_h_crit(kSqrt2 * xi) / (kSqrt2 * omega));
+    }
+    return dt_b;
+}
+
 // ----------------------------------------------------------------------
 // compute_fiber_bond_dt_limit — dt_limit связей (fiber/SPH.md, "Шаг по
 // времени"; fiber/PLAN.md §3.7):
@@ -277,23 +307,7 @@ inline double compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fi
         [&](std::size_t k) -> double {
             const fiber::FiberBond& b = topology.bonds[k];
             const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
-            const double A = fiber_cross_section_area(mat);
-            const double k_eff = fiber_instant_modulus(mat) * A / b.l0; // E1 = 0 => ровно прежнее E*A/l0
-            const double mi = state.mass[b.i];
-            const double mj = state.mass[b.j];
-            const double m_red = (mi * mj) / (mi + mj);
-            const double omega = std::sqrt(k_eff / m_red);
-            double dt_b = 0.8 / omega;
-            if (mat.visco.xi > 0.0 || mat.visco.eta > 0.0)
-            {
-                const double xi = mat.visco.xi > 0.0
-                                      ? mat.visco.xi
-                                      : (mat.visco.eta * A / b.l0) / (2.0 * std::sqrt(k_eff * m_red));
-                // Старшая мода цепочки: omega*sqrt2, xi*sqrt2 (см. шапку функции).
-                constexpr double kSqrt2 = 1.4142135623730951;
-                dt_b = std::min(dt_b, 0.8 * fiber_kelvin_h_crit(kSqrt2 * xi) / (kSqrt2 * omega));
-            }
-            return dt_b;
+            return fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
         },
         [](double a, double b2) { return std::min(a, b2); });
 }

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,6 +28,8 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
     {
         throw std::runtime_error("Не удалось открыть файл для вывода данных");
     }
+    // Отладка расхождения траекторий: SPH_FRAME_PRECISION=<n> -- число значащих цифр кадра (см. fiber_output.cpp).
+    if (const char* p = std::getenv("SPH_FRAME_PRECISION")) file.precision(std::atoi(p));
 
     // Запись заголовка
     /*file << "SPH Simulation Output\n";

@@ -138,6 +138,14 @@
 //    встраивать проверку в parse_sph_config избыточно, т.к. на этапе разбора
 //    конфигурации ещё не построен список "реально используемых" Solid-частиц
 //    в удобной для этой проверки форме.
+// 7. Закон нормальной силы (fiber/plan-fiber-contact-types.md, этап 1;
+//    interactions/fiber_contact_law.hpp): ключ fiber_solid_contact_type,
+//    0 = Герц (прежний код, побитово), 1-3 -- contact::penalty_force на g, pr
+//    из fiber_solid_pair_inputs. Геометрия (compute_fiber_solid_contact_geometry)
+//    общая и скоростей не читает; при типе 0 ядро скоростей не читает вовсе.
+//    Предел шага типов 1-3 -- минимум res.dt_limit по слотам на primitive
+//    (FiberSolidContactSearchResult::pair_dt_limit), заполненным тем же
+//    расчётом, что и сила.
 // ============================================================================
 #include <algorithm>
 #include <array>
@@ -146,12 +154,16 @@
 #include <cstdint>
 #include <limits>
 #include <set>
+#include <stdexcept>
 #include <vector>
 #include <iostream>
 
+#include "contact_force.hpp"
 #include "fiber/fiber_system.hpp"
+#include "interactions/fiber_contact.hpp"        // fiber_contact_side_inv_mass
 #include "interactions/fiber_contact_common.hpp" // kFiberContactSnapEta, fiber_max_current_bond_length
-#include "interactions/solid_contact.hpp"        // solid_contact_radius
+#include "interactions/fiber_contact_law.hpp"    // FiberContactStepParams, fiber_penalty_force
+#include "interactions/solid_contact.hpp"        // solid_contact_radius, solid_contact_pair_dt_ref
 #include "interactions/solid_sph.hpp"            // SolidDelta
 #include "materials.hpp"                         // elastic_by_itype
 #include "param.hpp"
@@ -160,6 +172,7 @@
 #include "rhs/cpu_executor.hpp"
 #include "rhs/spatial_index.hpp"
 #include "rhs/types.hpp"
+#include "simulation_config.hpp"
 
 namespace interactions
 {
@@ -204,7 +217,7 @@ struct FiberSolidFrictionContact
     rhs::index_t s = 0;
     double lambda = 0.0; // доля нити на b (для точечного 0)
     double n[dim] = {};  // от нити к Solid, как в геометрии
-    double N = 0.0;      // нормальная сила Герца (geom.F), >= 0
+    double N = 0.0;      // нормальная сила (Герц geom.F или закон 1-3), >= 0
     double mu = 0.0;
 };
 
@@ -294,6 +307,9 @@ struct FiberSolidContactSearchResult
     std::vector<double> sx[dim];
     rhs::SpatialIndex<dim> index;
     std::vector<std::pair<rhs::index_t, rhs::index_t>> pairs;
+    // Предел шага на primitive (типы 1-3, FiberContactStepParams::pair_dt_limit):
+    // заполняет ядро, минимум берёт compute_fiber_solid_contact_dt_limit.
+    std::vector<double> pair_dt_limit;
 };
 
 // ----------------------------------------------------------------------
@@ -560,6 +576,86 @@ inline FiberSolidContactGeometry compute_fiber_solid_contact_geometry(
 }
 
 // ----------------------------------------------------------------------
+// fiber_solid_pair_inputs -- g, pr пары для законов 1-3 (§2 плана):
+//   n от нити к Solid (geom.n); g.p = delta = r_f + r_s - D;
+//   v_q = (1-lambda) v_a + lambda v_b (точка: v_a); g.pdot = -n.(v_s - v_q);
+//   g.v_rel = |v_s - v_q|; g.r = r_f + r_s (всегда > 0, Swegle делит на r);
+//   m_red = m_q m_s/(m_q+m_s), m_q = 1/fiber_contact_side_inv_mass;
+//   g_eff = G_f G_s/(G_f+G_s), G_f = E_a/(2(1+nu_a)), G_s по itype (0 -> 0);
+//   r_eff = R_star; c_pair = min(sqrt(E_a/rho_a), sys.c[s]);
+//   dt_ref = min(dt_ref нити, solid_contact_pair_dt_ref).
+// Материал нити -- бусины a (решение 4). Скорости fb.vx и sys.vx в момент
+// вызова обе в фазе предиктора (solver.predict до single_step). sys.c записан
+// в конце single_step; sys.hsml к этому моменту уже обновлён
+// update_smoothing_length, тогда как Solid-Solid видел прежний h -- мелкое
+// расхождение, сознательно не исправляется.
+// ----------------------------------------------------------------------
+inline void fiber_solid_pair_inputs(const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
+                                    const std::vector<fiber::FiberMaterial>& materials,
+                                    const FiberSolidContactPrimitive& prim, const FiberSolidContactGeometry& geom,
+                                    const FiberContactStepParams& params, contact::PairGeom& g,
+                                    contact::PairProps& pr)
+{
+    const fiber::FiberMaterial& mat_a = materials[static_cast<std::size_t>(state.material_id[prim.a])];
+    const double r_f = 0.5 * mat_a.d;
+    const double r_s = solid_contact_radius(sys, prim.s);
+    const double lambda = prim.has_b ? geom.lambda : 0.0;
+    const long long b = prim.has_b ? static_cast<long long>(prim.b) : -1;
+
+    double pdot = 0.0, v2 = 0.0;
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        const double vq = prim.has_b ? (1.0 - lambda) * state.vx[d][prim.a] + lambda * state.vx[d][prim.b]
+                                     : state.vx[d][prim.a];
+        const double vrel = sys.vx[d][prim.s] - vq;
+        pdot -= geom.n[d] * vrel;
+        v2 += vrel * vrel;
+    }
+    g.p = geom.delta;
+    g.pdot = pdot;
+    g.v_rel = std::sqrt(v2);
+    g.r = r_f + r_s;
+
+    const double m_q = 1.0 / fiber_contact_side_inv_mass(state, prim.a, b, lambda);
+    const double m_s = sys.mass[prim.s];
+    pr.m_red = m_q * m_s / (m_q + m_s);
+    pr.g_eff = fiber_contact_g_eff(fiber_shear_modulus(mat_a), shear_modulus_by_itype(mats, sys.itype[prim.s]));
+    pr.r_eff = (r_f > 0.0 && r_s > 0.0) ? (r_f * r_s) / (r_f + r_s) : 0.0;
+    pr.c_pair = std::min(fiber_sound_speed(mat_a), sys.c[prim.s]);
+    const double dt_f = fiber_side_dt_ref(*params.bead_dt_ref, prim.a, b);
+    const double dt_s = solid_contact_pair_dt_ref(*params.cfg, sys, sys.c, prim.s);
+    pr.dt_ref = std::min(dt_f, dt_s);
+}
+
+// Сила и предел шага закона 1-3 для принятого контакта (geom.contact).
+inline contact::Result fiber_solid_contact_penalty(const Materials& mats, const ParticleSystem& sys,
+                                                   const fiber::FiberState& state,
+                                                   const std::vector<fiber::FiberMaterial>& materials,
+                                                   const FiberSolidContactPrimitive& prim,
+                                                   const FiberSolidContactGeometry& geom,
+                                                   const FiberContactStepParams& params)
+{
+    contact::PairGeom g;
+    contact::PairProps pr;
+    fiber_solid_pair_inputs(mats, sys, state, materials, prim, geom, params, g, pr);
+    if (params.law.type == kFiberLawHertzDamped)
+        return fiber_hertz_damped_force(geom.F, geom.delta, g, pr, params.law.kp, params.damper_only);
+    return fiber_penalty_force(params, g, pr);
+}
+
+// Проверка входов законов 1-3 до parallel_for (исключение не должно лететь
+// из параллельной области).
+inline void fiber_solid_check_params(const FiberContactStepParams& params, const fiber::FiberState& state)
+{
+    if (params.law.type == 0) return;
+    if (params.law.type < 0 || params.law.type > kFiberLawHertzDamped)
+        throw std::invalid_argument("Fiber-Solid: тип закона вне 0..4");
+    if (params.cfg == nullptr) throw std::invalid_argument("Fiber-Solid: тип 1-4 требует params.cfg");
+    if (params.bead_dt_ref == nullptr || params.bead_dt_ref->size() != state.size())
+        throw std::invalid_argument("Fiber-Solid: тип 1-3 требует bead_dt_ref размера state.size()");
+}
+
+// ----------------------------------------------------------------------
 // compute_fiber_solid_contact_contributions -- kernel: эмитирует вклад в
 // Solid s (SolidDelta, только dv[dim] -- нет неразрывности/энергии/
 // деформации от контакта, как и Solid-Solid-Contact, interactions/
@@ -579,9 +675,10 @@ inline bool compute_fiber_solid_contact_contributions(
     const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
-    std::vector<FiberSolidFrictionContact>& friction_contacts)
+    std::vector<FiberSolidFrictionContact>& friction_contacts, const FiberContactStepParams& params = {})
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    fiber_solid_check_params(params, state);
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (fiber_buffers.size() < nworkers) fiber_buffers.resize(nworkers);
     if (solid_buffers.size() < nworkers) solid_buffers.resize(nworkers);
     for (auto& buf : fiber_buffers) buf.clear();
@@ -589,13 +686,26 @@ inline bool compute_fiber_solid_contact_contributions(
 
     const std::size_t n = primitives.size();
     friction_contacts.resize(n);
+    const bool penalty = params.law.type != 0;
+    std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
+    if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
     if (n == 0) return false;
 
-    exec.parallel_for(n, [&](std::size_t k) {
+    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberSolidFrictionContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
         if (!geom.contact) return;
+
+        // --- Нормальная сила: тип 0 -- Герц из геометрии, 1-3 -- закон -----
+        double F = geom.F;
+        if (penalty)
+        {
+            const contact::Result res = fiber_solid_contact_penalty(mats, sys, state, materials, prim, geom, params);
+            if (pair_dt) (*pair_dt)[k] = res.dt_limit;
+            F = res.fn;
+            if (!(F > 0.0)) return; // покой/разлёт: ни вкладов, ни слота трения
+        }
 
         // --- Слот для стадии трения ---------------------------------------
         const double mu = fiber_solid_friction_coefficient(
@@ -609,27 +719,25 @@ inline bool compute_fiber_solid_contact_contributions(
             slot.s = prim.s;
             slot.lambda = prim.has_b ? geom.lambda : 0.0;
             for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
-            slot.N = geom.F;
+            slot.N = F;
             slot.mu = mu;
         }
 
-        int w = rhs::CpuExecutor::worker_id();
-        if (w < 0 || static_cast<std::size_t>(w) >= fiber_buffers.size()) w = 0;
-        rhs::ContributionWriter<fiber::FiberDelta> fw(fiber_buffers[static_cast<std::size_t>(w)],
+        rhs::ContributionWriter<fiber::FiberDelta> fw(fiber_buffers[seg],
                                                         kFiberSolidContactFiberType);
-        rhs::ContributionWriter<SolidDelta> sw(solid_buffers[static_cast<std::size_t>(w)],
+        rhs::ContributionWriter<SolidDelta> sw(solid_buffers[seg],
                                                 kFiberSolidContactSolidType);
 
         const double ms = sys.mass[prim.s];
         SolidDelta ds{};
-        for (std::size_t d = 0; d < dim; ++d) ds.dv[d] = geom.F * geom.n[d] / ms;
+        for (std::size_t d = 0; d < dim; ++d) ds.dv[d] = F * geom.n[d] / ms;
         sw.emit(prim.s, ds, static_cast<std::uint64_t>(k), 0);
 
         if (!prim.has_b)
         {
             const double ma = state.mass[prim.a];
             fiber::FiberDelta da{};
-            for (std::size_t d = 0; d < dim; ++d) da.dv[d] = -geom.F * geom.n[d] / ma;
+            for (std::size_t d = 0; d < dim; ++d) da.dv[d] = -F * geom.n[d] / ma;
             fw.emit(prim.a, da, static_cast<std::uint64_t>(k), 1);
         }
         else
@@ -639,8 +747,8 @@ inline bool compute_fiber_solid_contact_contributions(
             fiber::FiberDelta da{}, db{};
             for (std::size_t d = 0; d < dim; ++d)
             {
-                da.dv[d] = -(1.0 - geom.lambda) * geom.F * geom.n[d] / ma;
-                db.dv[d] = -geom.lambda * geom.F * geom.n[d] / mb;
+                da.dv[d] = -(1.0 - geom.lambda) * F * geom.n[d] / ma;
+                db.dv[d] = -geom.lambda * F * geom.n[d] / mb;
             }
             fw.emit(prim.a, da, static_cast<std::uint64_t>(k), 1);
             fw.emit(prim.b, db, static_cast<std::uint64_t>(k), 2);
@@ -659,11 +767,11 @@ inline void compute_fiber_solid_contact_contributions(
     const rhs::CpuExecutor& exec, const Materials& mats, const ParticleSystem& sys, const fiber::FiberState& state,
     const std::vector<fiber::FiberMaterial>& materials, const std::vector<FiberSolidContactPrimitive>& primitives,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers, const FiberContactStepParams& params = {})
 {
     std::vector<FiberSolidFrictionContact> unused_slots;
     (void)compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, primitives, fiber_buffers,
-                                                     solid_buffers, unused_slots);
+                                                     solid_buffers, unused_slots, params);
 }
 
 // compute_fiber_solid_contact -- удобная обёртка: search + contributions +
@@ -687,16 +795,19 @@ inline bool compute_fiber_solid_contact(
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers, FiberSolidContactSearchResult& search,
     std::vector<fiber::FiberDelta>& fiber_delta, std::vector<SolidDelta>& solid_delta, rhs::ReduceScratch& scratch,
-    std::vector<FiberSolidFrictionContact>* friction_contacts)
+    std::vector<FiberSolidFrictionContact>* friction_contacts, const FiberContactStepParams& params = {})
 {
     build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
+    // Слот предела шага -- в search, если вызывающая сторона не дала свой.
+    FiberContactStepParams p = params;
+    if (p.pair_dt_limit == nullptr) p.pair_dt_limit = &search.pair_dt_limit;
     bool has_active_friction = false;
     if (friction_contacts)
         has_active_friction = compute_fiber_solid_contact_contributions(
-            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts);
+            exec, mats, sys, state, materials, search.primitives, fiber_buffers, solid_buffers, *friction_contacts, p);
     else
         compute_fiber_solid_contact_contributions(exec, mats, sys, state, materials, search.primitives, fiber_buffers,
-                                                   solid_buffers);
+                                                   solid_buffers, p);
     rhs::reduce_contributions_into(exec, fiber_buffers, state.size(), fiber_delta, scratch);
     rhs::reduce_contributions_into(exec, solid_buffers, ntotal, solid_delta, scratch);
     return has_active_friction;
@@ -709,14 +820,14 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
     const std::vector<fiber::FiberMaterial>& materials,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
-    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr)
+    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr, const FiberContactStepParams& params = {})
 {
     FiberSolidContactSearchResult search;
     rhs::ReduceScratch scratch;
     FiberSolidContactResult out;
     out.has_active_friction = compute_fiber_solid_contact(exec, mats, sys, ntotal, state, topology, materials,
                                                            fiber_buffers, solid_buffers, search, out.fiber_delta,
-                                                           out.solid_delta, scratch, friction_contacts);
+                                                           out.solid_delta, scratch, friction_contacts, params);
     out.primitives = std::move(search.primitives);
     return out;
 }
@@ -727,15 +838,40 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
 //     m_red = m_a*m_s/(m_a+m_s) (решение 5 в шапке файла). Считается ТОЛЬКО
 // при фактическом контакте (geom.contact, delta>0) -- как Fiber-Fiber-
 // Contact/Solid-Solid-Contact. +inf, если контактов нет.
+//
+// Типы 1-3: минимум res.dt_limit. Если params.pair_dt_limit заполнен ядром
+// на тех же primitives (размер совпадает) -- редукция по слотам; иначе тот
+// же расчёт (fiber_solid_contact_penalty) повторяется по primitive.
 // ----------------------------------------------------------------------
 inline double compute_fiber_solid_contact_dt_limit(const rhs::CpuExecutor& exec, const Materials& mats,
                                                      const ParticleSystem& sys, const fiber::FiberState& state,
                                                      const std::vector<fiber::FiberMaterial>& materials,
-                                                     const std::vector<FiberSolidContactPrimitive>& primitives)
+                                                     const std::vector<FiberSolidContactPrimitive>& primitives,
+                                                     const FiberContactStepParams& params = {})
 {
     const double kInf = std::numeric_limits<double>::max();
     const std::size_t n = primitives.size();
     if (n == 0) return kInf;
+
+    if (params.law.type != 0)
+    {
+        const std::vector<double>* slots = params.pair_dt_limit;
+        if (slots != nullptr && slots->size() == n)
+            return exec.parallel_reduce(
+                n, kInf, [&](std::size_t k) -> double { return (*slots)[k]; },
+                [](double x, double y) { return std::min(x, y); });
+        fiber_solid_check_params(params, state);
+        return exec.parallel_reduce(
+            n, kInf,
+            [&](std::size_t k) -> double {
+                const FiberSolidContactPrimitive& prim = primitives[k];
+                const FiberSolidContactGeometry geom =
+                    compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
+                if (!geom.contact) return kInf;
+                return fiber_solid_contact_penalty(mats, sys, state, materials, prim, geom, params).dt_limit;
+            },
+            [](double x, double y) { return std::min(x, y); });
+    }
 
     return exec.parallel_reduce(
         n, kInf,

@@ -49,6 +49,28 @@ struct SimulationConfig
     // меньше — оставлять паре (1-gamma)*pdot. Рабочий диапазон (0; 1.6].
     double contact_impulse_gamma = 1.0;
 
+    // --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы
+    //     нормальной силы»; include/interactions/fiber_contact_law.hpp) ---
+    // 0 = ГЕРЦ (прежнее поведение), НЕ «выключено» -- в отличие от
+    // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный, 4 - Герц + демпфер
+    // (Kp -- масштаб демпфера).
+    int    fiber_solid_contact_type          = 0;   // Fiber-Solid; 0 = Герц, не выключено
+    int    fiber_fiber_contact_type          = 0;   // Fiber-Fiber; 0 = Герц, не выключено
+    double fiber_solid_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_solid_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    double fiber_fiber_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_fiber_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    // Выталкивание типа 3 при глубоком проникании (fiber/plan-fiber-contact-laws12-fix.md;
+    // FiberContactLaw::push_tau): к pdot добавляется max(p - depth*r, 0)/tau, tau в с.
+    // tau = 0 -- выключено (побитово прежний тип 3); depth -- доля суммы радиусов пары.
+    double fiber_solid_contact_impulse_push_tau = 0.0;
+    double fiber_fiber_contact_impulse_push_tau = 0.0;
+    double fiber_contact_impulse_push_depth = 0.1;
+    double fiber_contact_impulse_push_vmax = 0.0; // предел скорости выталкивания, м/с; 0 -- без предела
+    // Множитель общего шага по времени (проверка сходимости по шагу); 1 -- без изменений,
+    // допустимо (0; 1].
+    double dt_scale = 1.0;
+
     // --- Изоляция SPH-сумм Solid по телам ---
     // При true SPH-пары реальных частиц разных тел (sys.body) отвергаются;
     // тела взаимодействуют только через Solid-Solid-Contact
@@ -98,12 +120,31 @@ struct SimulationConfig
     long long k_monitor_nid = -1;           // NID мониторной частицы; < 0 -- не задан
     std::string k_solid_elements = "skip";  // "skip" | "particles" (*ELEMENT_SOLID)
 
+    // --- Чекпоинты / рестарт (include/checkpoint.hpp) ---
+    // Настройки запуска, не физика: в чекпоинт не сериализуются и не сравниваются.
+    // Пустые/0 -- выключено, цикл побитово прежний.
+    std::string checkpoint_file;            // путь чекпоинта; пусто -- не писать
+    size_t checkpoint_every_steps = 0;      // период записи, в шагах интегрирования; 0 -- выкл.
+    std::string restart_file;               // чекпоинт для продолжения; пусто -- старт с нуля
+    bool restart_force = false;             // --force: разрешить менять физические настройки при рестарте
+
 #ifdef SPH_ENERGY_LOG
     // --- Лог механической энергии (include/energy_log.hpp) ---
     // Только в сборке с -DSPH_ENERGY_LOG=ON. energy_log_every = k > 0 -- строка
     // лога каждые k шагов (после шага интегратора), 0 -- лог выключен.
     size_t energy_log_every = 0;
     std::string energy_log_file = "energy_log.csv";
+#endif
+
+#ifdef SPH_CONTACT_STATS
+    // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
+    // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
+    // строка CSV каждые k шагов и сводка в конце; contact_hold_n -- контрфакт
+    // «удержание N» (меняет физику, только для диагностики).
+    size_t contact_stats_every = 0;
+    std::string contact_stats_file = "contact_stats.csv";
+    std::string contact_stats_summary = "contact_stats_summary.txt";
+    bool contact_hold_n = false;
 #endif
 
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
@@ -121,6 +162,11 @@ inline void SimulationConfig::apply_defaults()
     ode_solver = 0;
     sph_same_body_only = false;
     contact_force_type = 0;  contact_penalty_scale = 1.0;  contact_impulse_gamma = 1.0;
+    // Контакты нитей: 0 = Герц (не «выключено»).
+    fiber_solid_contact_type = 0;  fiber_solid_contact_penalty_scale = 1.0;  fiber_solid_contact_impulse_gamma = 1.0;
+    fiber_fiber_contact_type = 0;  fiber_fiber_contact_penalty_scale = 1.0;  fiber_fiber_contact_impulse_gamma = 1.0;
+    fiber_solid_contact_impulse_push_tau = 0.0;  fiber_fiber_contact_impulse_push_tau = 0.0;
+    fiber_contact_impulse_push_depth = 0.1;  fiber_contact_impulse_push_vmax = 0.0;  dt_scale = 1.0;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;

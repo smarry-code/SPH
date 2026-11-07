@@ -11,11 +11,16 @@
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
 //                [--probe-frame] [--plate-nz=N] [--save-t=<с>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
+//                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
 //   --mu задаёт ОБА коэффициента (μ_ff нить-нить и μ_fs нить-Solid); --mu-ff / --mu-fs переопределяют только свой
 //   коэффициент и имеют приоритет над --mu независимо от порядка ключей. Не заданный из пары берётся из --mu
 //   (по умолчанию kMuDefault). Без новых ключей поведение прежнее. Значения пишутся в shot.txt (mu_ff=, mu_fs=).
 //   --energy-log=N -- energy_log.csv каждые N шагов в подкаталоге выстрела (только сборка с -DSPH_ENERGY_LOG=ON;
 //   include/energy_log.hpp).
+//   --checkpoint / --checkpoint-every=N -- чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev) каждые N шагов
+//   интегрирования (N >= 1, по умолчанию 10000) и финальный при останове; --restart -- продолжить выстрел из него
+//   (нет файла -- ошибка); --force -- разрешить менять физические настройки при --restart (только с --restart).
+//   Состояние монитора пока не сохраняется: после --restart monitor.csv и вердикт по шару неполные.
 //   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
 //   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
 //   (и l_break всех связей = (1+eps_break) l0).
@@ -27,6 +32,7 @@
 #include "guo2019_monitor.hpp"
 #include "guo2019_scene.hpp"
 
+#include "checkpoint.hpp"
 #include "e2e_harness.hpp"
 
 #include "fiber/fiber_input.hpp"
@@ -119,7 +125,21 @@ struct Options
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
     fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
     double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
+    double fiber_E = -1.0;    // > 0 -- переопределить модуль Юнга нити, Па (все материалы ткани)
+    // Тип 3: выталкивание при глубоком проникании (оба контакта нитей) и gamma; множитель шага.
+    double impulse_push_tau = 0.0, impulse_push_depth = 0.1, impulse_gamma = -1.0, impulse_push_vmax = 0.0;
+    double dt_scale = 1.0;
     std::size_t energy_log = 0; // > 0 -- energy_log.csv каждые N шагов (только сборка с SPH_ENERGY_LOG)
+    // Законы нормальной силы контактов нитей (fiber_contact_law.hpp): -1 -- как в
+    // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
+    int fs_contact = -1;
+    int ff_contact = -1;
+    std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
+    bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
+    bool checkpoint = false;       // писать чекпоинты (--checkpoint или --checkpoint-every)
+    std::size_t checkpoint_every = 10000; // период чекпоинта, шаги интегрирования
+    bool restart = false;          // продолжить выстрел из checkpoint.ckpt
+    bool force = false;            // --force: разрешить менять физические настройки при рестарте
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -159,11 +179,22 @@ void print_usage()
                 "                   [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
-                "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>]\n"
+                "                   [--fs-contact=0..4] [--ff-contact=0..4]  (закон контакта нитей, 0 = Герц, 4 = Герц + демпфер)\n"
+                "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
+                "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
+                "                   [--impulse-push-tau=<с>] [--impulse-push-depth=<доля r>] [--impulse-push-vmax=<м/с>] [--impulse-gamma=<g>]  (тип 3)\n"
+                "                   [--dt-scale=<s из (0;1]>]  (множитель шага, сходимость)\n"
+                "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
+                "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
+                "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
+                "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
+                "  Состояние монитора пока не сохраняется: monitor.csv и вердикт по шару после --restart неполные.\n"
+                "  --force: при --restart разрешить менять физические настройки (без него любое отличие -- отказ со списком полей).\n"
+                "  --force без --restart -- ошибка. Риски --force:\n%s"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
                 "  свой и имеют приоритет над --mu независимо от порядка ключей; не заданный из пары берётся из --mu\n"
-                "  (по умолчанию %g).\n", kMuDefault);
+                "  (по умолчанию %g).\n", checkpoint::force_risks_text().c_str(), kMuDefault);
 }
 
 // 0 -- разобрано, 1 -- справка, 2 -- ошибка
@@ -237,6 +268,15 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_ll(val("--max-steps="), n) || n < 1) return bad("--max-steps");
             o.max_steps = static_cast<std::size_t>(n);
         }
+        else if (a == "--checkpoint") o.checkpoint = true;
+        else if (a.rfind("--checkpoint-every=", 0) == 0)
+        {
+            if (!parse_ll(val("--checkpoint-every="), n) || n < 1) return bad("--checkpoint-every");
+            o.checkpoint_every = static_cast<std::size_t>(n);
+            o.checkpoint = true;
+        }
+        else if (a == "--restart") o.restart = true;
+        else if (a == "--force") o.force = true;
         else if (a == "--no-body-isolation") o.body_isolation = false;
         else if (a.rfind("--mu=", 0) == 0)
         {
@@ -281,11 +321,66 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_ll(val("--plate-nz="), n) || n < 1 || n > 64) return bad("--plate-nz");
             o.plate_nz = static_cast<int>(n);
         }
+        else if (a.rfind("--fs-contact=", 0) == 0)
+        {
+            if (!parse_ll(val("--fs-contact="), n) || n < 0 || n > 4) return bad("--fs-contact");
+            o.fs_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--ff-contact=", 0) == 0)
+        {
+            if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 4) return bad("--ff-contact");
+            o.ff_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")
+        {
+#ifndef SPH_CONTACT_STATS
+            std::fprintf(stderr, "%s: сборка без SPH_CONTACT_STATS (cmake -DSPH_CONTACT_STATS=ON)\n", a.c_str());
+            return 2;
+#else
+            if (a == "--hold-n")
+                o.hold_n = true;
+            else
+            {
+                if (!parse_ll(val("--contact-stats="), n) || n < 1) return bad("--contact-stats");
+                o.contact_stats = static_cast<std::size_t>(n);
+            }
+#endif
+        }
         else if (a.rfind("--fiber-inelastic=", 0) == 0)
         {
             o.fiber_inelastic = val("--fiber-inelastic=");
             if (o.fiber_inelastic.empty() || !fs::exists(o.fiber_inelastic)) return bad("--fiber-inelastic (файл не найден)");
             o.fiber_inelastic = fs::absolute(o.fiber_inelastic);
+        }
+        else if (a.rfind("--fiber-E=", 0) == 0)
+        {
+            if (!parse_double(val("--fiber-E="), d) || !(d > 0.0)) return bad("--fiber-E");
+            o.fiber_E = d;
+        }
+        else if (a.rfind("--impulse-push-tau=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-tau="), d) || d < 0.0) return bad("--impulse-push-tau");
+            o.impulse_push_tau = d;
+        }
+        else if (a.rfind("--impulse-push-depth=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-depth="), d) || d < 0.0 || d >= 1.0) return bad("--impulse-push-depth");
+            o.impulse_push_depth = d;
+        }
+        else if (a.rfind("--impulse-push-vmax=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-push-vmax="), d) || d < 0.0) return bad("--impulse-push-vmax");
+            o.impulse_push_vmax = d;
+        }
+        else if (a.rfind("--impulse-gamma=", 0) == 0)
+        {
+            if (!parse_double(val("--impulse-gamma="), d) || !(d > 0.0) || d > 1.6) return bad("--impulse-gamma");
+            o.impulse_gamma = d;
+        }
+        else if (a.rfind("--dt-scale=", 0) == 0)
+        {
+            if (!parse_double(val("--dt-scale="), d) || !(d > 0.0) || d > 1.0) return bad("--dt-scale");
+            o.dt_scale = d;
         }
         else if (a.rfind("--eps-break=", 0) == 0)
         {
@@ -319,6 +414,7 @@ int parse_args(int argc, char** argv, Options& o)
         std::fprintf(stderr, "Нужно ровно одно из --v0=, --paper-shots, --v0-list=\n");
         return 2;
     }
+    if (o.force && !o.restart) { std::fprintf(stderr, "--force допустим только вместе с --restart\n"); return 2; }
     if (o.bracket < 0) o.bracket = o.paper_shots ? 1 : 0;
     if (!o.repeat_set) o.repeat = o.paper_shots ? 2 : 1; // ТЗ Guo 2019 §8.3: --repeat=2 для выстрелов статьи
     if (o.probe_frame < 0) o.probe_frame = o.max_steps > 0 ? 1 : 0;
@@ -401,6 +497,7 @@ std::string kv_get(const KV& kv, const std::string& key)
 }
 
 bool g_first_scene_printed = false;
+bool g_first_scene_printed_push_warn = false; // предупреждение о --impulse-push-tau -- один раз
 
 // Неупругость нити и eps_break (после build_guo_scene). Возвращает пары ключ=значение для shot.txt.
 // Файл директив разбирается штатным load_fiber_file: временный .fib = MATERIAL 0 сцены + директивы файла + заглушка FIBER
@@ -408,6 +505,10 @@ bool g_first_scene_printed = false;
 KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workdir)
 {
     KV info;
+    // Модуль Юнга -- первым: временный материал директив неупругости ниже строится уже с ним.
+    // Сцена (геометрия, массы, l0) от E не зависит; E читается только в счёте.
+    if (opt.fiber_E > 0.0)
+        for (fiber::FiberMaterial& m : sc.model.materials) m.E = opt.fiber_E;
     if (!opt.fiber_inelastic.empty())
     {
         std::ifstream in(opt.fiber_inelastic);
@@ -441,6 +542,7 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
             m.rate = tmp.materials[0].rate;
             m.visco = tmp.materials[0].visco;
             m.failure = tmp.materials[0].failure;
+            m.damage = tmp.materials[0].damage;
         }
         const fiber::FiberMaterial& m = sc.model.materials.at(0);
         info.emplace_back("fiber_inelastic", opt.fiber_inelastic.filename().string());
@@ -450,6 +552,11 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
         info.emplace_back("visco_eta", fmtg(m.visco.eta));
         info.emplace_back("fail_eps_p", fmtg(m.failure.eps_p));
         info.emplace_back("fail_sigma_u", fmtg(m.failure.sigma_u));
+        if (m.damage.enabled())
+        {
+            info.emplace_back("damage_deps_f", fmtg(m.damage.deps_f));
+            info.emplace_back("damage_gf", fmtg(m.damage.gf));
+        }
     }
     if (opt.eps_break > 0.0)
     {
@@ -459,6 +566,11 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     }
     info.emplace_back("fiber_eps_break", fmtg(sc.model.materials.at(0).eps_break));
     info.emplace_back("fiber_E", fmtg(sc.model.materials.at(0).E));
+    info.emplace_back("impulse_push_tau", fmtg(opt.impulse_push_tau));
+    info.emplace_back("impulse_push_depth", fmtg(opt.impulse_push_depth));
+    info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
+    info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
+    info.emplace_back("dt_scale", fmtg(opt.dt_scale));
     return info;
 }
 
@@ -497,7 +609,7 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                 m.mu_fs = mu_fs;
             }
         KV fiber_info;
-        if (sc.has_fabric && (!opt.fiber_inelastic.empty() || opt.eps_break > 0.0))
+        if (sc.has_fabric && (!opt.fiber_inelastic.empty() || opt.eps_break > 0.0 || opt.fiber_E > 0.0))
         {
             fiber_info = apply_fiber_overrides(opt, sc, sub);
             std::printf("[нить] неупругость/eps_break:");
@@ -512,6 +624,26 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
 
         const double t_max = opt.t_max > 0.0 ? opt.t_max : default_t_max(opt.config, opt.level);
         sc.cfg.t_total = t_max;
+        if (opt.fs_contact >= 0) sc.cfg.fiber_solid_contact_type = opt.fs_contact;
+        if (opt.ff_contact >= 0) sc.cfg.fiber_fiber_contact_type = opt.ff_contact;
+        sc.cfg.fiber_solid_contact_impulse_push_tau = sc.cfg.fiber_fiber_contact_impulse_push_tau = opt.impulse_push_tau;
+        if (opt.impulse_push_tau > 0.0 && !g_first_scene_printed_push_warn)
+        {
+            g_first_scene_printed_push_warn = true;
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --impulse-push-tau включает выталкивание закона 3 -- источник энергии "
+                                 "(выбросы до -37 %% E0, ложные разрывы; fiber_contact_law.hpp, FiberContactLaw::push_tau). "
+                                 "Только для воспроизведения серий 2026-10-20/21.\n");
+        }
+        sc.cfg.fiber_contact_impulse_push_depth = opt.impulse_push_depth;
+        sc.cfg.fiber_contact_impulse_push_vmax = opt.impulse_push_vmax;
+        if (opt.impulse_gamma > 0.0)
+            sc.cfg.fiber_solid_contact_impulse_gamma = sc.cfg.fiber_fiber_contact_impulse_gamma = opt.impulse_gamma;
+        sc.cfg.dt_scale = opt.dt_scale;
+#ifdef SPH_CONTACT_STATS
+        // Статистика контактов -- в подкаталог выстрела (CWD).
+        sc.cfg.contact_stats_every = opt.contact_stats;
+        sc.cfg.contact_hold_n = opt.hold_n;
+#endif
         // Кадр на шаге 0 пишется всегда (next_output_time стартует с 0), поэтому при frames=off
         // save_t огромен: после него кадров больше не будет.
         sc.cfg.save_t = opt.save_t > 0.0 ? opt.save_t : (opt.frames_camera ? kBaseSaveT : 1.0e30);
@@ -530,7 +662,27 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
 #endif
         }
 
-        double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal), time = 0.0;
+        // Чекпоинты/рестарт: файл -- в каталоге выстрела (абсолютный путь, CWD = sub). При --restart
+        // dt/time ниже перекрываются состоянием цикла из чекпоинта (time_integration).
+        const fs::path ckpt_path = sub / "checkpoint.ckpt";
+        if (opt.checkpoint)
+        {
+            sc.cfg.checkpoint_file = ckpt_path.string();
+            sc.cfg.checkpoint_every_steps = opt.checkpoint_every;
+        }
+        if (opt.restart)
+        {
+            const fs::path prev = ckpt_path.string() + ".prev";
+            if (!fs::exists(ckpt_path) && !fs::exists(prev))
+                throw std::runtime_error("--restart: нет чекпоинта " + ckpt_path.string() + " (и .prev) в каталоге выстрела");
+            sc.cfg.restart_file = (fs::exists(ckpt_path) ? ckpt_path : prev).string();
+            sc.cfg.restart_force = opt.force;
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --restart: состояние монитора не сохраняется -- monitor.csv и вердикт по "
+                                 "шару для %s после рестарта неполные (monitor.csv перезаписывается с шага рестарта).\n",
+                         sub.string().c_str());
+        }
+
+        double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
         RunGuard guard(opt.time_limit, 2.0e6, 200); // time_limit <= 0 -- без лимита по стенному времени
         if (opt.max_steps > 0) guard.set_step_limit(opt.max_steps);
         MonitorOptions mo;

@@ -9,3 +9,7 @@
 2026-10-01-clamp-solid-viz/*.svg
 2026-10-01-guo2019-1t-scaled/anim_1t.gif
 2026-10-02-guo2019-1t-base/anim_1t_base.gif
+
+# GIF ткани с двух сторон (anim2_*), 3-15 МБ: на диске, в git не кладутся (лимит 2,5 МБ)
+2026-10-17-guo2019-1t-pinball-vbl/anim_damage/*/anim2_*.gif
+2026-10-18-guo2019-2t-law4/anim_damage/*/anim2_*.gif

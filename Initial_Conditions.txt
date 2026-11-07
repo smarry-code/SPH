@@ -26,3 +26,12 @@ coloring_niac_threshold = 10000000
 contact_force_type = 0
 * Масштабный коэффициент штрафной силы Kp (типы 1-2)
 contact_penalty_scale = 1.0
+* --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы нормальной силы») ---
+* 0 = Герц (по умолчанию), НЕ «выключено» (в отличие от contact_force_type);
+* 1 - пинбол, 2 - Свигл, 3 - импульсный. Kp - типы 1-2, gamma - тип 3, (0; 1.6].
+* fiber_solid_contact_type = 0
+* fiber_solid_contact_penalty_scale = 1.0
+* fiber_solid_contact_impulse_gamma = 1.0
+* fiber_fiber_contact_type = 0
+* fiber_fiber_contact_penalty_scale = 1.0
+* fiber_fiber_contact_impulse_gamma = 1.0

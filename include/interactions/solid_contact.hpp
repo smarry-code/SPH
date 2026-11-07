@@ -94,14 +94,14 @@ inline void compute_solid_contact_contributions(
     const std::vector<SolidContactPair>& contact_pairs,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& thread_buffers)
 {
-    const std::size_t nworkers = static_cast<std::size_t>(std::max(1, exec.num_workers()));
+    const std::size_t nworkers = exec.det_segments(); // детерминированно: не зависит от числа потоков
     if (thread_buffers.size() < nworkers) thread_buffers.resize(nworkers);
     for (auto& buf : thread_buffers) buf.clear();
 
     const int contact_type = cfg.contact_force_type;
     if (contact_type == contact::Off || contact_pairs.empty()) return;
 
-    exec.parallel_for(contact_pairs.size(), [&](std::size_t kk) {
+    exec.parallel_for_segments(contact_pairs.size(), [&](std::size_t seg, std::size_t kk) {
         const rhs::index_t i = contact_pairs[kk].i;
         const rhs::index_t j = contact_pairs[kk].j;
         const std::uint64_t k = contact_pairs[kk].k; // исходный индекс в real_pairs
@@ -149,9 +149,7 @@ inline void compute_solid_contact_contributions(
             di.dv[d] = f / sys.mass[i];
             dj.dv[d] = -f / sys.mass[j];
         }
-        int w_id = rhs::CpuExecutor::worker_id();
-        if (w_id < 0 || static_cast<std::size_t>(w_id) >= thread_buffers.size()) w_id = 0;
-        rhs::ContributionWriter<SolidDelta> writer(thread_buffers[static_cast<std::size_t>(w_id)], kSolidContactInteractionType);
+        rhs::ContributionWriter<SolidDelta> writer(thread_buffers[seg], kSolidContactInteractionType);
         writer.emit(i, di, k, 0);
         writer.emit(j, dj, k, 1);
     });

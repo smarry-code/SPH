@@ -38,6 +38,7 @@ option(SPH_NATIVE_ARCH "Использовать -march=native"  OFF)   # OFF: b
 set(SPH_OLEVEL "2" CACHE STRING "Уровень оптимизации (2|3)") # baseline = -O2
 set_property(CACHE SPH_OLEVEL PROPERTY STRINGS 2 3)
 option(SPH_PROFILE     "Включить профилировочные замеры (#ifdef SPH_PROFILE)" OFF)  # OFF: вне горячего пути
+option(SPH_CONTACT_STATS "Диагностика контактов нитей (#ifdef SPH_CONTACT_STATS, include/interactions/fiber_contact_stats.hpp)" OFF)
 option(SPH_ENERGY_LOG  "Лог механической энергии (#ifdef SPH_ENERGY_LOG, include/energy_log.hpp)" OFF)  # OFF: кода лога в сборке нет
 # Размерность основного исполняемого SPH (1|2|3). Тестовые цели задают свою
 # SPH_DIM сами и от этой опции не зависят. Нити и импорт .k в режиме
@@ -331,6 +332,46 @@ endif()
 add_test(NAME k_e2e_test COMMAND test_k_e2e)
 set_tests_properties(k_e2e_test PROPERTIES LABELS "3d")
 
+# --- Чекпоинт/рестарт: сцена tests/checkpoint_scene.hpp (Solid + нити из .fib с
+#     пластичностью и повреждённостью). Заготовка: тесты будут добавляться в
+#     tests/test_checkpoint.cpp. Вторая цель -- та же программа со SPH_ENERGY_LOG.
+add_executable(test_checkpoint tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_checkpoint PRIVATE SPH_DIM=3
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_checkpoint PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_checkpoint PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint PRIVATE -fopenmp)
+    target_link_options(test_checkpoint PRIVATE -fopenmp)
+endif()
+add_test(NAME checkpoint_test COMMAND test_checkpoint)
+set_tests_properties(checkpoint_test PROPERTIES LABELS "3d" TIMEOUT 600
+    ENVIRONMENT OMP_NUM_THREADS=1)
+
+add_executable(test_checkpoint_energy tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_checkpoint_energy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_checkpoint_energy PRIVATE SPH_DIM=3
+    SPH_ENERGY_LOG
+    SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint_energy PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_checkpoint_energy PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_checkpoint_energy PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_checkpoint_energy PRIVATE -fopenmp)
+    target_link_options(test_checkpoint_energy PRIVATE -fopenmp)
+endif()
+add_test(NAME checkpoint_energy_test COMMAND test_checkpoint_energy)
+set_tests_properties(checkpoint_energy_test PROPERTIES LABELS "3d" TIMEOUT 600
+    ENVIRONMENT OMP_NUM_THREADS=1)
+
 # --- Закрепления из *BOUNDARY_SPC_* (readk/k-import-plan.md, этап K8).
 add_executable(test_k_clamp tests/test_k_clamp.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_k_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -619,6 +660,42 @@ endif()
 add_test(NAME fiber_solid_test COMMAND test_fiber_solid)
 set_tests_properties(fiber_solid_test PROPERTIES LABELS "3d")
 
+# --- Законы pinball/Swegle/импульсный для Fiber-Fiber (fiber/plan-fiber-contact-types.md, этап 2):
+#     ядро fiber_contact.hpp, предел шага и диагностика.
+add_executable(test_fiber_contact_types tests/test_fiber_contact_types.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_contact_types PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_contact_types PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_types PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_contact_types PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_contact_types PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_types PRIVATE -fopenmp)
+    target_link_options(test_fiber_contact_types PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_contact_types_test COMMAND test_fiber_contact_types)
+set_tests_properties(fiber_contact_types_test PROPERTIES LABELS "3d")
+
+# --- Законы pinball/Swegle/импульсный для Fiber-Solid (fiber/plan-fiber-contact-types.md, этап 1):
+#     include/interactions/fiber_contact_law.hpp, ядро fiber_solid_contact.hpp.
+add_executable(test_fiber_solid_types tests/test_fiber_solid_types.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_solid_types PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_solid_types PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_solid_types PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_solid_types PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_solid_types PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_solid_types PRIVATE -fopenmp)
+    target_link_options(test_fiber_solid_types PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_solid_types_test COMMAND test_fiber_solid_types)
+set_tests_properties(fiber_solid_types_test PROPERTIES LABELS "3d")
+
 # --- E2E-критерий готовности Ф6 (fiber/PLAN.md: «smoke одного Solid в 3D,
 #     затем нить, падающая на пластину, без проникания»).
 add_executable(test_e2e_fiber_solid tests/test_e2e_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
@@ -759,6 +836,11 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(guo2019_shot PRIVATE -fopenmp)
     target_link_options(guo2019_shot PRIVATE -fopenmp)
 endif()
+
+# --- CLI чекпоинтов guo2019_shot: коды ошибок и сравнение раздельного прогона с непрерывным
+#     (tests/checkpoint_cli_test.sh; требует собранный guo2019_shot).
+add_test(NAME checkpoint_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint_cli_test.sh $<TARGET_FILE:guo2019_shot>)
+set_tests_properties(checkpoint_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
 
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
@@ -1291,6 +1373,12 @@ if(SPH_ENERGY_LOG)
     target_compile_definitions(fabric_checks PRIVATE SPH_ENERGY_LOG)
 endif()
 
+# --- Диагностика контактов нитей: блоки #ifdef SPH_CONTACT_STATS и ключи
+#     guo2019_shot --contact-stats/--hold-n. Без опции кода статистики нет.
+if(SPH_CONTACT_STATS)
+    target_compile_definitions(guo2019_shot PRIVATE SPH_CONTACT_STATS)
+endif()
+
 # --- Каталоги include: заголовки — в include/, исходники — в src/ ------------
 target_include_directories(SPH PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -1333,3 +1421,21 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(demo_fiber_layers PRIVATE -fopenmp)
     target_link_options(demo_fiber_layers PRIVATE -fopenmp)
 endif()
+
+# --- Повреждённость связи с разупрочнением (DAMAGE; fiber/plan-fiber-damage.md):
+#     закон на одной связи, GF, разрыв по D >= 1, разбор .fib, детерминизм.
+add_executable(test_fiber_damage tests/test_fiber_damage.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_damage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_damage PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_damage PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_damage PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_damage PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_damage PRIVATE -fopenmp)
+    target_link_options(test_fiber_damage PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_damage_test COMMAND test_fiber_damage)
+set_tests_properties(fiber_damage_test PROPERTIES LABELS "3d")

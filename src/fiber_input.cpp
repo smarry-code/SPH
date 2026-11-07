@@ -114,11 +114,13 @@ struct PendingInelastic
     std::size_t line_rate = 0;
     std::size_t line_visco = 0;
     std::size_t line_failure = 0;
+    std::size_t line_damage = 0;
     std::size_t first_line = 0; // строка первой директивы (для ошибки "нет материала")
     PlasticParams plastic{};
     RateParams rate{};
     ViscoParams visco{};
     FailureParams failure{};
+    DamageParams damage{};
 };
 
 [[noreturn]] void inelastic_fail(const char* dir, std::size_t line_no, const std::string& msg)
@@ -373,6 +375,25 @@ void parse_failure_directive(std::istringstream& iss, std::size_t line_no, Pendi
     pi.line_failure = line_no;
 }
 
+// DAMAGE <id> DEPS_F=<x> | GF=<Дж/м²> -- повреждённость с разупрочнением после σ_u
+// (fiber/plan-fiber-damage.md). Ровно один из ключей; требует FAILURE SIGMA_U.
+// THETA_C (угловой критерий) зарезервирован, пока не реализован -- ошибка, а не молчание.
+void parse_damage_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
+{
+    static const char* dir = "DAMAGE";
+    const KeyValues kv = read_key_values(iss, dir, line_no, {"DEPS_F", "GF", "THETA_C"});
+    if (pi.line_damage) inelastic_fail(dir, line_no, repeat_msg(pi.line_damage));
+    if (kv.count("THETA_C")) inelastic_fail(dir, line_no, "THETA_C (угловой критерий) пока не реализован");
+    DamageParams d;
+    const bool hasDeps = opt_key(kv, "DEPS_F", d.deps_f);
+    const bool hasGf = opt_key(kv, "GF", d.gf);
+    if (hasDeps == hasGf) inelastic_fail(dir, line_no, "нужен ровно один ключ: DEPS_F или GF");
+    if (hasDeps && !(d.deps_f > 0.0)) inelastic_fail(dir, line_no, "DEPS_F должен быть > 0");
+    if (hasGf && !(d.gf > 0.0)) inelastic_fail(dir, line_no, "GF должен быть > 0");
+    pi.damage = d;
+    pi.line_damage = line_no;
+}
+
 // Проверки "после всего файла" и перенос параметров в материалы.
 void apply_inelastic(const std::map<std::size_t, PendingInelastic>& pending, std::vector<FiberMaterial>& materials,
                      const std::vector<char>& material_defined)
@@ -399,11 +420,18 @@ void apply_inelastic(const std::map<std::size_t, PendingInelastic>& pending, std
             std::cerr << "Предупреждение: FAILURE EPS_P (строка " << pi.line_failure << ") для материала "
                       << id << " задан без PLASTIC/PLASTIC_TABLE: критерий EPS_P никогда не сработает\n";
         }
+        if (pi.line_damage && !(pi.line_failure && pi.failure.sigma_u > 0.0))
+        {
+            throw std::runtime_error("fiber::load_fiber_file: DAMAGE (строка " + std::to_string(pi.line_damage) +
+                                     ") для материала " + std::to_string(id) +
+                                     " требует FAILURE SIGMA_U (напряжение начала повреждения)");
+        }
         FiberMaterial& m = materials[id];
         if (pi.line_plastic || pi.line_table) m.plastic = pi.plastic;
         if (pi.line_rate) m.rate = pi.rate;
         if (pi.line_visco) m.visco = pi.visco;
         if (pi.line_failure) m.failure = pi.failure;
+        if (pi.line_damage) m.damage = pi.damage;
     }
 }
 
@@ -646,7 +674,8 @@ void load_fiber_file(const std::string& filename, Model& model)
             }
             fibers.push_back(std::move(rf));
         }
-        else if (kw == "PLASTIC" || kw == "PLASTIC_TABLE" || kw == "RATE" || kw == "VISCO" || kw == "FAILURE")
+        else if (kw == "PLASTIC" || kw == "PLASTIC_TABLE" || kw == "RATE" || kw == "VISCO" || kw == "FAILURE" ||
+                 kw == "DAMAGE")
         {
             const std::size_t mid = read_material_id(iss, kw.c_str(), line_no);
             PendingInelastic& pi = pending[mid];
@@ -655,6 +684,7 @@ void load_fiber_file(const std::string& filename, Model& model)
             else if (kw == "PLASTIC_TABLE") parse_plastic_table_directive(iss, in, line_no, pi);
             else if (kw == "RATE") parse_rate_directive(iss, line_no, pi);
             else if (kw == "VISCO") parse_visco_directive(iss, line_no, pi);
+            else if (kw == "DAMAGE") parse_damage_directive(iss, line_no, pi);
             else parse_failure_directive(iss, line_no, pi);
         }
         else if (kw == "CLAMP_BOX")

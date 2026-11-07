@@ -75,3 +75,5 @@ log.txt
 
 # IDE-generated project state
 *.layout
+# Локальные каталоги сборки рабочих копий (build-dmg, build-elog, ...)
+/build-*/

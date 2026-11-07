@@ -75,6 +75,38 @@ static double parse_k_positive(const char* key, const std::string& value)
     }
     return v;
 }
+// Закон нормальной силы контакта нитей (fiber_*_contact_type): 0..4,
+// 0 = Герц (НЕ «выключено», в отличие от contact_force_type), 4 = Герц +
+// демпфер. Вне диапазона -- сообщение и откат к 0.
+static int parse_fiber_contact_type(const std::string& key, const std::string& value)
+{
+    const int v = std::stoi(value);
+    if (v < 0 || v > 4)
+    {
+        std::cerr << key << " вне диапазона 0..4: " << v << ", откат к 0 (Герц)\n";
+        return 0;
+    }
+    return v;
+}
+
+// gamma типа 3 контакта нитей: те же границы и сообщения, что у
+// contact_impulse_gamma.
+static double parse_fiber_contact_gamma(const std::string& key, const std::string& value)
+{
+    const double v = std::stod(value);
+    if (!(v > 0.0))
+    {
+        std::cerr << key << " = " << v << " <= 0: тип 3 фактически выключен\n";
+    }
+    else if (v > 1.6)
+    {
+        std::cerr << key << " = " << v
+                  << " > 1.6: включается ограничитель шага контакта,"
+                     " возможен коллапс dt\n";
+    }
+    return v;
+}
+
 void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 {
     std::ifstream in(filename);
@@ -199,6 +231,54 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
                              " возможен коллапс dt\n";
             }
             cfg.contact_impulse_gamma = v;
+        }
+        else if (key == "fiber_solid_contact_type")
+        {
+            cfg.fiber_solid_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_solid_contact_penalty_scale")
+        {
+            cfg.fiber_solid_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_solid_contact_impulse_gamma")
+        {
+            cfg.fiber_solid_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
+        else if (key == "fiber_fiber_contact_type")
+        {
+            cfg.fiber_fiber_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_fiber_contact_penalty_scale")
+        {
+            cfg.fiber_fiber_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_gamma")
+        {
+            cfg.fiber_fiber_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
+        else if (key == "fiber_solid_contact_impulse_push_tau")
+        {
+            cfg.fiber_solid_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_push_tau")
+        {
+            cfg.fiber_fiber_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_vmax")
+        {
+            cfg.fiber_contact_impulse_push_vmax = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_depth")
+        {
+            cfg.fiber_contact_impulse_push_depth = std::stod(value);
+        }
+        else if (key == "dt_scale")
+        {
+            const double v = std::stod(value);
+            if (!(v > 0.0) || v > 1.0)
+                std::cerr << "dt_scale = " << v << " вне (0; 1], откат к 1\n";
+            else
+                cfg.dt_scale = v;
         }
         else if (key == "ode_solver")
         {

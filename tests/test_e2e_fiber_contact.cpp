@@ -24,6 +24,7 @@
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
+#include "interactions/fiber_contact_law.hpp"
 #include "interactions/fiber_friction.hpp"
 #include "param.hpp"
 #include "rhs/contributions.hpp"
@@ -93,6 +94,14 @@ struct FiberBondContactIntegrator
     // test_fiber_bond.cpp::test_momentum_conservation).
     double safety = 0.5;
     double last_max_penetration = 0.0; // диагностика последнего шага (a)
+
+    // Закон нормальной силы (fiber/plan-fiber-contact-types.md, этап 2).
+    // По умолчанию тип 0 (Герц) -- прежний путь, все вызовы с params = {}.
+    interactions::FiberContactLaw law;
+    std::vector<double> bead_dt_ref;
+    double last_contact_dt_limit = 0.0;  // предел шага контакта последнего шага
+    double last_bond_dt_limit = 0.0;     // предел шага связей последнего шага
+    std::size_t last_contact_count = 0;  // принятые контакты (геометрия) последнего шага
 
     // --- Режимы и диагностика для сценарных прогонов (c)/(d) (§8.10). По
     // умолчанию выключены -- прогоны bounce/(a)/(b) идут по прежнему пути. ---
@@ -212,16 +221,33 @@ struct FiberBondContactIntegrator
 
         interactions::FiberContactSearchResult search;
         interactions::build_fiber_contact_search(exec, fb, topo, mats, search);
+        interactions::FiberContactStepParams params;
+        if (law.type != 0)
+        {
+            params.law = law;
+            params.dt_prev = dt_prev > 0.0 ? dt_prev : 1e-7; // шаг прошлого вызова, как в продовом цикле
+            interactions::compute_fiber_bead_dt_ref(fb, topo, mats, bead_dt_ref);
+            params.bead_dt_ref = &bead_dt_ref;
+            params.pair_dt_limit = &search.pair_dt_limit;
+        }
         const bool has_friction = interactions::compute_fiber_contact_contributions(
-            exec, fb, mats, search.primitives, contact_buffers, friction_contacts);
+            exec, fb, mats, search.primitives, contact_buffers, friction_contacts, params);
         std::vector<fiber::FiberDelta> contact_delta = rhs::reduce_contributions(exec, contact_buffers, n);
-        const double contact_dt_limit = interactions::compute_fiber_contact_dt_limit(exec, fb, mats, search.primitives);
+        const double contact_dt_limit =
+            interactions::compute_fiber_contact_dt_limit(exec, fb, mats, search.primitives, params);
 
         interactions::FiberContactDiagnostics diag =
-            interactions::compute_fiber_contact_diagnostics(exec, fb, mats, search);
+            interactions::compute_fiber_contact_diagnostics(exec, fb, mats, search, params);
         last_max_penetration = diag.max_penetration;
+        last_contact_dt_limit = contact_dt_limit;
+        last_bond_dt_limit = bond_dt_limit;
+        last_contact_count = diag.contact_count;
 
-        const double dt = safety * std::min(bond_dt_limit, contact_dt_limit);
+        // Тип 0: прежнее выражение. Типы 1-3: запас safety -- только на связи;
+        // предел типа 3 = 1.6*dt_prev/gamma зависит от шага, и запас поверх него
+        // дал бы петлю dt -> 0.8 dt за шаг (в продовом цикле запаса нет).
+        const double dt = (law.type == 0) ? safety * std::min(bond_dt_limit, contact_dt_limit)
+                                          : std::min(safety * bond_dt_limit, contact_dt_limit);
 
         std::vector<double> dv_now[dim];
         for (std::size_t d = 0; d < dim; ++d)
@@ -1051,10 +1077,118 @@ void test_e2e_cross_friction()
 
 } // namespace
 
+// ============================================================================
+// test_e2e_cross_types -- крестовая сцена для законов 0-3
+// (fiber/plan-fiber-contact-types.md, шаг 2.4, п. 8). Метрики печатаются,
+// критерии: нет NaN, контакт случился, энергия не растёт больше 1 % (типы
+// 1-3), шаг не схлопывается. Столбец sgn -- смены знака относительной
+// касательной скорости центров в прогоне с трением (mu = 0.2, v_t0 = 0.05). Для типов 1-3 ожидается потеря энергии (отскока нет, §0 п.3);
+// ориентир Герца +0.6 % -- fiber/FRICTION_REPORT.md.
+// ============================================================================
+double cross_energy(const fiber::FiberState& fb, const fiber::FiberTopology& topo,
+                    const std::vector<fiber::FiberMaterial>& mats)
+{
+    double e = 0.0;
+    for (std::size_t i = 0; i < fb.size(); ++i)
+        for (std::size_t d = 0; d < dim; ++d) e += 0.5 * fb.mass[i] * fb.vx[d][i] * fb.vx[d][i];
+    for (const auto& b : topo.bonds)
+    {
+        double l2 = 0.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            const double dx = fb.x[d][b.j] - fb.x[d][b.i];
+            l2 += dx * dx;
+        }
+        const double strain = std::sqrt(l2) - b.l0;
+        const fiber::FiberMaterial& m = mats[static_cast<std::size_t>(fb.material_id[b.i])];
+        if (strain > 0.0) e += 0.5 * (m.E * pi * m.d * m.d / 4.0 / b.l0) * strain * strain;
+    }
+    return e;
+}
+
+struct CrossTypeMetrics
+{
+    bool finite = true;
+    int steps = 0;
+    double max_pen_over_d = 0.0;
+    double min_dt = std::numeric_limits<double>::max();
+    double dt0 = 0.0;
+    int limited_by_contact = 0;
+    double e0 = 0.0, e_max = 0.0, e_end = 0.0;
+    double vz_p_end = 0.0, vz_q_end = 0.0;
+    double max_dt_ratio = 0.0;
+    int sign_changes = 0; // смены знака относительной касательной скорости центров (прогон с трением)
+};
+
+CrossTypeMetrics run_cross_type(int type, double mu_ff, double v_t0)
+{
+    CrossScene scene = build_cross_scene(mu_ff);
+    for (std::size_t i = 0; i < scene.n_p; ++i) scene.state.vx[1][i] = v_t0;
+    FiberBondContactIntegrator integ;
+    integ.law.type = type;
+    CrossTypeMetrics m;
+    m.e0 = cross_energy(scene.state, scene.topology, scene.materials);
+    m.e_max = m.e0;
+    double time = 0.0, dt_prev = 0.0;
+    int last_sign = 0;
+    const double t_end = 8.0e-3;
+    while (time < t_end && m.steps < 40000)
+    {
+        const double dt = integ.step(scene.state, scene.topology, scene.materials);
+        if (m.steps == 0) m.dt0 = dt;
+        time += dt;
+        ++m.steps;
+        m.min_dt = std::min(m.min_dt, dt);
+        if (dt_prev > 0.0) m.max_dt_ratio = std::max(m.max_dt_ratio, dt / dt_prev);
+        dt_prev = dt;
+        if (integ.last_contact_count > 0 && integ.last_contact_dt_limit < integ.safety * integ.last_bond_dt_limit)
+            ++m.limited_by_contact;
+        m.max_pen_over_d = std::max(m.max_pen_over_d, integ.last_max_penetration / scene.d);
+        const double e = cross_energy(scene.state, scene.topology, scene.materials);
+        m.e_max = std::max(m.e_max, e);
+        if (!std::isfinite(e)) { m.finite = false; break; }
+        if (v_t0 > 0.0 && integ.last_contact_count > 0)
+        {
+            const double u = scene.state.vx[1][scene.center_p] - scene.state.vx[1][scene.center_q];
+            const int sg = (u > 0.0) - (u < 0.0);
+            if (sg != 0 && last_sign != 0 && sg != last_sign) ++m.sign_changes;
+            if (sg != 0) last_sign = sg;
+        }
+    }
+    m.e_end = cross_energy(scene.state, scene.topology, scene.materials);
+    m.vz_p_end = scene.state.vx[2][scene.center_p];
+    m.vz_q_end = scene.state.vx[2][scene.center_q];
+    return m;
+}
+
+void test_e2e_cross_types()
+{
+    std::printf("test_e2e_cross_types:\n");
+    static const char* names[] = {"Hertz", "pinball", "Swegle", "impulse", "Hertz+damp"};
+    std::printf("    %-8s %6s %9s %10s %7s %9s %9s %9s %9s %8s %6s\n", "type", "steps", "max d/d", "min dt",
+                "ct-lim", "E_end/E0", "E_max/E0", "vzP_end", "vzQ_end", "dtN/dtP", "sgn");
+    for (int type = 0; type <= 4; ++type)
+    {
+        const CrossTypeMetrics m = run_cross_type(type, 0.0, 0.0);
+        const CrossTypeMetrics mf = run_cross_type(type, 0.2, 0.05); // трение, малая касательная скорость
+        std::printf("    %-8s %6d %9.3e %10.3e %6.1f%% %9.4f %9.4f %9.4f %9.4f %8.4f %6d\n", names[type], m.steps,
+                    m.max_pen_over_d, m.min_dt, 100.0 * m.limited_by_contact / std::max(1, m.steps), m.e_end / m.e0,
+                    m.e_max / m.e0, m.vz_p_end, m.vz_q_end, m.max_dt_ratio, mf.sign_changes);
+        const std::string tag = names[type];
+        check(m.finite && mf.finite, tag + ": нет NaN/Inf (без трения и с трением)");
+        check(m.max_pen_over_d > 0.0, tag + ": контакт произошёл");
+        // Герц -- только справочно (прежнее поведение, рост энергии ~1 % в
+        // этой сцене, fiber/FRICTION_REPORT.md); типы 1-3 -- критерий.
+        if (type != 0) check(m.e_max <= 1.01 * m.e0, tag + ": энергия не растёт больше 1 %");
+        check(m.min_dt > 0.1 * m.dt0 && mf.min_dt > 0.1 * mf.dt0, tag + ": шаг не схлопывается");
+    }
+}
+
 int main()
 {
     test_e2e_cross_bounce();
     test_e2e_cross_friction();
+    test_e2e_cross_types();
 
     if (failures == 0)
         std::printf("test_e2e_fiber_contact: OK\n");

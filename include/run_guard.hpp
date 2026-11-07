@@ -145,6 +145,16 @@ public:
     double projected()  const { return projected_; }
     size_t steps()      const { return steps_; }
 
+    // Восстановление счётчиков из чекпоинта (checkpoint::LoopState): число шагов
+    // (для StepLimit -- полное с начала выстрела), первый и минимальный dt.
+    // Часы WallClock и счётчик застоя не переносятся: бюджет считается с рестарта.
+    void restore_progress(size_t steps, double dt_first, double dt_min)
+    {
+        steps_ = steps;
+        dt_first_ = dt_first;
+        dt_min_ = dt_min;
+    }
+
     // Во сколько раз шаг просел относительно первого — по ХУДШЕМУ шагу за
     // прогон, а не по последнему. Коллапс может успеть частично отыграть
     // назад, и последний dt тогда выглядит приемлемо, скрывая провал.

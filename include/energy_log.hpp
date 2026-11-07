@@ -24,8 +24,10 @@
 //                       Неупругий (PLASTIC/VISCO): 1/2 E (eps-eps_p)^2 A l0 при
 //                       eps>eps_p плюс 1/2 q^2/E1 A l0 при E1>0 (пружина
 //                       Максвелла); w_p и w_v в запас не входят (см. W_p_fiber)
-//   U_hertz_ff       -- потенциал Герца Fiber-Fiber, sum 2/5 F delta (F=k delta^1.5)
-//   U_hertz_fs       -- потенциал Герца Fiber-Solid, то же
+//   U_hertz_ff       -- потенциал Герца Fiber-Fiber, sum 2/5 F delta (F=k delta^1.5);
+//                       при fiber_fiber_contact_type = 0 (Герц) и 4 (Герц + демпфер), иначе 0
+//   U_hertz_fs       -- потенциал Герца Fiber-Solid, то же; при
+//                       fiber_solid_contact_type = 0 и 4, иначе 0
 //   E_mech           -- KE_solid+KE_fiber+U_int+U_bond+U_hertz_ff+U_hertz_fs
 //   D_friction       -- накопленная диссипация трения (потери, > 0)
 //   D_xsph           -- накопленная диссипация XSPH (потери, > 0)
@@ -40,7 +42,7 @@
 //   W_plastic        -- накопленная работа пластичности (информационно, уже в U_int)
 //   residual         -- (E_mech - E_mech0) + D_friction + D_xsph + D_contact_ss
 //                       + D_break - S_u_clamp + W_p_fiber + W_v_fiber
-//                       + D_break_contact - clip_loss;
+//                       + D_break_contact - clip_loss + D_contact_fiber;
 //                       E_mech0 берётся с ПЕРВОЙ записанной строки. Для идеально
 //                       замкнутого баланса residual ~ 0.
 //   W_p_fiber        -- накопленная пластическая работа связей нитей (потери, > 0):
@@ -64,8 +66,18 @@
 //                       накапливается эта величина (RHS-ядро сообщает sigma_модели, проход
 //                       Postprocessing умножает на d(eps)); в residual вычитается. Не зависит
 //                       от dt (E5: ~0.001 % E0, ~1 % от W_v).
-//   (W_p_fiber, W_v_fiber, D_break_contact, clip_loss -- последние столбцы: старые CSV без них
-//    читаются как нулевые каналы.)
+//   D_contact_fiber  -- накопленная работа (со знаком минус) нормальной силы контактов нитей,
+//                       закон которых НЕ Герц (fiber_*_contact_type = 1..3: pinball, Swegle,
+//                       импульсный). Эти силы не потенциальные: запаса энергии у них нет, вся их
+//                       работа -- диссипация (> 0: сила действует только на сближении). У закона 4
+//                       (Герц + демпфер) упругая часть потенциальна (в U_hertz_*), сюда идёт только
+//                       работа демпфера (отдельный проход ядра с damper_only). Работа --
+//                       на средней скорости шага (work_mid_fiber/work_mid_solid), по ускорению
+//                       контакта после проекции зажимов. При законе Герц канал нулевой, энергия
+//                       контакта -- в U_hertz_*. Для разных законов у двух контактов каждый
+//                       контакт учитывается своим способом.
+//   (W_p_fiber, W_v_fiber, D_break_contact, clip_loss, D_contact_fiber -- последние столбцы:
+//    старые CSV без них читаются как нулевые каналы.)
 //
 // Остаток невязки у нитей с вязкостью/пластикой -- ошибка схемы O(dt) (силы по состоянию на
 // начало шага, Кельвин по скорости предиктора, запас связи по x^{n+1}); на E5 с разрывами
@@ -113,6 +125,22 @@ struct EnergyChannels
     double friction = 0, xsph = 0, contact_ss = 0, brk = 0, u_clamp = 0, q_av = 0, w_plastic = 0;
     double w_p_fiber = 0, w_v_fiber = 0;
     double brk_contact = 0, clip = 0; // знаковые поправки учёта (см. шапку)
+    double contact_fiber = 0;         // диссипация в контактах нитей с законом 1-3 (см. шапку)
+
+    // Чекпоинт (checkpoint::EnergyState::chan): порядок полей фиксирован -- 12 значений.
+    static constexpr std::size_t kCount = 12;
+    void to_array(double* a) const
+    {
+        const double v[kCount] = {friction, xsph, contact_ss, brk, u_clamp, q_av, w_plastic,
+                                  w_p_fiber, w_v_fiber, brk_contact, clip, contact_fiber};
+        for (std::size_t i = 0; i < kCount; ++i) a[i] = v[i];
+    }
+    void from_array(const double* a)
+    {
+        double* f[kCount] = {&friction, &xsph, &contact_ss, &brk, &u_clamp, &q_av, &w_plastic,
+                             &w_p_fiber, &w_v_fiber, &brk_contact, &clip, &contact_fiber};
+        for (std::size_t i = 0; i < kCount; ++i) *f[i] = a[i];
+    }
 };
 
 // Мгновенные запасы энергии.
@@ -152,8 +180,12 @@ inline void compute_hertz_potential(const rhs::CpuExecutor& exec, const Simulati
     u_ff = 0.0;
     u_fs = 0.0;
     auto sum = [](double a, double b) { return a + b; };
-    interactions::build_fiber_contact_search(exec, fb, topology, materials, ws.ff);
-    if (!ws.ff.primitives.empty())
+    // Потенциал есть только у закона Герца (тип 0). Законы 1-3 не потенциальные:
+    // их работа идёт в канал D_contact_fiber, а не в запас.
+    const bool hertz_ff = interactions::fiber_contact_law_has_hertz_potential(cfg.fiber_fiber_contact_type);
+    const bool hertz_fs = interactions::fiber_contact_law_has_hertz_potential(cfg.fiber_solid_contact_type);
+    if (hertz_ff) interactions::build_fiber_contact_search(exec, fb, topology, materials, ws.ff);
+    if (hertz_ff && !ws.ff.primitives.empty())
     {
         u_ff = exec.parallel_reduce(
             ws.ff.primitives.size(), 0.0,
@@ -165,7 +197,7 @@ inline void compute_hertz_potential(const rhs::CpuExecutor& exec, const Simulati
             sum);
     }
 
-    if (ntotal > 0)
+    if (hertz_fs && ntotal > 0)
     {
         interactions::build_fiber_solid_contact_search(exec, cfg.mats, sys, ntotal, fb, topology, materials, ws.fs);
         if (!ws.fs.primitives.empty())
@@ -334,14 +366,17 @@ class EnergyLogger
 public:
     // Открывает CSV (перезапись), пишет заголовок; бросает std::runtime_error,
     // если файл не открылся.
-    EnergyLogger(const std::string& path, std::size_t every) : every_(every)
+    // append = true (рестарт из чекпоинта): файл дописывается, без заголовка;
+    // базу E_mech0 вызывающий восстанавливает через restore_e0().
+    EnergyLogger(const std::string& path, std::size_t every, bool append = false) : every_(every)
     {
-        out_.open(path, std::ios::out | std::ios::trunc);
+        out_.open(path, append ? (std::ios::out | std::ios::app) : (std::ios::out | std::ios::trunc));
         if (!out_.is_open()) throw std::runtime_error("EnergyLogger: не удалось открыть файл " + path);
         out_ << std::setprecision(std::numeric_limits<double>::max_digits10);
+        if (append) return;
         out_ << "step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,"
                 "E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,"
-                "W_p_fiber,W_v_fiber,D_break_contact,clip_loss\n";
+                "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber\n";
         out_.flush();
     }
 
@@ -350,6 +385,15 @@ public:
 
     EnergyStockWorkspace& workspace() { return ws_; }
 
+    // База энергии для чекпоинта.
+    double e_mech0() const { return e_mech0_; }
+    bool have_e0() const { return have_e0_; }
+    void restore_e0(double e_mech0, bool have_e0)
+    {
+        e_mech0_ = e_mech0;
+        have_e0_ = have_e0;
+    }
+
     // Ускорение трения шага: перед стадией трения сюда копируется dv/dvx, после
     // неё (и повторной проекции зажимов) -- заменяется разностью «после - до».
     // Память только растёт.
@@ -357,9 +401,15 @@ public:
     std::vector<std::vector<double>> friction_solid;
     bool has_friction = false; // friction_* заполнены на этом шаге
 
+    // Ускорение контактов нитей с законом 1-3 (Fiber-Fiber и Fiber-Solid, сторона нити;
+    // Fiber-Solid, сторона Solid) -- для канала D_contact_fiber. Память только растёт.
+    std::vector<double> contact_fiber_acc[dim];
+    std::vector<std::vector<double>> contact_solid_acc;
+    bool has_contact_fiber = false; // contact_*_acc заполнены на этом шаге
+
     // Первая записанная строка задаёт E_mech0;
     // residual = (E_mech - E_mech0) + friction + xsph + contact_ss + brk - u_clamp
-    //            + w_p_fiber + w_v_fiber + brk_contact - clip.
+    //            + w_p_fiber + w_v_fiber + brk_contact - clip + contact_fiber.
     void write_row(std::size_t step, double time, double dt, const EnergyStocks& s, const EnergyChannels& c)
     {
         const double e_mech = s.e_mech();
@@ -369,11 +419,12 @@ public:
             have_e0_ = true;
         }
         const double residual = (e_mech - e_mech0_) + c.friction + c.xsph + c.contact_ss + c.brk - c.u_clamp +
-                                c.w_p_fiber + c.w_v_fiber + c.brk_contact - c.clip;
+                                c.w_p_fiber + c.w_v_fiber + c.brk_contact - c.clip + c.contact_fiber;
         out_ << step << ',' << time << ',' << dt << ',' << s.ke_solid << ',' << s.ke_fiber << ',' << s.u_int << ','
              << s.u_shear_el << ',' << s.u_bond << ',' << s.u_hertz_ff << ',' << s.u_hertz_fs << ',' << e_mech << ','
              << c.friction << ',' << c.xsph << ',' << c.contact_ss << ',' << c.brk << ',' << c.u_clamp << ','
-             << c.q_av << ',' << c.w_plastic << ',' << residual << ',' << c.w_p_fiber << ',' << c.w_v_fiber << ',' << c.brk_contact << ',' << c.clip << '\n';
+             << c.q_av << ',' << c.w_plastic << ',' << residual << ',' << c.w_p_fiber << ',' << c.w_v_fiber << ',' << c.brk_contact << ',' << c.clip << ','
+             << c.contact_fiber << '\n';
         out_.flush();
     }
 

@@ -235,6 +235,8 @@ inline double fiber_bond_stored_energy(const fiber::FiberMaterial& mat, const fi
         double e = 0.0;
         if (eps > b.st.eps_p) e += 0.5 * mat.E * (eps - b.st.eps_p) * (eps - b.st.eps_p) * A * b.l0;
         if (mat.visco.E1 > 0.0) e += 0.5 * b.st.q * b.st.q / mat.visco.E1 * A * b.l0;
+        // Повреждённая связь хранит долю (1 - D) (секущая жёсткость). При d == 0 -- прежнее выражение.
+        if (b.st.d > 0.0) e *= (1.0 - b.st.d);
         return e;
     }
     if (!(l > b.l0)) return 0.0;
@@ -274,15 +276,18 @@ inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fi
         const double eps = fiber_bond_length(state, b) / b.l0 - 1.0;
         const double A = fiber_cross_section_area(mat);
         const fiber::ViscoParams vp = fiber_bond_visco(mat, A, b.l0, state.mass[b.i], state.mass[b.j]);
-        const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure);
+        const fiber::BondLaw law(mat.E, mat.plastic, mat.rate, vp, mat.failure, mat.damage, fiber_bond_damage_deps_f(mat, b.l0));
 #ifdef SPH_ENERGY_LOG
-        const double wp0 = b.st.w_p, wv0 = b.st.w_v, eps_prev0 = b.st.eps_prev;
+        const double wp0 = b.st.w_p, wv0 = b.st.w_v, wd0 = b.st.w_d, eps_prev0 = b.st.eps_prev;
 #endif
         b.st = fiber::bond_constitutive_update(law, b.st, eps, dt);
 #ifdef SPH_ENERGY_LOG
         if (tap)
         {
-            tap->dwp[k] = (b.st.w_p - wp0) * A * b.l0;
+            // Работа разупрочнения (повреждённость) идёт в тот же канал потерь W_p_fiber:
+            // столбцы лога не меняются; при выключенной повреждённости w_d == wd0 == 0.
+            tap->dwp[k] = b.st.w_d != wd0 ? ((b.st.w_p - wp0) + (b.st.w_d - wd0)) * A * b.l0
+                                          : (b.st.w_p - wp0) * A * b.l0;
             tap->dwv[k] = (b.st.w_v - wv0) * A * b.l0;
             if (tap->sigma_clip && k < tap->sigma_clip->size() && (*tap->sigma_clip)[k] != 0.0)
                 tap->dclip[k] = (*tap->sigma_clip)[k] * (eps - eps_prev0) * A * b.l0;
@@ -347,7 +352,8 @@ enum class FiberBreakReason : std::int64_t
 {
     Strain = 0,  // l > l_break (eps_break, прежний критерий)
     PlasticStrain, // eps_p >= FAILURE.EPS_P
-    Stress         // sigma_full = E(eps - eps_p) + q >= FAILURE.SIGMA_U
+    Stress,        // sigma_full = E(eps - eps_p) + q >= FAILURE.SIGMA_U
+    Damage         // повреждённость D >= 1 (DAMAGE; критерий SIGMA_U при этом не действует)
 };
 
 struct FiberBreakEvent
@@ -394,6 +400,16 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
             {
                 broken = true;
                 reason = FiberBreakReason::PlasticStrain;
+            }
+            else if (mat.damage.enabled() && mat.failure.sigma_u > 0.0)
+            {
+                // Повреждённость: связь рвётся, когда разупрочнение дошло до нуля (D = 1),
+                // а не в момент σ = σ_u (fiber/plan-fiber-damage.md).
+                if (b.st.d >= 1.0)
+                {
+                    broken = true;
+                    reason = FiberBreakReason::Damage;
+                }
             }
             else if (mat.failure.sigma_u > 0.0)
             {
