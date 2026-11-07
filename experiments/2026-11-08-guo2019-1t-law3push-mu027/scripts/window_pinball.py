@@ -123,9 +123,16 @@ def drop_checkpoint(sdir):
 # ---------------------------------------------------------------------------------------------------------------
 
 def _read_csv(path):
+    """Строки CSV без обрезанного хвоста: после kill -9 последняя строка может быть недописана (файл не кончается
+    переводом строки) -- она отбрасывается, как и строки с другим числом полей."""
     with open(path, encoding="utf-8", newline="") as f:
-        rows = list(csv.reader(f))
-    return (rows[0], rows[1:]) if rows else (None, [])
+        text = f.read()
+    if text and not text.endswith(chr(10)):
+        text = text[:text.rfind(chr(10)) + 1]
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        return None, []
+    return rows[0], [r for r in rows[1:] if len(r) == len(rows[0])]
 
 
 def splice_rows(header, chunks, tcol):
@@ -133,7 +140,22 @@ def splice_rows(header, chunks, tcol):
     (хвост после последнего чекпоинта, посчитанный заново после рестарта)."""
     ti = header.index(tcol)
     out = []
+    gaps = []
     for rows in chunks:
+        # Монитор пишет monitor.csv через буфер stdio и при чекпоинте его не сбрасывает: после kill -9 строки между
+        # последней записанной и шагом чекпоинта теряются. Дыра -- скачок t на стыке частей больше 3 медианных шагов.
+        ts = []
+        for row in rows:
+            try:
+                ts.append(float(row[ti]))
+            except (IndexError, ValueError):
+                pass
+        if out and ts:
+            dts = sorted(b - a for a, b in zip(ts, ts[1:]) if b > a)
+            step = dts[len(dts) // 2] if dts else 0.0
+            t_prev = max((float(r[ti]) for r in out if float(r[ti]) < ts[0]), default=None)
+            if t_prev is not None and step > 0.0 and ts[0] - t_prev > 3.0 * step:
+                gaps.append((t_prev, ts[0]))
         for row in rows:
             try:
                 t = float(row[ti])
@@ -142,6 +164,7 @@ def splice_rows(header, chunks, tcol):
             while out and float(out[-1][ti]) >= t:
                 out.pop()
             out.append(row)
+    splice_rows.gaps = gaps
     return out
 
 
@@ -178,6 +201,7 @@ def splice_shot(sdir):
         k = max(k, len(parts))
         header, last = _read_csv(m)
         rows = splice_rows(header, [_read_csv(q)[1] for q in parts] + [last], "t")
+        gaps = splice_rows.gaps
         _write_csv(m, header, rows)
         for q in parts:
             os.remove(q)
@@ -185,11 +209,11 @@ def splice_shot(sdir):
         if os.path.exists(el):
             eh, er = _read_csv(el)
             _write_csv(el, eh, splice_rows(eh, [er], "time"))
-        patch_shot_txt(sub, header, rows, len(parts))
+        patch_shot_txt(sub, header, rows, len(parts), gaps)
     return k
 
 
-def patch_shot_txt(sub, header, rows, k):
+def patch_shot_txt(sub, header, rows, k, gaps=()):
     st = os.path.join(sub, "shot.txt")
     if not os.path.exists(st) or not rows:
         return
@@ -199,6 +223,14 @@ def patch_shot_txt(sub, header, rows, k):
     fb = next((r for r in rows if float(r[col["n_bonds"]]) < nb0), None)
     fix["t_first_break"] = "%.9g" % float(fb[col["t"]]) if fb else "nan"
     fix["w_f_at_first_break"] = "%.9g" % float(fb[col["w_f"]]) if fb else "nan"
+    # дыры в мониторе от буфера stdio; если первый разрыв -- первая строка после дыры, он мог случиться раньше
+    fix["monitor_gaps"] = str(len(gaps))
+    fix["monitor_gap_max"] = "%.9g" % max((b - a for a, b in gaps), default=0.0)
+    if fb:
+        tfb = float(fb[col["t"]])
+        lo = next((a for a, b in gaps if a < tfb <= b), None)
+        if lo is not None:
+            fix["t_first_break_lo"] = "%.9g" % lo
     for key, c in (("w_f_max", "w_f"), ("w_p_max", "w_p")):
         vals = []
         for r in rows:
@@ -214,6 +246,21 @@ def patch_shot_txt(sub, header, rows, k):
         shutil.copy(st, raw)
     with open(raw, encoding="utf-8") as f:
         text = f.read()
+    # Точный шаг первого разрыва монитор знает сам (строки monitor.csv -- раз в n_mon шагов). Его значение верно,
+    # если разрыв случился после последнего рестарта: тогда оно лежит между строкой перед первым разрывом и строкой
+    # первого разрыва. Иначе (разрыв до рестарта) монитор ставит момент рестарта -- берём значение по строкам.
+    if fb:
+        i = rows.index(fb)
+        m_t = re.search(r"(?<!\S)t_first_break=(\S+)", text)
+        m_w = re.search(r"(?<!\S)w_f_at_first_break=(\S+)", text)
+        try:
+            t_raw = float(m_t.group(1))
+            if i > 0 and float(rows[i - 1][col["t"]]) < t_raw <= float(fb[col["t"]]):
+                fix["t_first_break"] = m_t.group(1)
+                if m_w:
+                    fix["w_f_at_first_break"] = m_w.group(1)
+        except (AttributeError, ValueError):
+            pass
     for key, val in fix.items():
         text, n = re.subn(r"(?<!\S)%s=\S*" % re.escape(key), "%s=%s" % (key, val), text, count=1)
         if n == 0:
@@ -301,7 +348,11 @@ def run_shot(args, mu, v0, threads, tmax, suffix="", seed=None):
             rc = subprocess.run(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env).returncode
         r = read_result(sdir)
         if rc == 0 and r is not None:
-            k = splice_shot(sdir)
+            try:
+                k = splice_shot(sdir)
+            except Exception as ex:  # постобработка не должна останавливать серию
+                k = 0
+                log(args.work, "ПРЕДУПРЕЖДЕНИЕ: склейка монитора mu=%g V0=%g%s не удалась: %r" % (mu, v0, suffix, ex))
             r = read_result(sdir)
             p, why = verdict(r)
             if k:
