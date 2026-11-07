@@ -10,7 +10,11 @@
 #include <stdexcept>
 #include <type_traits>
 
+#ifdef _WIN32
+#include <io.h> // _commit, _fileno
+#else
 #include <unistd.h> // fsync, fileno
+#endif
 
 namespace checkpoint
 {
@@ -583,7 +587,11 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     const auto& buf = w.buf();
     bool ok = std::fwrite(buf.data(), 1, buf.size(), f) == buf.size();
     ok = ok && std::fflush(f) == 0;
+#ifdef _WIN32
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
     ok = ok && fsync(fileno(f)) == 0;
+#endif
     ok = (std::fclose(f) == 0) && ok;
     if (!ok)
     {
@@ -595,6 +603,11 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     if (std::FILE* ex = std::fopen(path.c_str(), "rb"))
     {
         std::fclose(ex);
+#ifdef _WIN32
+        // На Windows rename не перезаписывает существующий файл — убираем старый .prev.
+        // На POSIX rename заменяет .prev атомарно, удаление не нужно.
+        std::remove((path + ".prev").c_str());
+#endif
         if (std::rename(path.c_str(), (path + ".prev").c_str()) != 0)
         {
             std::remove(tmp.c_str());
