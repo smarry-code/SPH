@@ -34,3 +34,15 @@
   `restart_force` в `SimulationConfig`, тесты `checkpoint_test`, `checkpoint_energy_test`,
   `checkpoint_cli_test`. Руководство с правилами и рекомендациями —
   [`05-restart-checkpoints.md`](../02-how-to/05-restart-checkpoints.md).
+- Модель Джонсона-Кука (itype 12–15: STEEL 4340, STEEL 1006, AL 7039, AL5083H116) —
+  прочность, температура, разрушение, УРС Linear и Shock, `p_min`; опция нагрева
+  Тейлора–Куинни (`jc_heating`, `jc_chi`); поля частицы `T`, `edot`, `r0`; чекпоинт
+  формата v3; в 2D осесимметрии вес энергии `2π·r0·m` в логе энергии; тесты
+  U1–U20, I1–I9, E1–E5; ссылки на [ADR-009](../04-explanation/decisions/adr-009-johnson-cook.md)
+  и [how-to 06](../02-how-to/06-johnson-cook-material.md).
+
+### Исправлено
+
+- В 2D осесимметрии добавлен член −(p/ρ)·v_r/r в уравнение энергии (работа давления на
+  окружной деформации); регрессионные снимки BC2/BC6 (N = 100) обновлены после него.
+- Совместимость чекпоинта с Windows: запись через `_commit`, ротация файла `.prev`.
