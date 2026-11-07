@@ -66,6 +66,17 @@ inline constexpr const char* kParts =
     "SOLID_PART 1 10 2510 hsml=0.0013\n"
     "MATERIAL 0 2.0e9 0.35 1.0e-4 1140 0.02\n";
 
+// Та же таблица частей для заданного itype Solid: 10 (rho 2510, как kParts) или
+// 12 (Джонсон-Кук 4340, rho 7830). Остальные itype не поддержаны.
+inline std::string make_parts(int solid_itype)
+{
+    if (solid_itype == 10) return kParts;
+    if (solid_itype != 12)
+        throw std::invalid_argument("build_checkpoint_scene: solid_itype поддержан только 10 и 12");
+    return "SOLID_PART 1 12 7830 hsml=0.0013\n"
+           "MATERIAL 0 2.0e9 0.35 1.0e-4 1140 0.02\n";
+}
+
 inline std::string read_all(const std::string& path)
 {
     std::ifstream in(path, std::ios::binary);
@@ -134,9 +145,12 @@ inline void write_ic(const std::string& extra)
 //   eps_break -- критическое удлинение связи нити (MATERIAL), малое значение
 //                форсирует разрыв; ~0.5 даёт разрывов не ожидать.
 //   ode_solver -- 0 = предиктор-корректор, 1 = Эйлер (cfg.ode_solver).
+//   solid_itype -- itype Solid: 10 (по умолчанию, rho 2510) или 12 (JC 4340, rho 7830).
+//   extra_ic   -- дополнительные строки Initial_Conditions (например, jc_heating = ...).
 // Бросает std::runtime_error при сбое загрузки и std::invalid_argument при
 // неверном ode_solver.
-inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_break, int ode_solver)
+inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_break, int ode_solver,
+                                        int solid_itype = 10, const std::string& extra_ic = "")
 {
     namespace fs = std::filesystem;
     using namespace ckpt_scene_detail;
@@ -144,12 +158,15 @@ inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_b
     if (ode_solver != 0 && ode_solver != 1)
         throw std::invalid_argument("build_checkpoint_scene: ode_solver вне 0..1");
 
+    const std::string parts = make_parts(solid_itype); // до смены каталога: бросает при неверном itype
+
     fs::create_directories(workdir);
     fs::current_path(workdir);
     write_file("deck.k", make_solid_deck());
-    write_file("deck.parts", kParts);
+    write_file("deck.parts", parts);
     write_file("scene.fib", make_fiber_file(eps_break));
-    write_ic("k_file = deck.k\nk_parts_file = deck.parts\nfiber_file = scene.fib\n");
+    write_ic("k_file = deck.k\nk_parts_file = deck.parts\nfiber_file = scene.fib\n" +
+             (extra_ic.empty() ? std::string() : extra_ic + "\n"));
 
     CkptScene sc;
     sc.cfg.apply_defaults();
