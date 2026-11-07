@@ -270,6 +270,22 @@ def patch_shot_txt(sub, header, rows, k, gaps=()):
     os.replace(st + ".tmp", st)
 
 
+FRAME_RE = re.compile(r"(?:sph|fiber)_output_\d+\.txt$")
+
+
+def _link_frame_or_copy(src, dst):
+    """Кадры анимации (sph_output_*, fiber_output_* -- ~5 МБ, раз в save_t) после записи не меняются: в копию
+    продолжения кладётся жёсткая ссылка, а не вторая копия. Остальное (energy_log.csv дописывается, monitor.csv
+    переименовывается) -- копией, чтобы не испортить базовый прогон."""
+    if FRAME_RE.search(os.path.basename(src)):
+        try:
+            os.link(src, dst)
+            return dst
+        except OSError:
+            pass
+    return shutil.copy2(src, dst)
+
+
 def seed_long_from_base(base, sdir):
     """«Не определён» к t_max: продолжить до t_max_long из финального чекпоинта базового прогона (t_total при
     рестарте менять можно). Копия каталога без результатов базового прогона. False -- чекпоинта нет."""
@@ -277,7 +293,7 @@ def seed_long_from_base(base, sdir):
         return False
     if os.path.isdir(sdir):
         shutil.rmtree(sdir)
-    shutil.copytree(base, sdir)
+    shutil.copytree(base, sdir, copy_function=_link_frame_or_copy)
     for pat in ("shots.csv", os.path.join("*", "shot.txt"), os.path.join("*", "shot.raw.txt")):
         for f in glob.glob(os.path.join(sdir, pat)):
             os.remove(f)
