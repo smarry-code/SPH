@@ -99,6 +99,7 @@ struct RunSettings
     bool keep_workdir = false;
     double wall_limit_s = 0.0;
     double epsilon = -1.0;     // XSPH; < 0 — по умолчанию кейса
+    double cfl = -1.0;         // число Куранта cfg.CFL; <= 0 — по умолчанию кейса
     fs::path outdir;
 };
 
@@ -196,6 +197,11 @@ RunResult run_case(const RunSettings& rs)
     {
         jct::apply_config(cfg, rs.t_max);
         if (rs.epsilon >= 0.0) cfg.epsilon = rs.epsilon;
+        if (rs.cfl > 0.0)
+        {
+            cfg.CFL = rs.cfl;
+            note("CFL = " + std::to_string(cfg.CFL) + " (ключ --cfl; по умолчанию 0.1)");
+        }
 #ifdef SPH_ENERGY_LOG
         cfg.energy_log_every = 100;
         cfg.energy_log_file = "energy_log.csv";
@@ -535,6 +541,7 @@ void print_usage()
         "  --t-max=СЕК         потолок времени (по умолчанию %.0f мкс)\n"
         "  --time-limit=СЕК    бюджет стенных часов на один прогон (0 — без ограничения)\n"
         "  --xsph=E            константа XSPH epsilon (диагностика; по умолчанию 0.25)\n"
+        "  --cfl=X             число Куранта cfg.CFL (диагностика; по умолчанию 0.1): dt ~ CFL\n"
         "  --energy-tol=X      допуск баланса энергии, доля E_mech0 (по умолчанию 0.02)\n"
         "  --energy-warn-only  невязка энергии выше допуска — WARN, а не FAIL\n"
         "  --verbose --keep-workdir -h\n",
@@ -545,7 +552,7 @@ int main(int argc, char** argv)
 {
     std::string mode = "taylor";
     size_t n_r = 0;
-    double t_max = jct::kTMax, wall_limit = 0.0, epsilon = -1.0;
+    double t_max = jct::kTMax, wall_limit = 0.0, epsilon = -1.0, cfl = -1.0;
     bool verbose = false, keep = false;
     fs::path outdir = fs::current_path() / "jc_taylor_out";
 
@@ -567,6 +574,11 @@ int main(int argc, char** argv)
             else if (a.rfind("--t-max=", 0) == 0) t_max = std::stod(val("--t-max="));
             else if (a.rfind("--time-limit=", 0) == 0) wall_limit = std::stod(val("--time-limit="));
             else if (a.rfind("--xsph=", 0) == 0) epsilon = std::stod(val("--xsph="));
+            else if (a.rfind("--cfl=", 0) == 0)
+            {
+                cfl = std::stod(val("--cfl="));
+                if (!(cfl > 0.0)) throw std::invalid_argument("cfl");
+            }
             else if (a.rfind("--energy-tol=", 0) == 0) g_energy_tol = std::stod(val("--energy-tol="));
             else if (a == "--energy-warn-only") g_energy_warn_only = true;
             else if (a == "--verbose") verbose = true;
@@ -610,6 +622,7 @@ int main(int argc, char** argv)
     rs.keep_workdir = keep;
     rs.wall_limit_s = wall_limit;
     rs.epsilon = epsilon;
+    rs.cfl = cfl;
     rs.outdir = outdir;
 
     if (mode == "smoke")
