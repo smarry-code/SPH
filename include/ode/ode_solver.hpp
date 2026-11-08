@@ -86,6 +86,24 @@ void pc_finalize_velocity_position_with_av(N n, double dt, double coeff, XArr& x
     }
 }
 
+// Режим xsph_mode = position (классический XSPH Монаганa): скорость БЕЗ av,
+//   vx = base + coeff*dv;  x += dt*(vx + av)
+// -- поправка av только переносит позиции, кинетическая энергия не меняется.
+template <class N, class XArr, class VxArr, class DvArr, class AvArr>
+void pc_finalize_velocity_position_xsph_position(N n, double dt, double coeff, XArr& x, VxArr& vx, const DvArr& dv,
+                                                  const VxArr& v_base, bool use_base, const AvArr& av)
+{
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        for (N i = 0; i < n; ++i)
+        {
+            const double base = use_base ? v_base[d][i] : vx[d][i];
+            vx[d][i] = base + coeff * dv[d][i];
+            x[d][i] += dt * (vx[d][i] + av[d][i]);
+        }
+    }
+}
+
 // То же самое без поправки XSPH (Fiber -- fiber/SPH.md, «finalize»: у Fiber
 // XSPH не определён, только ẋ = v).
 template <class N, class XArr, class VxArr, class DvArr>
@@ -154,7 +172,8 @@ struct FiberVelocityUpdate
 //   v^{n+1} = ((*base)[d][i] + h * dvx[d][i]) + (*av)[d][i]     (av != nullptr)
 //   v^{n+1} =  (*base)[d][i] + h * dvx[d][i]                    (av == nullptr)
 // -- ровно арифметика correct_solid / step_solid (PC: pc_finalize_velocity_
-// position_with_av; Эйлер: euler_step_position_velocity, без XSPH). Нужна
+// position_with_av; Эйлер: euler_step_position_velocity, без XSPH). При
+// xsph_mode = position av == nullptr (поправка идёт только в позицию). Нужна
 // стадии трения между вычислением dt и advance(). Указатели валидны до
 // advance().
 // ============================================================================
@@ -222,6 +241,9 @@ class PredictorCorrectorSolver
 public:
     SolidRhsBuffers solid_rhs;
     FiberRhsBuffers fiber_rhs;
+    // Режим XSPH (cfg.xsph_mode): false = velocity (v += av, x += dt*v; прежнее поведение),
+    // true = position (v без av, x += dt*(v + av); классический XSPH Монаганa).
+    bool xsph_position = false;
 #ifdef SPH_ENERGY_LOG
     double* u_clamp_acc = nullptr; // накопитель энергии, внесённой обрезкой u>=0 (SPH_ENERGY_LOG)
 #endif
@@ -350,8 +372,12 @@ public:
         // безопасно заменено на безусловный цикл ещё в перегрузке
         // time_integration(fiber::Model&, ...), этап Ф3; здесь -- то же
         // самое, проверено tests/test_fiber_time_integration_equivalence.cpp).
-        pc_finalize_velocity_position_with_av(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx, v_min_,
-                                               /*use_base=*/solid_use_base(), solid_rhs.av);
+        if (xsph_position)
+            pc_finalize_velocity_position_xsph_position(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx,
+                                                         v_min_, /*use_base=*/solid_use_base(), solid_rhs.av);
+        else
+            pc_finalize_velocity_position_with_av(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx, v_min_,
+                                                   /*use_base=*/solid_use_base(), solid_rhs.av);
     }
 
     void correct_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
@@ -382,7 +408,9 @@ public:
         SolidVelocityUpdate upd{};
         for (std::size_t d = 0; d < dim; ++d) upd.base[d] = solid_use_base() ? &v_min_[d] : &sys.vx[d];
         upd.h = solid_coeff(dt);
-        upd.av = &solid_rhs.av;
+        // xsph_mode = position: av в скорость не входит (только в позицию) -- nullptr,
+        // трение Solid-Fiber и лог энергии (D_xsph = 0) av не видят.
+        upd.av = xsph_position ? nullptr : &solid_rhs.av;
         return upd;
     }
 

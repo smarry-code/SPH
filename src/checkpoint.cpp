@@ -320,6 +320,7 @@ void visit_cfg(C& c, F&& f)
     f("k_solid_elements", c.k_solid_elements, false);
     f("jc_heating", c.jc_heating, false);
     f("jc_chi", c.jc_chi, false);
+    f("xsph_mode", c.xsph_mode, false);
 #ifdef SPH_ENERGY_LOG
     f("energy_log_every", c.energy_log_every, true);
     f("energy_log_file", c.energy_log_file, true);

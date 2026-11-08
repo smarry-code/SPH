@@ -383,6 +383,12 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             else if (value == "taylor_quinney") cfg.jc_heating = 1;
             else throw std::runtime_error("jc_heating: допустимы energy и taylor_quinney, получено '" + value + "'");
         }
+        else if (key == "xsph_mode")
+        {
+            if (value == "velocity") cfg.xsph_mode = 0;
+            else if (value == "position") cfg.xsph_mode = 1;
+            else throw std::runtime_error("xsph_mode: допустимы velocity и position, получено '" + value + "'");
+        }
         else if (key == "jc_chi")
         {
             std::size_t pos = 0;

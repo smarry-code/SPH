@@ -143,6 +143,12 @@ struct SimulationConfig
     int jc_heating = 0;
     double jc_chi = 0.9;
 
+    // --- XSPH (поправка epsilon * av) ---
+    // xsph_mode: 0 = velocity (av входит в скорость: v = ... + av; x += dt*v; прежнее
+    // поведение), 1 = position (классический XSPH Монаганa: скорость без av,
+    // x += dt*(v + av); кинетическая энергия не меняется, D_xsph = 0). Только PC-решатель.
+    int xsph_mode = 0;
+
 #ifdef SPH_CONTACT_STATS
     // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
     // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
@@ -183,6 +189,7 @@ inline void SimulationConfig::apply_defaults()
     k_length_scale = 1.0;  k_mass_scale = 1.0;  k_monitor_nid = -1;
     k_solid_elements = "skip";
     jc_heating = 0;  jc_chi = 0.9;
+    xsph_mode = 0;
 #ifdef SPH_ENERGY_LOG
     energy_log_every = 0;  energy_log_file = "energy_log.csv";
 #endif
