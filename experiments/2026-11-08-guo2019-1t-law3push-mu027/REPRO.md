@@ -27,7 +27,7 @@ guo2019 1T mu 0,27: данные для анимаций во всех выст�
 |---|---|---|
 | 71 / 82 (`mu027_window`) | `e51ed6c68a59f8a2e0254abf0bf8f6d4cac4a9fc` | допуск выстрела по свободным потокам (`start_gated`), `run_series.sh` без ожидания конца proj_* |
 | 69 / 70 (`mu027_v69_70`) | `3ae6e18d22b2672757c77dd9bd47c834e19eca69` | то же + `run_series.sh` с каталогом и скоростями в аргументах |
-| постобработка `_long` (все 4) | `42ea87aac21f6be490c621894a4654f556039312` | `fix_monitor_steps.py`: сквозной номер шага в склеенном `monitor.csv` |
+| постобработка `_long` (все 4) | `59f9a87b8988ff56792d15aa7f63d0977ea21f74` | `fix_monitor_steps.py`: сквозной номер шага в склеенном `monitor.csv` |
 
 Аргументы `guo2019_shot`, которые строит драйвер, во всех трёх версиях одинаковы.
 
@@ -81,7 +81,7 @@ OMP_NUM_THREADS=4 guo2019_shot --config=1T --level=base --v0=V --mu=0.27 --out=D
 # «не определён» -> каталог D копируется в D_long (кадры -- жёсткими ссылками), запуск с --restart --t-max=0.003;
 # monitor.csv базы откладывается в monitor.part1.csv и после выстрела склеивается с новым (window_pinball.splice_shot).
 
-# 4. постобработка (2026-11-08, после серий): сквозной шаг монитора в _long (в версии 42ea87a склейка делает это сама)
+# 4. постобработка (2026-11-08, после серий): сквозной шаг монитора в _long (в версии 59f9a87 склейка делает это сама)
 python3 fix_monitor_steps.py $W1/mu0.27_v*_long/1T_*/ ; python3 fix_monitor_steps.py $W2/mu0.27_v*_long/1T_*/
 
 # 5. данные каталога: скачать queue.log, window.md, mu0.27_v*.log, shots.csv, shot.txt, monitor.csv и energy_log.csv
