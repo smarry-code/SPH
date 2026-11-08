@@ -1283,11 +1283,12 @@ foreach(_case ES1 EF1)
                          LABELS "e2e;3d" TIMEOUT 300 ENVIRONMENT "OMP_NUM_THREADS=4")
 endforeach()
 if(SPH_E2E_SLOW_TESTS)
+    # Бюджет по замеру 2026-11-08: ES2 полный — 10 568 с на 2-ядерном Xeon Cascadelake в один поток (OMP_NUM_THREADS=1); прежние 3000/3600 с не хватало. Сторож (--time-limit) срабатывает раньше TIMEOUT ctest и даёт разбор.
     foreach(_case ES1 ES2 ES3 EF1 EF2 EF3)
         add_test(NAME e2e_clamp_${_case}_pc_full
-                 COMMAND test_e2e_clamp --case=${_case} --solver=pc --full --time-limit=3000)
+                 COMMAND test_e2e_clamp --case=${_case} --solver=pc --full --time-limit=12000)
         set_tests_properties(e2e_clamp_${_case}_pc_full PROPERTIES
-                             LABELS "slow;e2e;3d" TIMEOUT 3600 ENVIRONMENT "OMP_NUM_THREADS=1")
+                             LABELS "slow;e2e;3d" TIMEOUT 14400 ENVIRONMENT "OMP_NUM_THREADS=1")
     endforeach()
 endif()
 
