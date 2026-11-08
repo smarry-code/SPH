@@ -1,36 +1,40 @@
 # Контекст для продолжения работы над моделью Джонсона-Кука
 
-Дата: 2026-11-07. Ветка `fiber_johnson_cook`, она на `origin` (GitHub `smarry-code/SPH`).
-Файл написан для новой сессии Claude Code: прочитать его целиком перед началом работы.
+Дата: 2026-11-08. Ветка `fiber_johnson_cook` (на `origin`, GitHub `smarry-code/SPH`).
+Файл для новой сессии Claude Code: прочитать целиком перед началом работы.
 
-## 1. Как продолжить
+## 1. Рабочая машина и сборка
 
-Свежий клон или другая машина:
-```
-git fetch origin
-git switch fiber_johnson_cook        # создаст локальную ветку, отслеживающую origin
-git pull
-```
-
-На машине, где работала прошлая сессия:
-- ветка уже открыта в worktree `/Users/vladimirbogachev/PycharmProjects/SPH-johnson_cook`;
-- **в основном каталоге `.../SPH` команда `git switch fiber_johnson_cook` не сработает**: git не даёт открыть одну ветку в двух worktree;
-- поэтому новую сессию Claude Code нужно запускать в `.../SPH-johnson_cook` (там `git pull`). Другой вариант: сначала `git worktree remove ../SPH-johnson_cook`, потом switch в `.../SPH`.
-
-Обязательно прочитать:
-1. `fiber/jc-implementation-plan.md` — ТЗ (этапы J0–J7, E1–E5).
-2. `fiber/jc-analysis.md` — анализ модели.
-3. `johnson-cook/00-baseline.md`, `01-results.md`, `02-e2e.md`, `03-pmin-energy.md` — результаты по порядку.
+- Windows 11, репозиторий `C:\dip\SPH\SPH`.
+- Сборка через MSYS2 clang64: `C:/msys64/clang64/bin/clang++.exe`. Пресет `clang-windows` из `CMakePresets.json` не работает без Windows SDK.
+- Рабочая команда (Git Bash; каталоги `build-*` в `.gitignore`):
+  ```
+  export PATH=/c/msys64/clang64/bin:$PATH
+  cmake -G Ninja -B build-jc2e -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER=C:/msys64/clang64/bin/clang.exe \
+        -DCMAKE_CXX_COMPILER=C:/msys64/clang64/bin/clang++.exe \
+        -DSPH_DIM=2 -DSPH_ENERGY_LOG=ON
+  cmake --build build-jc2e -j 12
+  ```
+  Полная сборка ~3.5 мин на 14 ядрах. Локально — только сборка и чистые unit-тесты (`jc_*`, `axisym`, `particle_system`);
+  `test_checkpoint` гоняет шаги SPH, его — на сервере.
+- git: `user.name` не настроен. Коммиты так:
+  `git -c user.name=smarry-code -c user.email=<адрес как в прежних коммитах> commit ...`
+- Обязательно прочитать:
+  1. `fiber/jc-implementation-plan.md` (ТЗ), `fiber/jc-analysis.md`;
+  2. `johnson-cook/00-baseline.md` ... `04-pdv-energy-j7-bc6.md` по порядку;
+  3. `docs/04-explanation/decisions/adr-009-johnson-cook.md`.
 
 ## 2. Правила владельца (обязательны)
 
 - **Не запускать расчёты локально.** Любой прогон SPH, включая короткие e2e и переборы, идёт на `ssh claude-compute`. Локально — только компиляция и чистые unit-тесты.
-- **`claude-compute-8t` не трогать** без разрешения: он занят другой задачей.
+- **`claude-compute-8t` не трогать**: он занят другой задачей (`guo2019_shot`).
 - Код на сервер доставляется через `git bundle` + `scp`. На сервере нет доступа к GitHub.
 - Коммиты делать по ходу работы. `git push` и PR — только по просьбе.
 - В `experiments/` не коммитить картинки (gif/svg/png).
 - Константы материалов не подгонять под ворота тестов. Непроверенные значения помечать `TODO(verify)`. Заменять их только литературой со ссылкой на источник.
 - **Данных Autodyn не будет** (решение 2026-11-04).
+- Подзадачи можно отдавать агентам Sonnet/Haiku.
 - Язык общения и документов — русский.
 
 ## 3. Что сделано
@@ -40,66 +44,50 @@ git pull
 | J1+J2a | `include/strength/johnson_cook.hpp`, УРС Linear/Shock, U1–U17 | a64075f |
 | J2b+J3 | материалы itype 12–15, диспетчеризация УРС, поля `T`, `edot`, чекпоинт v2 | a2060b9 |
 | J4+J5 | JC-прочность и разрушение в конвейере, I1–I8 | 32f2032, 7733304 |
-| J0, E1 | baseline, регрессия BC2/BC6 без изменения эталонов | 75e4b16 |
+| J0, E1 | baseline, регрессия BC2/BC6 | 75e4b16 |
 | E2–E5 | HEL, откол (1D), Тейлор (2D осесимметрия), сходимость | b7801b8, 2645142, a3a8ddb |
-| p_min | `JcMaterial::p_min` (аналог Hydro Pmin), −4 ГПа для 4340, U20 | 0de8845, 4a85ec1 |
-| разбор энергии E4 | `johnson-cook/03-pmin-energy.md` | 1fff62e |
+| p_min | `JcMaterial::p_min`, −4 ГПа для 4340, U20 | 0de8845, 4a85ec1 |
+| разбор энергии E4 | `03-pmin-energy.md` | 1fff62e |
 | ТЗ в репозитории | `fiber/jc-*.md` | 28e19c2 |
+| HANDOFF (прежний) | | 9cfbf86 |
+| pdV | член −(p/ρ)·v_r/r в `du`, тест G | a686ee9 |
+| вес энергии | `energy_mass = 2π·r0·m`, поле `r0`, чекпоинт v3 | 9cc2266 |
+| эталоны | снимки BC2/BC6 N = 100 (8 файлов `*_step100`) | 88a3b2f |
+| чекпоинт Windows | `_commit`, ротация `.prev` | 54b61a9 |
+| диагностика | `--cfl` в тесте Тейлора | 8639e59 |
+| J7a | Тейлор-Куинни, I9, предупреждение Tm_f ≤ 0 | 89555c2 |
+| J7b | ADR-009, how-to, реестр, changelog | 04dbe6f |
+| рестарт | JC 4340 + TQ в `test_checkpoint` | e638823 |
+| G4 | `energy_mass` в `test_axisym` | cf9133e |
+| ADR | XSPH и зависимость от dt | 78bb0ab |
+| BC6 | устойчивый извлекатель плато 1 | ed5ac88 |
 
-Состояние тестов на `claude-compute` после 4a85ec1:
-- `ctest -L jc` — 4/4;
-- `regression|checkpoint|e2e_bc` — зелёные;
-- `jc_*` unit — 8/8;
-- E2, E3 (`e2e_jc_spall`) — PASS, метка `jc_open_issue` снята;
-- E4 (`e2e_jc_taylor_e4`, slow) — качественные ворота PASS, энергия в режиме `--energy-warn-only`;
-- E5 — PASS (0.51 %).
+Подробности и числа — `04-pdv-energy-j7-bc6.md`.
 
-## 4. Открытые вопросы (ждут решения владельца)
+Состояние (сервер, `cf9133e`): быстрые тесты 112/112 в `build1/2/3`; `ctest -L regression` 14/14; E4 — энергия в режиме `--energy-warn-only`; `e2e_clamp_ES2_pc_full` PASS при `--time-limit=20000` (10 568 с). Результат полных прогонов BC6 после `ed5ac88` — см. раздел 7 в `04-...md` (заполняется).
 
-1. **Пропущен член −(p/ρ)·v_r/r в уравнении энергии 2D осесимметрии.**
-   - Это настоящая ошибка, см. `03-pmin-energy.md` §2.2.
-   - Исправление меняет все 2D осесимметричные расчёты, включая эталоны BC2/BC6 и `test_axisym`, поэтому оно **не закоммичено**.
-   - Варианты: исправить здесь с обновлением эталонов; вынести в отдельную ветку; оставить как известную проблему.
-   - Патч в одну строку. Он лежит в `~/axi_pdv.patch` на сервере, worktree `~/SPH_jc_pdv`. Вставляется в `src/single_step.cpp` сразу после `du[i] = f.du;`:
-     ```cpp
-     if constexpr (axis_sim && dim == 2)
-         du[i] -= derived.p[i] / sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
-     ```
-2. **Взвешивать ли `energy_log` в осесимметрии массой кольца (r0)?** Сейчас лог суммирует энергию без веса, и в 2D это не сохраняющаяся величина.
-3. **Неопознанный источник энергии при малом XSPH** (+6 % при ε = 0.05 даже с патчем). Кандидат — «плоская» масса m = ρ0·dx², но это не доказано. Это отдельная задача.
-4. **Литература:**
-   - эталон теста Тейлора, формат описан в `tests/data/jc/README.md`;
-   - откольная прочность 4340 вместо p_min = −4 ГПа.
+## 4. Открытые вопросы
 
-   Брать только с указанием источника.
-5. PR в `fiber_new` — только по просьбе.
+1. **Неопознанный источник энергии при малом XSPH** (ε = 0.05: невязка 6.49 %). Следующая задача. Кандидат — плоская масса m = ρ0·dx². Проверка: формулировка с массой на радиан (m = ρ0·r0·dx², суммы с 1/r).
+2. **XSPH зависит от dt**: `av` прибавляется без множителя dt (`ode_solver.hpp:83`). Решение владельца: исправлять отдельной задачей, она меняет все расчёты и эталоны (ADR-009).
+3. **E4 n_r = 24: 2.25 % > 2 %**, остаётся `--energy-warn-only`.
+4. **Ворота D = 0 в BC6** — краевой артефакт (частица #11388), оставлены жёсткими по решению владельца.
+5. **Поправить `contact/06-e2e-bc6.md`**: «182.8 ✔» верно только для прогона, где провал нашёлся. После полных прогонов BC6.
+6. **Литература**: откольная прочность 4340 вместо p_min = −4 ГПа; эталон Тейлора (`tests/data/jc/README.md`); значения `TODO(verify)`. Только с источником.
+7. **`e2e_clamp_ES2_pc_full`** не укладывается в TIMEOUT 3600 / `--time-limit=3000` на 2 ядрах (нужно ~10 600 с). CMake не менялся.
+8. **Push и PR** — только по просьбе владельца.
 
-## 5. Что осталось: J7 (план предложен, владелец ещё не подтвердил)
+## 5. Сервер `claude-compute`
 
-- **J7a, нагрев Тейлора-Куинни.**
-  - T хранится как отдельное поле: T += χ·Y·Δε_p/(ρ·c_p), u не трогается.
-  - Тест I9.
-  - Тест рестарта из чекпоинта.
-  - Одноразовое предупреждение при Tm_f ≤ 0.
-- **J7b, документация.**
-  - ADR-009.
-  - Строки 12–15 в `registry.md`.
-  - how-to в `docs/02-how-to/06-…`.
-  - Чекпоинт v2 в `docs/02-how-to/05-restart-checkpoints.md`.
-  - changelog.
-- **Проверка.** Прогон на сервере и отчёт `johnson-cook/04-j7.md`.
-
-Начинать J7 после ответа владельца по вопросам 1–2 из §4.
-
-## 6. Сервер `claude-compute`
-
-- `~/SPH_jc` — копия ветки на 4a85ec1, отстаёт от HEAD только на документацию. Сборки `build1/2/3` (SPH_DIM = 1/2/3) и `build3e` (SPH_ENERGY_LOG=ON): Ninja, Release.
-- `~/SPH_jc_pdv` — worktree с незакоммиченным патчем pdV.
-- `~/jc_runs/pmin_pdv/` — логи перебора p_min (`hel_p*`, `spall_p*`) и прогонов E4 с патчем и без.
+- 2 ядра, 7.7 ГБ, `OMP_NUM_THREADS=2`. Связь иногда рвётся: всё запускать через `setsid nohup` и очереди со `STATUS`. Образец — `~/jc_runs/queue_cf9133e.sh`.
+- `~/SPH_jc` — на HEAD. Сборки `build1/2/3` (SPH_DIM = 1/2/3) и `build3e` (SPH_ENERGY_LOG=ON), Ninja, Release.
+- `~/SPH_jc_pre` — временный worktree, **удалить** (`git worktree remove`).
+- `~/SPH_jc_pdv` и `~/axi_pdv.patch` устарели (патч принят в `a686ee9`).
+- Каталоги прогонов `~/jc_runs/`: `q88`, `q_cf9`, `xsph_dt`, `bc6_bisect`, `q_bc6`, `pmin_pdv` (прошлая сессия).
 
 Обновить код на сервере:
 ```
-git bundle create /tmp/jc.bundle 4a85ec1..fiber_johnson_cook   # 4a85ec1 — последний коммит на сервере
+git bundle create /tmp/jc.bundle <последний_коммит_на_сервере>..fiber_johnson_cook
 scp /tmp/jc.bundle claude-compute:~/
 ssh claude-compute 'cd ~/SPH_jc && git pull ~/jc.bundle fiber_johnson_cook'
 ```
@@ -107,13 +95,14 @@ ssh claude-compute 'cd ~/SPH_jc && git pull ~/jc.bundle fiber_johnson_cook'
 Полезные запуски:
 ```
 ctest --test-dir build1 -L jc --output-on-failure
-./test_e2e_jc_plate --case=spall --pmin=-4e9
 cmake -B build2 -DSPH_E2E_SLOW_TESTS=ON && ctest --test-dir build2 -R e2e_jc_taylor_e
 ```
 
-## 7. Технические заметки
+## 6. Технические заметки
 
-- В 2D у решателя всегда осесимметрия (`axis_sim` compile-time), масса «плоская»: m = ρ0·dx². Физическая масса кольца равна 2π·r0·m.
-- XSPH в этом решателе меняет саму скорость, поэтому он реально рассеивает кинетическую энергию (канал `D_xsph`).
-- У `e2e::ScopedWorkDir` в имени каталога есть случайный суффикс: раньше параллельные процессы писали в один каталог.
-- Тест Тейлора печатает энергию в трёх вариантах (без веса, с весом r0, с весом r), см. `tests/jc_taylor.hpp`.
+- В 2D у решателя всегда осесимметрия (`axis_sim` compile-time), масса «плоская»: m = ρ0·dx². Физическая масса кольца 2π·r0·m; лог энергии теперь её учитывает.
+- XSPH меняет саму скорость, поэтому реально рассеивает кинетическую энергию (канал `D_xsph`), и его вклад зависит от dt.
+- Режим нагрева JC: `jc_heating = energy` (по умолчанию) или `taylor_quinney` (`jc_chi`, 0.9).
+- Извлекатель ступеней BC6 — `tests/e2e_staircase.hpp`.
+- У `e2e::ScopedWorkDir` в имени каталога случайный суффикс.
+- Тест Тейлора печатает энергию в трёх вариантах (без веса, вес r0, вес r), см. `tests/jc_taylor.hpp`.
