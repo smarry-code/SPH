@@ -41,6 +41,13 @@
   U1–U20, I1–I9, E1–E5; ссылки на [ADR-009](../04-explanation/decisions/adr-009-johnson-cook.md)
   и [how-to 06](../02-how-to/06-johnson-cook-material.md).
 
+- Ключ `xsph_mode = velocity | position` (по умолчанию `velocity`, поведение прежнее): `position` —
+  классический XSPH Монагана, диагностический режим; без стабилизатора расчёты Тейлора и BC2/BC6
+  обрываются по $\rho<0$ (см. `johnson-cook/05-xsph-axisym-energy.md`).
+- Лог энергии (`SPH_ENERGY_LOG`): диагностические каналы мощности `P_pair_*`, `P_hoop_v`, `P_av_*`,
+  `P_dev_u`, `P_pdv_u`, `P_szz_u` и `closure` (только чтение состояния).
+- Тесты `e2e_clamp_*_pc_full`: бюджет `--time-limit` 12000 с, TIMEOUT 14400 с (ES2 — 10 568 с).
+
 ### Исправлено
 
 - В 2D осесимметрии добавлен член −(p/ρ)·v_r/r в уравнение энергии (работа давления на
