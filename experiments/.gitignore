@@ -13,3 +13,6 @@
 # GIF ткани с двух сторон (anim2_*), 3-15 МБ: на диске, в git не кладутся (лимит 2,5 МБ)
 2026-10-17-guo2019-1t-pinball-vbl/anim_damage/*/anim2_*.gif
 2026-10-18-guo2019-2t-law4/anim_damage/*/anim2_*.gif
+
+# 2026-11-08-guo2019-1t-law3push-mu027: GIF и PNG выстрелов 69 и 70 (37 МБ), пересчёт -- scripts/rebuild_artifacts.sh
+2026-11-08-guo2019-1t-law3push-mu027/anim/
