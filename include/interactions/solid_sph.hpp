@@ -107,12 +107,20 @@ struct SolidDelta
     double dh = 0.0;
 #ifdef SPH_ENERGY_LOG
     double du_av = 0.0; // вклад искусственной вязкости в du (SPH_ENERGY_LOG)
+    // Раздельные вклады в dv по механизмам (только диагностика, чтение состояния):
+    double dv_hoop[dim] = {}; // осевые (hoop) источники (axis_sim, dim==2)
+    double dv_av[dim] = {};   // искусственная вязкость
 #endif
 
     SolidDelta& operator+=(const SolidDelta& o)
     {
 #ifdef SPH_ENERGY_LOG
         du_av += o.du_av;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            dv_hoop[d] += o.dv_hoop[d];
+            dv_av[d] += o.dv_av[d];
+        }
 #endif
         for (std::size_t d = 0; d < dim; ++d)
         {
@@ -157,6 +165,13 @@ struct SolidFinal
     double rxy = 0.0, rxz = 0.0, ryz = 0.0;
 #ifdef SPH_ENERGY_LOG
     double du_av = 0.0; // тепло искусственной вязкости, du/dt (SPH_ENERGY_LOG)
+    // Диагностика механизмов (энергетический разбор, SPH_ENERGY_LOG):
+    double dv_hoop[dim] = {}; // осевые источники в dv
+    double dv_av[dim] = {};   // ИВ в dv
+    double du_pair = 0.0;     // парная часть du без ИВ
+    double du_dev = 0.0;      // вся девиаторная работа s:e/rho
+    double du_szz = 0.0;      // из неё: szz*ezz/rho
+    double du_pdv = 0.0;      // -(p/rho)*v_r/r
 #endif
 };
 
@@ -786,11 +801,19 @@ inline void compute_solid_sph_contributions(
                         {
                             di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
                             dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+#ifdef SPH_ENERGY_LOG
+                            di.dv_hoop[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
+                            dj.dv_hoop[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+#endif
                         }
                         else if (d == 1)
                         {
                             di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
                             dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+#ifdef SPH_ENERGY_LOG
+                            di.dv_hoop[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
+                            dj.dv_hoop[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+#endif
                         }
                     }
                 }
@@ -844,11 +867,19 @@ inline void compute_solid_sph_contributions(
                         {
                             di.dv[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
                             dj.dv[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+#ifdef SPH_ENERGY_LOG
+                            di.dv_hoop[0] += rhoij * ext.mass[j] * ((ext.sxx[j] - ext.szz[j]) / ext.x[0][j]) * w;
+                            dj.dv_hoop[0] += rhoij * ext.mass[i] * ((ext.sxx[i] - ext.szz[i]) / ext.x[0][i]) * w;
+#endif
                         }
                         else if (d == 1)
                         {
                             di.dv[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
                             dj.dv[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+#ifdef SPH_ENERGY_LOG
+                            di.dv_hoop[1] += rhoij * ext.mass[j] * (ext.sxy[j] / ext.x[0][j]) * w;
+                            dj.dv_hoop[1] += rhoij * ext.mass[i] * (ext.sxy[i] / ext.x[0][i]) * w;
+#endif
                         }
                     }
                 }
@@ -889,6 +920,8 @@ inline void compute_solid_sph_contributions(
 #ifdef SPH_ENERGY_LOG
                     di.du_av += -dedt_i;
                     dj.du_av += -dedt_j;
+                    di.dv_av[d] += dvxdt_i;
+                    dj.dv_av[d] += -dvxdt_j;
 #endif
                 }
             }
@@ -1012,6 +1045,18 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
         }
 #ifdef SPH_ENERGY_LOG
         f.du_av = 0.5 * d.du_av;
+        for (std::size_t dd = 0; dd < dim; ++dd)
+        {
+            f.dv_hoop[dd] = d.dv_hoop[dd];
+            f.dv_av[dd] = d.dv_av[dd];
+        }
+        f.du_pair = 0.5 * (d.du - d.du_av);
+        f.du_dev = deviatoric;
+        if constexpr (axis_sim && dim == 2)
+        {
+            f.du_szz = sys.szz[i] * ezz / sys.rho[i];
+            f.du_pdv = -p[i] / sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
+        }
 #endif
 
         // Закон Гука + производная Яуманна (int_force.cpp, финальный блок).

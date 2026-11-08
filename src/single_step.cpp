@@ -187,6 +187,28 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
 
 #ifdef SPH_ENERGY_LOG
     if (wb.du_av.size() < ntotal) wb.du_av.resize(ntotal); // только рост
+    if (wb.energy_log)
+    {
+        if (wb.dv_pair.size() != dim)
+        {
+            wb.dv_pair.assign(dim, {});
+            wb.dv_hoop.assign(dim, {});
+            wb.dv_av.assign(dim, {});
+        }
+        for (size_t d = 0; d < dim; ++d)
+        {
+            if (wb.dv_pair[d].size() < ntotal) wb.dv_pair[d].resize(ntotal);
+            if (wb.dv_hoop[d].size() < ntotal) wb.dv_hoop[d].resize(ntotal);
+            if (wb.dv_av[d].size() < ntotal) wb.dv_av[d].resize(ntotal);
+        }
+        if (wb.du_pair.size() < ntotal)
+        {
+            wb.du_pair.resize(ntotal);
+            wb.du_dev.resize(ntotal);
+            wb.du_szz.resize(ntotal);
+            wb.du_pdv.resize(ntotal);
+        }
+    }
 #endif
     // --- Запись в выходные параметры + шим совместимости в sys -------------
     for (size_t i = 0; i < ntotal; ++i)
@@ -196,6 +218,19 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         du[i] = f.du;
 #ifdef SPH_ENERGY_LOG
         wb.du_av[i] = f.du_av;
+        if (wb.energy_log)
+        {
+            for (size_t d = 0; d < dim; ++d)
+            {
+                wb.dv_hoop[d][i] = f.dv_hoop[d];
+                wb.dv_av[d][i] = f.dv_av[d];
+                wb.dv_pair[d][i] = f.dv[d] - f.dv_hoop[d] - f.dv_av[d];
+            }
+            wb.du_pair[i] = f.du_pair;
+            wb.du_dev[i] = f.du_dev;
+            wb.du_szz[i] = f.du_szz;
+            wb.du_pdv[i] = f.du_pdv;
+        }
 #endif
         for (size_t d = 0; d < dim; ++d)
         {
