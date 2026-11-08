@@ -168,6 +168,32 @@ def splice_rows(header, chunks, tcol):
     return out
 
 
+def fix_monitor_steps(header, rows):
+    """Сквозной номер шага в склеенном мониторе. После --restart монитор считает шаги заново с 1, а кадры
+    (fiber_output_<шаг>) и energy_log.csv -- сквозные; скрипты анимаций сопоставляют кадры с монитором по шагу.
+    На стыке (шаг не вырос) сдвиг = предыдущий сквозной шаг + round((t - t_пред) / dt) - шаг строки.
+    Повторный вызов на исправленных строках ничего не меняет. Возвращает число стыков."""
+    if "step" not in header or "t" not in header:
+        return 0
+    si, ti = header.index("step"), header.index("t")
+    di = header.index("dt") if "dt" in header else None
+    off, prev_s, prev_t, n = 0, None, None, 0
+    for row in rows:
+        try:
+            s, t = int(float(row[si])), float(row[ti])
+        except (IndexError, ValueError):
+            continue
+        if prev_s is not None and s + off <= prev_s:
+            dt = float(row[di]) if di is not None else 0.0
+            gap = int(round((t - prev_t) / dt)) if dt > 0.0 else 1
+            off = prev_s + max(gap, 1) - s
+            n += 1
+        if off:
+            row[si] = str(s + off)
+        prev_s, prev_t = s + off, t
+    return n
+
+
 def _write_csv(path, header, rows):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="") as f:
@@ -202,6 +228,7 @@ def splice_shot(sdir):
         header, last = _read_csv(m)
         rows = splice_rows(header, [_read_csv(q)[1] for q in parts] + [last], "t")
         gaps = splice_rows.gaps
+        fix_monitor_steps(header, rows)
         _write_csv(m, header, rows)
         for q in parts:
             os.remove(q)
