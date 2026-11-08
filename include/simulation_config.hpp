@@ -149,13 +149,6 @@ struct SimulationConfig
     // x += dt*(v + av); кинетическая энергия не меняется, D_xsph = 0). Только PC-решатель.
     int xsph_mode = 0;
 
-    // --- Массы в парных суммах Solid-SPH (2D осесимметрия) ---
-    // axisym_pair_mass: 0 = flat (плоская масса m = rho0*dx^2, прежнее поведение, побитово),
-    // 1 = ring (эффективные массы m*r0/r_bar, r_bar = (|r_i|+|r_j|)/2: парный обмен
-    // энергией сохраняется с физическим весом 2*pi*r0*m). Только dim == 2 и axis_sim,
-    // иначе ключ игнорируется.
-    int axisym_pair_mass = 0;
-
 #ifdef SPH_CONTACT_STATS
     // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
     // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
@@ -197,7 +190,6 @@ inline void SimulationConfig::apply_defaults()
     k_solid_elements = "skip";
     jc_heating = 0;  jc_chi = 0.9;
     xsph_mode = 0;
-    axisym_pair_mass = 0;
 #ifdef SPH_ENERGY_LOG
     energy_log_every = 0;  energy_log_file = "energy_log.csv";
 #endif

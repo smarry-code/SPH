@@ -309,9 +309,6 @@ struct SolidExtended
     std::vector<double> mass, rho, p, c;
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
     std::vector<double> hsml;
-    // Лагранжев радиус r0 (ParticleSystem::r0), нужен режиму axisym_pair_mass = ring.
-    // Ghost наследует r0 источника (положительный, не зеркалится).
-    std::vector<double> r0;
     std::vector<int> body; // номер тела (sys.body); ghost наследует body источника
     std::size_t nreal = 0;
     std::size_t next = 0; // nreal + nghost
@@ -334,7 +331,6 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
     ext.sxx.resize(ext.next);  ext.syy.resize(ext.next);  ext.szz.resize(ext.next);
     ext.sxy.resize(ext.next);  ext.syz.resize(ext.next);  ext.sxz.resize(ext.next);
     ext.hsml.resize(ext.next);
-    ext.r0.resize(ext.next);
     ext.body.resize(ext.next);
 
     for (std::size_t i = 0; i < nreal; ++i)
@@ -345,7 +341,6 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxx[i] = sys.sxx[i];   ext.syy[i] = sys.syy[i];   ext.szz[i] = sys.szz[i];
         ext.sxy[i] = sys.sxy[i];   ext.syz[i] = sys.syz[i];   ext.sxz[i] = sys.sxz[i];
         ext.hsml[i] = sys.hsml[i];
-        ext.r0[i] = sys.r0[i];
         ext.body[i] = sys.body[i];
     }
     for (std::size_t g = 0; g < nghost; ++g)
@@ -365,7 +360,6 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxx[dst] = sys.sxx[src];   ext.syy[dst] = sys.syy[src];   ext.szz[dst] = sys.szz[src];
         ext.sxy[dst] = -sys.sxy[src];  ext.syz[dst] = sys.syz[src];   ext.sxz[dst] = sys.sxz[src];
         ext.hsml[dst] = sys.hsml[src];
-        ext.r0[dst] = sys.r0[src];
         ext.body[dst] = sys.body[src]; // как inzializ_2d_symm_index
     }
 }
@@ -638,33 +632,12 @@ inline void compute_solid_sph_contributions(
     const double epsilon_h = cfg.epsilon_h;
     const double alpha = cfg.alpha, beta = cfg.beta, etq = cfg.etq;
 
-    // Режим масс в парных суммах (axisym_pair_mass) выбирается ОДИН раз вне цикла по парам:
-    // run(bool_constant<Ring>) -- две инстанции тела. Flat (по умолчанию, а также любой
-    // dim != 2 или axis_sim == false) берёт mi = ext.mass[i], mj = ext.mass[j] -- те же
-    // значения и те же операции, что и раньше (побитово). Ring (только dim == 2 и
-    // axis_sim): эффективные массы с физическим весом кольца 2*pi*r0,
-    //   r_bar = (|r_i| + |r_j|)/2,  mj = m_j*r0_j/r_bar,  mi = m_i*r0_i/r_bar,
-    // тогда вклад пары в энергию 2*pi*r0_i*m_i*mj*h = 2*pi*m_i*m_j*r0_i*r0_j*h/r_bar
-    // симметричен по i<->j. Осевые (hoop) источники -- источниковые, не парные -- массу
-    // ext.mass сохраняют.
-    auto run = [&](auto ring_tag) {
-    constexpr bool ring = decltype(ring_tag)::value;
     exec.parallel_for(n, [&](std::size_t k) {
         const SolidSphPrimitive& prim = primitives[k];
         const rhs::index_t i = prim.i, j = prim.j;
         const double w = prim.w;
         const double* dwdx = prim.dwdx;
         const bool j_real = (j < ext.nreal);
-        double mi = ext.mass[i], mj = ext.mass[j];
-        if constexpr (ring)
-        {
-            const double rbar = 0.5 * (std::fabs(ext.x[0][i]) + std::fabs(ext.x[0][j]));
-            if (rbar > 0.0)
-            {
-                mj = ext.mass[j] * ext.r0[j] / rbar;
-                mi = ext.mass[i] * ext.r0[i] / rbar;
-            }
-        }
 
         SolidDelta di{}, dj{};
 
@@ -677,18 +650,18 @@ inline void compute_solid_sph_contributions(
 
             if (density_method == 1)
             {
-                di.drho = mj * vcc;
-                dj.drho = mi * vcc;
+                di.drho = ext.mass[j] * vcc;
+                dj.drho = ext.mass[i] * vcc;
             }
             else if (density_method == 2)
             {
-                di.drho = (ext.rho[i] / ext.rho[j]) * mj * vcc;
-                dj.drho = (ext.rho[j] / ext.rho[i]) * mi * vcc;
+                di.drho = (ext.rho[i] / ext.rho[j]) * ext.mass[j] * vcc;
+                dj.drho = (ext.rho[j] / ext.rho[i]) * ext.mass[i] * vcc;
             }
             else // density_method == 3 (искусственная диффузия, Bonet-Lok/Molteni-Colagrossi)
             {
-                const double q_i = mj * vcc;
-                const double q_j = mi * vcc;
+                const double q_i = ext.mass[j] * vcc;
+                const double q_j = ext.mass[i] * vcc;
                 const double h_ij = 0.5 * (ext.hsml[i] + ext.hsml[j]);
                 double rr = 0.0;
                 double dx[dim];
@@ -703,7 +676,7 @@ inline void compute_solid_sph_contributions(
                     psi_i += (coef_i * dx[d]) * dwdx[d];
                     psi_j += (coef_j * (-dx[d])) * dwdx[d];
                 }
-                const double dVi = mi * vi, dVj = mj * vj;
+                const double dVi = ext.mass[i] * vi, dVj = ext.mass[j] * vj;
                 const double c0 = 0.5 * (ext.c[i] + ext.c[j]);
                 const double D_i = xi * h_ij * c0 * psi_i * dVj;
                 const double D_j = xi * h_ij * c0 * psi_j * dVi;
@@ -719,44 +692,44 @@ inline void compute_solid_sph_contributions(
 
             if constexpr (dim == 1)
             {
-                di.dexx = (mj * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                dj.dexx = (mi * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
             }
             else if constexpr (dim == 2)
             {
-                di.dexx = (mj * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                di.deyy = (mj * dvx_ji[1] * dwdx[1]) / ext.rho[j];
-                di.dexy = 0.5 * (((mj * dvx_ji[0] * dwdx[1]) / ext.rho[j])
-                                + ((mj * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                dj.dexx = (mi * dvx_ji[0] * dwdx[0]) / ext.rho[i];
-                dj.deyy = (mi * dvx_ji[1] * dwdx[1]) / ext.rho[i];
-                dj.dexy = 0.5 * (((mi * dvx_ji[0] * dwdx[1]) / ext.rho[i])
-                                + ((mi * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                di.drxy = 0.5 * (((mj * dvx_ji[0] * dwdx[1]) / ext.rho[j])
-                                - ((mj * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                dj.drxy = 0.5 * (((mi * dvx_ji[0] * dwdx[1]) / ext.rho[i])
-                                - ((mi * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
+                di.dexy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
+                                + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
+                dj.dexy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
+                                + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                di.drxy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j])
+                                - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                dj.drxy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i])
+                                - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
             }
             else if constexpr (dim == 3)
             {
-                di.dexx = (mj * dvx_ji[0] * dwdx[0]) / ext.rho[j];
-                di.deyy = (mj * dvx_ji[1] * dwdx[1]) / ext.rho[j];
-                di.dezz = (mj * dvx_ji[2] * dwdx[2]) / ext.rho[j];
-                di.dexy = 0.5 * (((mj * dvx_ji[0] * dwdx[1]) / ext.rho[j]) + ((mj * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                di.deyz = 0.5 * (((mj * dvx_ji[1] * dwdx[2]) / ext.rho[j]) + ((mj * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
-                di.dexz = 0.5 * (((mj * dvx_ji[0] * dwdx[2]) / ext.rho[j]) + ((mj * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
-                dj.dexx = (mi * dvx_ji[0] * dwdx[0]) / ext.rho[i];
-                dj.deyy = (mi * dvx_ji[1] * dwdx[1]) / ext.rho[i];
-                dj.dezz = (mi * dvx_ji[2] * dwdx[2]) / ext.rho[i];
-                dj.dexy = 0.5 * (((mi * dvx_ji[0] * dwdx[1]) / ext.rho[i]) + ((mi * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                dj.deyz = 0.5 * (((mi * dvx_ji[1] * dwdx[2]) / ext.rho[i]) + ((mi * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
-                dj.dexz = 0.5 * (((mi * dvx_ji[0] * dwdx[2]) / ext.rho[i]) + ((mi * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
-                di.drxy = 0.5 * (((mj * dvx_ji[0] * dwdx[1]) / ext.rho[j]) - ((mj * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
-                di.dryz = 0.5 * (((mj * dvx_ji[1] * dwdx[2]) / ext.rho[j]) - ((mj * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
-                di.drxz = 0.5 * (((mj * dvx_ji[0] * dwdx[2]) / ext.rho[j]) - ((mj * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
-                dj.drxy = 0.5 * (((mi * dvx_ji[0] * dwdx[1]) / ext.rho[i]) - ((mi * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
-                dj.dryz = 0.5 * (((mi * dvx_ji[1] * dwdx[2]) / ext.rho[i]) - ((mi * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
-                dj.drxz = 0.5 * (((mi * dvx_ji[0] * dwdx[2]) / ext.rho[i]) - ((mi * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
+                di.dexx = (ext.mass[j] * dvx_ji[0] * dwdx[0]) / ext.rho[j];
+                di.deyy = (ext.mass[j] * dvx_ji[1] * dwdx[1]) / ext.rho[j];
+                di.dezz = (ext.mass[j] * dvx_ji[2] * dwdx[2]) / ext.rho[j];
+                di.dexy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                di.deyz = 0.5 * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
+                di.dexz = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) + ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
+                dj.dexx = (ext.mass[i] * dvx_ji[0] * dwdx[0]) / ext.rho[i];
+                dj.deyy = (ext.mass[i] * dvx_ji[1] * dwdx[1]) / ext.rho[i];
+                dj.dezz = (ext.mass[i] * dvx_ji[2] * dwdx[2]) / ext.rho[i];
+                dj.dexy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                dj.deyz = 0.5 * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
+                dj.dexz = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) + ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
+                di.drxy = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[1]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[1] * dwdx[0]) / ext.rho[j]));
+                di.dryz = 0.5 * (((ext.mass[j] * dvx_ji[1] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[1]) / ext.rho[j]));
+                di.drxz = 0.5 * (((ext.mass[j] * dvx_ji[0] * dwdx[2]) / ext.rho[j]) - ((ext.mass[j] * dvx_ji[2] * dwdx[0]) / ext.rho[j]));
+                dj.drxy = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[1]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[1] * dwdx[0]) / ext.rho[i]));
+                dj.dryz = 0.5 * (((ext.mass[i] * dvx_ji[1] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[1]) / ext.rho[i]));
+                dj.drxz = 0.5 * (((ext.mass[i] * dvx_ji[0] * dwdx[2]) / ext.rho[i]) - ((ext.mass[i] * dvx_ji[2] * dwdx[0]) / ext.rho[i]));
             }
         }
 
@@ -802,8 +775,8 @@ inline void compute_solid_sph_contributions(
                     // массу -- в отличие от he, который использует h ДО этого
                     // домножения (см. "he += ... * h;" выше, до if(d==0)/...).
                     h *= rhoij;
-                    const double dvxdt_i = mj * h;
-                    const double dvxdt_j = mi * h;
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
                     di.dv[d] += dvxdt_i;
                     dj.dv[d] += -dvxdt_j;
 
@@ -822,8 +795,8 @@ inline void compute_solid_sph_contributions(
                     }
                 }
                 he *= rhoij;
-                di.du += mj * he;
-                dj.du += mi * he;
+                di.du += ext.mass[j] * he;
+                dj.du += ext.mass[i] * he;
             }
             else // pa_sph == 2
             {
@@ -860,8 +833,8 @@ inline void compute_solid_sph_contributions(
                         }
                     }
 
-                    const double dvxdt_i = mj * h;
-                    const double dvxdt_j = mi * h;
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
                     di.dv[d] += dvxdt_i;
                     dj.dv[d] += -dvxdt_j;
 
@@ -879,8 +852,8 @@ inline void compute_solid_sph_contributions(
                         }
                     }
                 }
-                di.du += mj * he;
-                dj.du += mi * he;
+                di.du += ext.mass[j] * he;
+                dj.du += ext.mass[i] * he;
             }
         }
 
@@ -905,12 +878,12 @@ inline void compute_solid_sph_contributions(
                 for (std::size_t d = 0; d < dim; ++d)
                 {
                     const double h = -piv * dwdx[d];
-                    const double dvxdt_i = mj * h;
-                    const double dvxdt_j = mi * h;
+                    const double dvxdt_i = ext.mass[j] * h;
+                    const double dvxdt_j = ext.mass[i] * h;
                     di.dv[d] += dvxdt_i;
                     dj.dv[d] += -dvxdt_j;
-                    const double dedt_i = mj * dvx_iminusj[d] * h;
-                    const double dedt_j = mi * dvx_iminusj[d] * h;
+                    const double dedt_i = ext.mass[j] * dvx_iminusj[d] * h;
+                    const double dedt_j = ext.mass[i] * dvx_iminusj[d] * h;
                     di.du += -dedt_i; // Acc::add(dedt[i], -(dedt_i)) в art_visc.cpp
                     dj.du += -dedt_j;
 #ifdef SPH_ENERGY_LOG
@@ -927,8 +900,8 @@ inline void compute_solid_sph_contributions(
             for (std::size_t d = 0; d < dim; ++d)
             {
                 const double dvx_ij = ext.vx[d][i] - ext.vx[d][j];
-                const double av_i = 2.0 * mj * dvx_ij / rho_sum * w;
-                const double av_j = 2.0 * mi * dvx_ij / rho_sum * w;
+                const double av_i = 2.0 * ext.mass[j] * dvx_ij / rho_sum * w;
+                const double av_j = 2.0 * ext.mass[i] * dvx_ij / rho_sum * w;
                 di.xsph[d] += -av_i;
                 dj.xsph[d] += av_j;
             }
@@ -943,12 +916,6 @@ inline void compute_solid_sph_contributions(
                 j, dj, rhs::ContributionMeta{kSolidSphInteractionType, static_cast<std::uint64_t>(k), 1}});
         }
     });
-    };
-    if constexpr (axis_sim && dim == 2)
-    {
-        if (cfg.axisym_pair_mass == 1) { run(std::true_type{}); return; }
-    }
-    run(std::false_type{});
 }
 
 // ----------------------------------------------------------------------

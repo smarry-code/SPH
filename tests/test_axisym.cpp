@@ -510,7 +510,7 @@ struct PairEnergy
     double p_min = 0.0, p_max = 0.0;
 };
 
-PairEnergy pair_energy_balance(double lam, int pair_mass = 0)
+PairEnergy pair_energy_balance(double lam)
 {
     constexpr size_t nr = 24, nz = 24;
     constexpr double k = 1.0e4;
@@ -542,7 +542,6 @@ PairEnergy pair_energy_balance(double lam, int pair_mass = 0)
 
     SimulationConfig cfg;
     cfg.pa_sph = 2; cfg.skf = 1; cfg.density_method = 1;
-    cfg.axisym_pair_mass = pair_mass;
     cfg.maxn = n; cfg.max_interaction = n * 200;
 
     rhs::CpuExecutor exec;
@@ -594,14 +593,13 @@ void test_pair_energy_balance()
 {
     std::printf("\n[G5] парный баланс энергии, гомологическое расширение v_r = k r (диагностика)\n");
     constexpr double pi = 3.14159265358979323846;
-    for (const int pm : {0, 1})
     for (const double lam : {1.0, 1.2})
     {
-        const PairEnergy o = pair_energy_balance(lam, pm);
+        const PairEnergy o = pair_energy_balance(lam);
         // P_r0, P_r несут лишний множитель 2*pi*r (размерность) -- делим на
         // 2*pi*12*dx (середина решётки), чтобы сравнивать с P_flat/S.
         const double wref = 2.0 * pi * 12.0 * kDx;
-        std::printf("  [%s] lam = %.1f: p in [%.4e, %.4e] Pa\n", pm ? "ring" : "flat", lam, o.p_min, o.p_max);
+        std::printf("  lam = %.1f: p in [%.4e, %.4e] Pa\n", lam, o.p_min, o.p_max);
         std::printf("    все:        P_flat/S = %+.3e, P_r0/(wref*S) = %+.3e, P_r/(wref*S) = %+.3e  (S = %.3e)\n",
                     o.flat_all / o.scale_all, o.r0_all / (wref * o.scale_all),
                     o.r_all / (wref * o.scale_all), o.scale_all);
@@ -613,77 +611,6 @@ void test_pair_energy_balance()
               "G5 исходное p однородно и > 0");
         // G5a: ворот нет -- см. отчёт (ghost/hoop у оси не дают парного баланса).
     }
-}
-
-// --- G6. Чистая парная консервативность: одна пара вне оси, режим flat/ring --
-// Две частицы (r_i < r_j, соседи в ядре, ghost нет: r > 2h), разные массы, плотности,
-// скорости (сближение -- искусственная вязкость активна). Вклад пары, взвешенный
-// физическим весом w = 2*pi*r0*m:  B = sum_{i,j} w_a*(v_a . dv_a + 0.5*du_a).
-// Ring: B ~ 0 (машинный ноль относительно масштаба sum |w v.dv|); flat: B != 0
-// (дисбаланс m_i m_j (r0_i - r0_j)/2 * h*(v_i+v_j) -- печатается).
-double pair_balance_one(int mode, double& scale)
-{
-    constexpr double pi = 3.14159265358979323846;
-    ParticleSystem sys;
-    sys.resize(2);
-    const double r_i = 10.0 * kDx, r_j = r_i + 1.1 * kDx;
-    const double rr[2] = {r_i, r_j};
-    const double zz[2] = {0.0, 0.4 * kDx};
-    const double vr[2] = {+5.0, -3.0}, vz[2] = {1.5, -0.5};
-    const double mm[2] = {kRho0 * kDx * kDx, 1.7 * kRho0 * kDx * kDx};
-    const double rh[2] = {1.01 * kRho0, 1.03 * kRho0};
-    for (size_t a = 0; a < 2; ++a)
-    {
-        sys.x[0][a] = rr[a]; sys.x[1][a] = zz[a];
-        sys.vx[0][a] = vr[a]; sys.vx[1][a] = vz[a];
-        sys.itype[a] = kItype; sys.rho[a] = rh[a]; sys.rho_0[a] = kRho0;
-        sys.mass[a] = mm[a]; sys.hsml[a] = 1.3 * kDx; sys.axis[a] = 0;
-    }
-    sys.init_reference_radius(2);
-    // r0 != r: рассинхронизируем (решётка деформирована), r0_i/r0_j независимы от x
-    sys.r0[0] = 0.93 * rr[0]; sys.r0[1] = 1.08 * rr[1];
-
-    SimulationConfig cfg;
-    cfg.pa_sph = 2; cfg.skf = 1; cfg.density_method = 1;
-    cfg.axisym_pair_mass = mode;
-    cfg.maxn = 2; cfg.max_interaction = 400;
-
-    rhs::CpuExecutor exec;
-    interactions::SolidDerived derived;
-    interactions::compute_solid_derived(exec, cfg.mats, sys, 2, derived);
-    interactions::GhostSet ghosts;
-    interactions::build_ghost_set(sys, 2, ghosts);
-    interactions::SolidExtended ext;
-    interactions::build_solid_extended(sys, 2, derived, ghosts, ext);
-    interactions::SolidSphSearchResult search;
-    interactions::build_solid_sph_search(exec, cfg, ext, search);
-    rhs::IndexedContributions<interactions::SolidDelta> buf;
-    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, buf);
-    const std::vector<interactions::SolidDelta> red = rhs::reduce_contributions(exec, buf, 2);
-
-    check(ghosts.source_index.empty() && search.primitives.size() == 1, "G6 одна пара без ghost");
-    double B = 0.0;
-    scale = 0.0;
-    for (size_t a = 0; a < 2; ++a)
-    {
-        const double w = 2.0 * pi * sys.r0[a] * sys.mass[a];
-        const double vdv = sys.vx[0][a] * red[a].dv[0] + sys.vx[1][a] * red[a].dv[1];
-        B += w * (vdv + 0.5 * red[a].du);
-        scale += w * std::fabs(vdv);
-    }
-    return B;
-}
-
-void test_pair_conservation()
-{
-    std::printf("\n[G6] парная консервативность (одна пара, вес 2*pi*r0*m)\n");
-    double s_flat = 0.0, s_ring = 0.0;
-    const double b_flat = pair_balance_one(0, s_flat);
-    const double b_ring = pair_balance_one(1, s_ring);
-    std::printf("  flat: B/scale = %+.3e  (scale = %.3e)\n", b_flat / s_flat, s_flat);
-    std::printf("  ring: B/scale = %+.3e  (scale = %.3e)\n", b_ring / s_ring, s_ring);
-    check(std::fabs(b_ring) / s_ring < 1e-12, "G6a ring: баланс пары < 1e-12");
-    check(std::fabs(b_flat) / s_flat > 1e-6, "G6b flat: баланс пары != 0 при r0_i != r0_j");
 }
 
 } // namespace
@@ -701,7 +628,6 @@ int main()
     test_hoop_pressure_work();
     test_energy_mass_ring();
     test_pair_energy_balance();
-    test_pair_conservation();
 
     std::printf("\n=== %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);
