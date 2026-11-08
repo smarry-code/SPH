@@ -315,6 +315,111 @@ def shot_running(sdir):
     return False
 
 
+# --- Допуск выстрела к запуску по свободным потокам (правила claude-compute-8t, 2026-11-08):
+#     новый выстрел на N потоков ставится, только если uptime > 600 с, proj_status.sh != 2 и
+#     threads_free.sh показывает FREE >= N. Через --slot-verify-s после старта проверяется, что выстрел
+#     виден в threads_free.sh со своими N потоками (или BUSY вырос на N); иначе выстрел снимается, серия стоп.
+#     GATE: проверка и старт -- по одному выстрелу, второй выстрел видит потоки первого.
+GATE = threading.Lock()
+GATE_FAILED = []  # непусто -- проверка потоков уже не прошла, новых выстрелов не ставить
+
+
+def _shot_threads():
+    """Сумма --threads= у идущих guo2019_shot (запасной счёт, если нет threads_free.sh)."""
+    total = 0
+    for p in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(p, "rb") as f:
+                argv = f.read().split(b"\0")
+        except OSError:
+            continue
+        if argv and argv[0].endswith(b"guo2019_shot"):
+            for a in argv:
+                if a.startswith(b"--threads="):
+                    try:
+                        total += int(a[len(b"--threads="):])
+                    except ValueError:
+                        pass
+    return total
+
+
+def threads_free(args):
+    """(BUSY, FREE, вывод) по threads_free.sh; без скрипта -- по --threads= идущих guo2019_shot из 8.
+    None -- скрипт не дал итоговой строки."""
+    sc = os.path.expanduser(getattr(args, "slot_script", "~/proj_runs/threads_free.sh"))
+    if not os.path.exists(sc):
+        b = _shot_threads()
+        return b, 8 - b, ""
+    try:
+        out = subprocess.run([sc], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                             timeout=120).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"BUSY=(\d+)\s+FREE=(-?\d+)", out)
+    return (int(m.group(1)), int(m.group(2)), out) if m else None
+
+
+def proj_rc(args):
+    sc = os.path.expanduser(getattr(args, "proj_status", "~/proj_runs/proj_status.sh"))
+    if not os.path.exists(sc):
+        return 0  # серия proj_* убрана с сервера
+    try:
+        return subprocess.run([sc], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def uptime_s():
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 1e9
+
+
+def start_gated(args, cmd, env, lg, threads, label):
+    """Дождаться свободных потоков, запустить выстрел, проверить, что он занял потоки. Возвращает Popen."""
+    min_up = getattr(args, "min_uptime", 600)
+    poll = getattr(args, "slot_poll", 300)
+    verify = getattr(args, "slot_verify_s", 120)
+    with GATE:
+        if GATE_FAILED:
+            raise RuntimeError("%s не запущен: %s" % (label, GATE_FAILED[0]))
+        last, t_last = None, 0.0
+        while True:
+            up, rc, tf = uptime_s(), proj_rc(args), threads_free(args)
+            if up >= min_up and rc in (0, 1) and tf is not None and tf[1] >= threads:
+                break
+            state = "uptime=%.0f с, proj rc=%s, %s" % (
+                up, rc, "BUSY=%d FREE=%d" % tf[:2] if tf else "threads_free.sh: нет итога")
+            if rc == 2:
+                state += " -- proj: ОСТАНОВЛЕНО С ОШИБКОЙ, новые выстрелы не ставлю, жду решения владельца"
+            if state != last or time.time() - t_last > 3600:
+                log(args.work, "жду %d свободных потоков для %s: %s" % (threads, label, state))
+                last, t_last = state, time.time()
+            time.sleep(poll)
+        busy0 = tf[0]
+        p = subprocess.Popen(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env)
+        log(args.work, "запущен %s: PID %d, %d потоков (было BUSY=%d FREE=%d)" % (label, p.pid, threads, busy0, tf[1]))
+        t_end = time.time() + verify
+        while time.time() < t_end and p.poll() is None:
+            time.sleep(5)
+        if p.poll() is None:
+            tf2 = threads_free(args)
+            seen = tf2 is not None and re.search(r"^%d \S+ threads=%d\b" % (p.pid, threads), tf2[2], re.M)
+            if not (seen or (tf2 is not None and tf2[0] >= busy0 + threads)):
+                p.kill()
+                p.wait()
+                msg = "ОШИБКА: %s (PID %d) не занял %d потоков через %d с (BUSY было %d, стало %s) -- выстрел снят" % (
+                    label, p.pid, threads, verify, busy0, tf2[0] if tf2 else "?")
+                log(args.work, msg)
+                GATE_FAILED.append(msg)
+                raise RuntimeError(msg)
+            log(args.work, "проверка %s: занял %d потоков (BUSY=%s FREE=%s)" % (
+                label, threads, tf2[0], tf2[1]))
+        return p
+
+
 def run_shot(args, mu, v0, threads, tmax, suffix="", seed=None):
     """seed -- каталог базового прогона: без своего чекпоинта продолжить из его финального."""
     sdir = shot_dir(args.work, mu, v0, suffix)
@@ -361,7 +466,8 @@ def run_shot(args, mu, v0, threads, tmax, suffix="", seed=None):
             "РЕСТАРТ из чекпоинта" if restart else "старт", mu, v0, suffix, threads, tmax, attempt))
         t0 = time.time()
         with open(sdir + ".log", "a" if restart else "w", encoding="utf-8") as lg:
-            rc = subprocess.run(cmd, stdout=lg, stderr=subprocess.STDOUT, env=env).returncode
+            p = start_gated(args, cmd, env, lg, threads, "mu=%g V0=%g%s" % (mu, v0, suffix))
+            rc = p.wait()
         r = read_result(sdir)
         if rc == 0 and r is not None:
             try:

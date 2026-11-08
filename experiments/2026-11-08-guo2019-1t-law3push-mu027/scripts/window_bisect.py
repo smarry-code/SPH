@@ -161,6 +161,12 @@ def main():
                     help="чекпоинт каждые N шагов и рестарт оборванных выстрелов из него (0 -- без чекпоинтов)")
     ap.add_argument("--extra", default="", help="доп. ключи guo2019_shot через пробел (например --impulse-push-tau=2e-6)")
     ap.add_argument("--verdict-ball", action="store_true", help="1T: вердикт по шару, без допуска на разрывы (как 2T)")
+    ap.add_argument("--slot-script", default="~/proj_runs/threads_free.sh",
+                    help="счёт свободных потоков (итог BUSY=n FREE=n); выстрел ставится при FREE >= его потоков")
+    ap.add_argument("--proj-status", default="~/proj_runs/proj_status.sh", help="rc 2 -> новые выстрелы не ставить")
+    ap.add_argument("--min-uptime", type=float, default=600, help="после загрузки сервера не ставить выстрелы раньше, с")
+    ap.add_argument("--slot-poll", type=float, default=300, help="опрос свободных потоков, с")
+    ap.add_argument("--slot-verify-s", type=float, default=120, help="проверка занятых потоков после старта, с")
     args = ap.parse_args()
     wp.BALL_ONLY = args.verdict_ball
     os.makedirs(args.work, exist_ok=True)
