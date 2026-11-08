@@ -270,6 +270,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // Врезки только читают состояние: траектория побитово та же, что без лога.
     std::unique_ptr<energy::EnergyLogger> elog;
     energy::EnergyChannels echan;
+    energy::DiagChannels diag; // диагностика механизмов (не в чекпоинте, при рестарте с 0)
     interactions::FiberEnergyTap ftap; // приращения энергии нитей (postprocessing.hpp)
     std::vector<double> sigma_clip;    // σ_m < 0 на отсечке по связям шага (RHS-ядро -> clip_loss)
     // Проход «только демпфер» закона 4 для канала D_contact_fiber (рабочая память).
@@ -309,7 +310,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             elog->write_row(0, time, dt,
                             energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
                                                           elog->workspace()),
-                            echan);
+                            echan, diag);
     }
 #endif
 
@@ -721,6 +722,24 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 echan.xsph -= energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, *supd.av, true);
             if (wb.du_av.size() >= ntotal)
                 echan.q_av += energy::mass_weighted_sum(fiber_exec, sys, wb.du_av, ntotal) * supd.h;
+            // Диагностика механизмов (energy_log.hpp, DiagChannels): мощность по частям dv
+            // (работа на v_mid) и du (h*du); k=0 -- вес energy_mass, k=1 -- плоский вес m.
+            if (ntotal > 0 && wb.dv_pair.size() == dim && wb.du_pair.size() >= ntotal)
+            {
+                for (int k = 0; k < 2; ++k)
+                {
+                    const bool flat = (k == 1);
+                    double* P = diag.p[k];
+                    P[0] += energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, wb.dv_pair, false, flat);
+                    P[1] += energy::mass_weighted_sum(fiber_exec, sys, wb.du_pair, ntotal, flat) * supd.h;
+                    P[2] += energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, wb.dv_hoop, false, flat);
+                    P[3] += energy::work_mid_solid(fiber_exec, sys, supd, solver.solid_rhs.dvx, ntotal, wb.dv_av, false, flat);
+                    P[4] += energy::mass_weighted_sum(fiber_exec, sys, wb.du_av, ntotal, flat) * supd.h;
+                    P[5] += energy::mass_weighted_sum(fiber_exec, sys, wb.du_dev, ntotal, flat) * supd.h;
+                    P[6] += energy::mass_weighted_sum(fiber_exec, sys, wb.du_pdv, ntotal, flat) * supd.h;
+                    P[7] += energy::mass_weighted_sum(fiber_exec, sys, wb.du_szz, ntotal, flat) * supd.h;
+                }
+            }
         }
 #endif
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/
@@ -788,7 +807,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             elog->write_row(current_ts, time, dt,
                             energy::compute_energy_stocks(fiber_exec, cfg, sys, ntotal, fb, topology, materials,
                                                           elog->workspace()),
-                            echan);
+                            echan, diag);
 #endif
 
         // Сторож времени/застоя (run_guard.hpp). Без него цикл при коллапсе

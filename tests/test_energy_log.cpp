@@ -108,12 +108,15 @@ Csv read_csv(const fs::path& p)
 enum Col
 {
     kStep, kTime, kDt, kKeS, kKeF, kUInt, kUShear, kUBond, kUHff, kUHfs, kEMech,
-    kDFric, kDXsph, kDCss, kDBrk, kSUcl, kQav, kWpl, kResid, kWpF, kWvF, kBrkC, kClip, kDCf, kNCols
+    kDFric, kDXsph, kDCss, kDBrk, kSUcl, kQav, kWpl, kResid, kWpF, kWvF, kBrkC, kClip, kDCf, kDiagFirst, kDiagLast = kDiagFirst + 16, kNCols
 };
 
 const char* kHeader = "step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,"
                       "E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,"
-                      "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber";
+                      "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber,"
+                      "P_pair_v,P_pair_u,P_hoop_v,P_av_v,P_av_u,P_dev_u,P_pdv_u,P_szz_u,"
+                      "P_pair_v_flat,P_pair_u_flat,P_hoop_v_flat,P_av_v_flat,P_av_u_flat,P_dev_u_flat,P_pdv_u_flat,"
+                      "P_szz_u_flat,closure";
 
 bool close_rel(double a, double b, double tol = 1e-12)
 {

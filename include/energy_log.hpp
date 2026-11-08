@@ -86,6 +86,31 @@
 //   (W_p_fiber, W_v_fiber, D_break_contact, clip_loss, D_contact_fiber -- последние столбцы:
 //    старые CSV без них читаются как нулевые каналы.)
 //
+// ДИАГНОСТИКА МЕХАНИЗМОВ (хвост строки, после D_contact_fiber; на residual и прежние столбцы
+// не влияет; только чтение состояния). Накопленная по шагам МОЩНОСТЬ каждого механизма SPH
+// Solid (энергия, ПОЛУЧЕННАЯ системой, знак + = рождается). Работа ускорения X за шаг --
+// sum w_i h a_X,i . v_mid,i (v_mid -- средняя скорость шага, как work_mid_solid), работа
+// части du -- sum w_i h du_X,i. Вес w_i = energy_mass (2 pi r0 m, физический) в столбцах без
+// суффикса и w_i = m (плоский вариант) в столбцах с суффиксом _flat.
+//   P_pair_v   -- парная часть dv: давление + девиатор планарно (без hoop и без ИВ)
+//   P_pair_u   -- парная часть du: 0.5*he без ИВ (-(p/rho) div_плоская v)
+//   P_hoop_v   -- осевые (hoop) источники dv: (sxx-szz)/r в r и sxy/r в z, сглаженные ядром
+//   P_av_v     -- ИВ в dv;  P_av_u -- ИВ в du (= Q_av)
+//   P_dev_u    -- вся девиаторная работа (sxx exx + syy eyy + szz ezz + 2 sxy exy)/rho
+//   P_pdv_u    -- -(p/rho) v_r/r (давление на окружной деформации)
+//   P_szz_u    -- ЧАСТЬ P_dev_u: szz ezz/rho (в сумму closure не входит, справочно)
+//   closure    -- residual - (P_pair_v + P_pair_u + P_hoop_v + P_av_v + P_av_u + P_dev_u + P_pdv_u)
+//                 при весе energy_mass. Тождество: E_mech - E0 = сумма мощностей механизмов
+//                 - (потери трения/XSPH/контакта) + S_u_clamp, значит residual = сумма P
+//                 механизмов, а closure ~ шум; ненулевой closure = пропущен механизм
+//                 (контакт, зажим, проекция опоры на dv, ...). Столбцы _flat: после
+//                 соответствующих без суффикса, порядок тот же (P_pair_v_flat, ... P_szz_u_flat).
+//                 Консервативность пар (тест G5): P_pair_v_flat + P_pair_u_flat ~ 0.
+// Порядок хвоста: P_pair_v,P_pair_u,P_hoop_v,P_av_v,P_av_u,P_dev_u,P_pdv_u,P_szz_u,
+//                 P_pair_v_flat,...,P_szz_u_flat,closure.
+// Эти накопители (DiagChannels) НЕ входят в чекпоинт: при рестарте они начинаются с 0, и
+// closure после рестарта осмыслен только относительно приращений (не абсолютно).
+//
 // Остаток невязки у нитей с вязкостью/пластикой -- ошибка схемы O(dt) (силы по состоянию на
 // начало шага, Кельвин по скорости предиктора, запас связи по x^{n+1}); на E5 с разрывами
 // max|residual| сходится ~ пропорционально dt: 2.0e-4 E0 (dt лога), 1.0e-4 (dt/2), 4.3e-5 (dt/8),
@@ -147,6 +172,22 @@ struct EnergyChannels
         double* f[kCount] = {&friction, &xsph, &contact_ss, &brk, &u_clamp, &q_av, &w_plastic,
                              &w_p_fiber, &w_v_fiber, &brk_contact, &clip, &contact_fiber};
         for (std::size_t i = 0; i < kCount; ++i) *f[i] = a[i];
+    }
+};
+
+// Диагностические накопители мощности механизмов (см. шапку). НЕ в чекпоинте (рестарт -- с 0).
+// Индекс 0 -- вес energy_mass, 1 -- плоский вес m.
+struct DiagChannels
+{
+    static constexpr std::size_t kN = 8;
+    // порядок: pair_v, pair_u, hoop_v, av_v, av_u, dev_u, pdv_u, szz_u
+    double p[2][kN] = {};
+    // сумма механизмов, входящих в closure (без szz_u -- он часть dev_u)
+    double sum(int k) const
+    {
+        double s = 0.0;
+        for (std::size_t i = 0; i + 1 < kN; ++i) s += p[k][i];
+        return s;
     }
 };
 
@@ -339,7 +380,8 @@ inline double work_mid_fiber(const rhs::CpuExecutor& exec, const fiber::FiberSta
 // XSPH: inc = av); v_mid = base + (h*dvx + av)/2, av -- если upd.av задан.
 inline double work_mid_solid(const rhs::CpuExecutor& exec, const ParticleSystem& sys,
                              const ode::SolidVelocityUpdate& upd, const std::vector<std::vector<double>>& dvx,
-                             std::size_t n, const std::vector<std::vector<double>>& inc, bool inc_is_velocity)
+                             std::size_t n, const std::vector<std::vector<double>>& inc, bool inc_is_velocity,
+                             bool flat = false) // flat: вес m вместо energy_mass (диагностика)
 {
     const double k = inc_is_velocity ? 1.0 : upd.h;
     return exec.parallel_reduce(
@@ -353,17 +395,17 @@ inline double work_mid_solid(const rhs::CpuExecutor& exec, const ParticleSystem&
                 const double v_mid = (*upd.base[d])[i] + 0.5 * dv_step;
                 w += k * inc[d][i] * v_mid;
             }
-            return energy_mass(sys, i) * w;
+            return (flat ? sys.mass[i] : energy_mass(sys, i)) * w;
         },
         [](double a, double b) { return a + b; });
 }
 
 // Sum_i energy_mass_i * x_i для i < n (в 2D осесимметрии -- масса кольца).
 inline double mass_weighted_sum(const rhs::CpuExecutor& exec, const ParticleSystem& sys,
-                                const std::vector<double>& x, std::size_t n)
+                                const std::vector<double>& x, std::size_t n, bool flat = false)
 {
     return exec.parallel_reduce(
-        n, 0.0, [&](std::size_t i) -> double { return energy_mass(sys, i) * x[i]; },
+        n, 0.0, [&](std::size_t i) -> double { return (flat ? sys.mass[i] : energy_mass(sys, i)) * x[i]; },
         [](double a, double b) { return a + b; });
 }
 
@@ -383,7 +425,10 @@ public:
         if (append) return;
         out_ << "step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,"
                 "E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,"
-                "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber\n";
+                "W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber,"
+                "P_pair_v,P_pair_u,P_hoop_v,P_av_v,P_av_u,P_dev_u,P_pdv_u,P_szz_u,"
+                "P_pair_v_flat,P_pair_u_flat,P_hoop_v_flat,P_av_v_flat,P_av_u_flat,P_dev_u_flat,P_pdv_u_flat,"
+                "P_szz_u_flat,closure\n";
         out_.flush();
     }
 
@@ -417,7 +462,8 @@ public:
     // Первая записанная строка задаёт E_mech0;
     // residual = (E_mech - E_mech0) + friction + xsph + contact_ss + brk - u_clamp
     //            + w_p_fiber + w_v_fiber + brk_contact - clip + contact_fiber.
-    void write_row(std::size_t step, double time, double dt, const EnergyStocks& s, const EnergyChannels& c)
+    void write_row(std::size_t step, double time, double dt, const EnergyStocks& s, const EnergyChannels& c,
+                   const DiagChannels& dg = DiagChannels{})
     {
         const double e_mech = s.e_mech();
         if (!have_e0_)
@@ -431,7 +477,10 @@ public:
              << s.u_shear_el << ',' << s.u_bond << ',' << s.u_hertz_ff << ',' << s.u_hertz_fs << ',' << e_mech << ','
              << c.friction << ',' << c.xsph << ',' << c.contact_ss << ',' << c.brk << ',' << c.u_clamp << ','
              << c.q_av << ',' << c.w_plastic << ',' << residual << ',' << c.w_p_fiber << ',' << c.w_v_fiber << ',' << c.brk_contact << ',' << c.clip << ','
-             << c.contact_fiber << '\n';
+             << c.contact_fiber;
+        for (int k = 0; k < 2; ++k)
+            for (std::size_t i = 0; i < DiagChannels::kN; ++i) out_ << ',' << dg.p[k][i];
+        out_ << ',' << (residual - dg.sum(0)) << '\n';
         out_.flush();
     }
 

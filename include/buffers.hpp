@@ -55,6 +55,10 @@ struct WorkBuffers
     std::vector<double> du_av;                   // тепло ИВ, du/dt, [0, ntotal)
     std::vector<std::vector<double>> contact_dv; // ускорение контакта Solid-Solid, [dim][ntotal]
     bool has_contact_dv = false;                 // contact_dv заполнен на этом шаге
+    // Диагностика механизмов (energy_log.hpp, DiagChannels): [ntotal]; dv_* -- [dim][ntotal].
+    // dv_pair = полное dv SPH - hoop - ИВ (давление + девиатор планарно).
+    std::vector<std::vector<double>> dv_pair, dv_hoop, dv_av;
+    std::vector<double> du_pair, du_dev, du_szz, du_pdv;
 #endif
 
     // Сброс контактной диагностики перед накоплением на текущем шаге.
