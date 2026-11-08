@@ -503,10 +503,82 @@ void test_solid_velocity_update()
     }
 }
 
+// ---------------------------------------------------------------------------
+// 6) xsph_mode = position: скорость = base + h*dvx БЕЗ av (побитово), позиция
+//    сдвинута на dt*(v_new + av), solid_velocity_update().av == nullptr.
+// ---------------------------------------------------------------------------
+void test_xsph_position()
+{
+    std::printf("test_xsph_position:\n");
+    const std::size_t ns = 41, nf = 3;
+    const double dt = 0.0137;
+    Lcg rng;
+
+    ParticleSystem sys;
+    sys.resize(ns);
+    for (std::size_t i = 0; i < ns; ++i)
+    {
+        sys.inzializ_index(i);
+        sys.mass[i] = 1.0 + 0.1 * static_cast<double>(i);
+        sys.rho[i] = 1000.0;
+        sys.rho_0[i] = 1000.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            sys.x[d][i] = rng.next();
+            sys.vx[d][i] = 3.0 * rng.next();
+        }
+    }
+    fiber::FiberState fb;
+    fb.resize(nf);
+
+    ode::PredictorCorrectorSolver pc;
+    pc.xsph_position = true;
+    pc.reset(ns, ns, nf);
+
+    const double dts[3] = {dt, dt * 1.3, dt * 0.7};
+    double dt_prev = dt;
+    for (int step = 0; step < 3; ++step)
+    {
+        const double h = dts[step];
+        pc.predict(sys, ns, fb, nf, dt_prev);
+        for (std::size_t d = 0; d < dim; ++d)
+            for (std::size_t i = 0; i < ns; ++i)
+            {
+                pc.solid_rhs.dvx[d][i] = 10.0 * rng.next();
+                pc.solid_rhs.av[d][i] = 0.05 * rng.next();
+            }
+        const auto upd = pc.solid_velocity_update(sys, h);
+        std::vector<double> base[dim], x0[dim];
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            base[d] = *upd.base[d];
+            x0[d] = sys.x[d];
+        }
+        const double hh = upd.h;
+        const bool av_null = (upd.av == nullptr);
+        pc.advance(sys, ns, fb, nf, h);
+
+        bool v_ok = true, x_ok = true;
+        for (std::size_t d = 0; d < dim; ++d)
+            for (std::size_t i = 0; i < ns; ++i)
+            {
+                const double v_new = base[d][i] + hh * pc.solid_rhs.dvx[d][i];
+                if (!(sys.vx[d][i] == v_new)) v_ok = false;
+                if (!(sys.x[d][i] == x0[d][i] + h * (v_new + pc.solid_rhs.av[d][i]))) x_ok = false;
+            }
+        const std::string lbl = "position шаг " + std::to_string(step + 1);
+        check(av_null, lbl + ": upd.av == nullptr");
+        check(v_ok, lbl + ": sys.vx побитово == base + h*dvx (без av)");
+        check(x_ok, lbl + ": x побитово == x0 + dt*(v_new + av)");
+        dt_prev = h;
+    }
+}
+
 } // namespace
 
 int main()
 {
+    test_xsph_position();
     test_euler_convergence();
     test_predictor_corrector_energy_bound();
     test_fiber_velocity_update();

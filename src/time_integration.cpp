@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 #ifdef SPH_CONTACT_STATS
 #include "interactions/fiber_contact_stats.hpp"
 #include <memory>
@@ -137,6 +138,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 
     Solver solver;
     solver.reset(nbuf, ntotal, nfiber);
+    // xsph_mode = position: XSPH только в переносе позиций (ode_solver.hpp). У Эйлера XSPH нет вовсе.
+    if constexpr (std::is_same_v<Solver, ode::PredictorCorrectorSolver>) solver.xsph_position = (cfg.xsph_mode == 1);
 
     // переиспользуемые рабочие буферы (живут всю симуляцию, передаются в single_step)
     WorkBuffers wb;

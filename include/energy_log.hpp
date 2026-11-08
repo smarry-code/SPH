@@ -36,7 +36,8 @@
 //                       fiber_solid_contact_type = 0 и 4, иначе 0
 //   E_mech           -- KE_solid+KE_fiber+U_int+U_bond+U_hertz_ff+U_hertz_fs
 //   D_friction       -- накопленная диссипация трения (потери, > 0)
-//   D_xsph           -- накопленная диссипация XSPH (потери, > 0)
+//   D_xsph           -- накопленная диссипация XSPH (потери, > 0); при
+//                       xsph_mode = position равна 0 (av не входит в скорость)
 //   D_contact_ss     -- накопленная диссипация Solid-Solid контакта (потери, > 0)
 //                       (эти три -- работа вклада на средней скорости шага,
 //                       см. work_mid_fiber/work_mid_solid)
