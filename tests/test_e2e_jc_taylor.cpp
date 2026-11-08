@@ -101,7 +101,6 @@ struct RunSettings
     double epsilon = -1.0;     // XSPH; < 0 — по умолчанию кейса
     double cfl = -1.0;         // число Куранта cfg.CFL; <= 0 — по умолчанию кейса
     int xsph_mode = -1;        // 0 velocity, 1 position; < 0 — по умолчанию кейса
-    int pair_mass = -1;        // axisym_pair_mass: 0 flat, 1 ring; < 0 — по умолчанию (flat)
     fs::path outdir;
 };
 
@@ -204,12 +203,6 @@ RunResult run_case(const RunSettings& rs)
             cfg.xsph_mode = rs.xsph_mode;
             note(std::string("xsph_mode = ") + (cfg.xsph_mode == 1 ? "position" : "velocity") +
                  " (ключ --xsph-mode; по умолчанию velocity)");
-        }
-        if (rs.pair_mass >= 0)
-        {
-            cfg.axisym_pair_mass = rs.pair_mass;
-            note(std::string("axisym_pair_mass = ") + (cfg.axisym_pair_mass == 1 ? "ring" : "flat") +
-                 " (ключ --pair-mass; по умолчанию flat)");
         }
         if (rs.cfl > 0.0)
         {
@@ -556,7 +549,6 @@ void print_usage()
         "  --time-limit=СЕК    бюджет стенных часов на один прогон (0 — без ограничения)\n"
         "  --xsph=E            константа XSPH epsilon (диагностика; по умолчанию 0.25)\n"
         "  --xsph-mode=M       velocity | position: куда входит XSPH-поправка (по умолчанию velocity)\n"
-        "  --pair-mass=M       flat | ring: массы в парных суммах 2D осесимметрии (по умолчанию flat)\n"
         "  --cfl=X           число Куранта cfg.CFL (диагностика; по умолчанию 0.1): dt ~ CFL\n"
         "  --energy-tol=X      допуск баланса энергии, доля E_mech0 (по умолчанию 0.02)\n"
         "  --energy-warn-only  невязка энергии выше допуска — WARN, а не FAIL\n"
@@ -570,7 +562,6 @@ int main(int argc, char** argv)
     size_t n_r = 0;
     double t_max = jct::kTMax, wall_limit = 0.0, epsilon = -1.0, cfl = -1.0;
     int xsph_mode = -1;
-    int pair_mass = -1;
     bool verbose = false, keep = false;
     fs::path outdir = fs::current_path() / "jc_taylor_out";
 
@@ -592,13 +583,6 @@ int main(int argc, char** argv)
             else if (a.rfind("--t-max=", 0) == 0) t_max = std::stod(val("--t-max="));
             else if (a.rfind("--time-limit=", 0) == 0) wall_limit = std::stod(val("--time-limit="));
             else if (a.rfind("--xsph=", 0) == 0) epsilon = std::stod(val("--xsph="));
-            else if (a.rfind("--pair-mass=", 0) == 0)
-            {
-                const std::string m = val("--pair-mass=");
-                if (m == "flat") pair_mass = 0;
-                else if (m == "ring") pair_mass = 1;
-                else throw std::invalid_argument("pair-mass");
-            }
             else if (a.rfind("--xsph-mode=", 0) == 0)
             {
                 const std::string m = val("--xsph-mode=");
@@ -656,7 +640,6 @@ int main(int argc, char** argv)
     rs.epsilon = epsilon;
     rs.cfl = cfl;
     rs.xsph_mode = xsph_mode;
-    rs.pair_mass = pair_mass;
     rs.outdir = outdir;
 
     if (mode == "smoke")
