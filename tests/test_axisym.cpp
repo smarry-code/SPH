@@ -493,6 +493,126 @@ void test_energy_mass_ring()
     check(near_rel(energy_mass(sys, 1), e1, e1, 1e-14), "G4c energy_mass(1) = 2*pi*r0*m");
 }
 
+// --- G5. Парный баланс энергии при гомологическом расширении (диагностика) --
+// Сырой reduced (без finalize_solid): dv[d], du. Состояние: однородное p > 0
+// (rho = 1.01*rho_0), v_r = k*r, v_z = 0, S = 0, u = 0, mass "плоская". Решётка
+// по r растянута: r = lam*r0 (плотность НЕ пересчитывается -- проверяется
+// правая часть, не физическое состояние).
+// Мощность на частицу: w_i = m_i*(v_i.dv_i + 0.5*du_i) (0.5 -- как в finalize_solid).
+// Суммы с весами: 1 (P_flat), 2*pi*r0 (P_r0, = energy_mass), 2*pi*r (P_r).
+// Масштаб S = sum m*|v_r|*|dv_r|. "Ось" = ir < 3 (носители с ghost-частицами).
+struct PairEnergy
+{
+    double flat_all = 0.0, flat_in = 0.0, flat_axis = 0.0;
+    double r0_all = 0.0, r0_in = 0.0;
+    double r_all = 0.0, r_in = 0.0;
+    double scale_all = 0.0, scale_in = 0.0;
+    double p_min = 0.0, p_max = 0.0;
+};
+
+PairEnergy pair_energy_balance(double lam)
+{
+    constexpr size_t nr = 24, nz = 24;
+    constexpr double k = 1.0e4;
+    constexpr double pi = 3.14159265358979323846;
+    const size_t n = nr * nz;
+
+    ParticleSystem sys;
+    sys.resize(n);
+    for (size_t ir = 0; ir < nr; ++ir)
+        for (size_t iz = 0; iz < nz; ++iz)
+        {
+            const size_t i = ir * nz + iz;
+            sys.x[0][i]  = (static_cast<double>(ir) + 0.5) * kDx;
+            sys.x[1][i]  = static_cast<double>(iz) * kDx;
+            sys.itype[i] = kItype;
+            sys.rho[i]   = 1.01 * kRho0;
+            sys.rho_0[i] = kRho0;
+            sys.mass[i]  = kRho0 * kDx * kDx;
+            sys.hsml[i]  = 1.3 * kDx;
+            sys.axis[i]  = (ir == 0) ? 1 : 0;
+        }
+    sys.init_reference_radius(n);           // r0 = (ir+0.5)*dx
+    for (size_t i = 0; i < n; ++i)
+    {
+        sys.x[0][i]  = lam * sys.r0[i];
+        sys.vx[0][i] = k * sys.x[0][i];
+        sys.vx[1][i] = 0.0;
+    }
+
+    SimulationConfig cfg;
+    cfg.pa_sph = 2; cfg.skf = 1; cfg.density_method = 1;
+    cfg.maxn = n; cfg.max_interaction = n * 200;
+
+    rhs::CpuExecutor exec;
+    interactions::SolidDerived derived;
+    interactions::compute_solid_derived(exec, cfg.mats, sys, n, derived);
+    interactions::GhostSet ghosts;
+    interactions::build_ghost_set(sys, n, ghosts);
+    interactions::SolidExtended ext;
+    interactions::build_solid_extended(sys, n, derived, ghosts, ext);
+    interactions::SolidSphSearchResult search;
+    interactions::build_solid_sph_search(exec, cfg, ext, search);
+    rhs::IndexedContributions<interactions::SolidDelta> buf;
+    interactions::compute_solid_sph_contributions(exec, cfg, ext, search.primitives, buf);
+    const std::vector<interactions::SolidDelta> red = rhs::reduce_contributions(exec, buf, n);
+
+    PairEnergy o;
+    o.p_min = o.p_max = derived.p[0];
+    for (size_t i = 0; i < n; ++i)
+    {
+        o.p_min = std::min(o.p_min, derived.p[i]);
+        o.p_max = std::max(o.p_max, derived.p[i]);
+    }
+    for (size_t ir = 0; ir < nr; ++ir)
+        for (size_t iz = 0; iz < nz; ++iz)
+        {
+            const size_t i = ir * nz + iz;
+            const double m = sys.mass[i];
+            const double vdv = sys.vx[0][i] * red[i].dv[0] + sys.vx[1][i] * red[i].dv[1];
+            const double w = m * (vdv + 0.5 * red[i].du);
+            const double sc = m * std::fabs(sys.vx[0][i]) * std::fabs(red[i].dv[0]);
+            o.flat_all += w;
+            o.r0_all   += 2.0 * pi * sys.r0[i] * w;
+            o.r_all    += 2.0 * pi * sys.x[0][i] * w;
+            o.scale_all += sc;
+            if (ir < 3) o.flat_axis += w;
+            const bool inner = ir >= 3 && ir + 3 < nr && iz >= 3 && iz + 3 < nz;
+            if (inner)
+            {
+                o.flat_in += w;
+                o.r0_in   += 2.0 * pi * sys.r0[i] * w;
+                o.r_in    += 2.0 * pi * sys.x[0][i] * w;
+                o.scale_in += sc;
+            }
+        }
+    return o;
+}
+
+void test_pair_energy_balance()
+{
+    std::printf("\n[G5] парный баланс энергии, гомологическое расширение v_r = k r (диагностика)\n");
+    constexpr double pi = 3.14159265358979323846;
+    for (const double lam : {1.0, 1.2})
+    {
+        const PairEnergy o = pair_energy_balance(lam);
+        // P_r0, P_r несут лишний множитель 2*pi*r (размерность) -- делим на
+        // 2*pi*12*dx (середина решётки), чтобы сравнивать с P_flat/S.
+        const double wref = 2.0 * pi * 12.0 * kDx;
+        std::printf("  lam = %.1f: p in [%.4e, %.4e] Pa\n", lam, o.p_min, o.p_max);
+        std::printf("    все:        P_flat/S = %+.3e, P_r0/(wref*S) = %+.3e, P_r/(wref*S) = %+.3e  (S = %.3e)\n",
+                    o.flat_all / o.scale_all, o.r0_all / (wref * o.scale_all),
+                    o.r_all / (wref * o.scale_all), o.scale_all);
+        std::printf("    внутренние: P/S_all  = %+.3e, P_r0/(wref*S) = %+.3e, P_r/(wref*S) = %+.3e  (S = %.3e)\n",
+                    o.flat_in / o.scale_all, o.r0_in / (wref * o.scale_all),
+                    o.r_in / (wref * o.scale_all), o.scale_in);
+        std::printf("    вклад зоны оси (ir<3) в P_flat(все): %+.3e от S\n", o.flat_axis / o.scale_all);
+        check(o.p_min > 0.0 && std::fabs(o.p_max - o.p_min) <= 1e-9 * o.p_max,
+              "G5 исходное p однородно и > 0");
+        // G5a: ворот нет -- см. отчёт (ghost/hoop у оси не дают парного баланса).
+    }
+}
+
 } // namespace
 
 int main()
@@ -507,6 +627,7 @@ int main()
     test_search_threads();
     test_hoop_pressure_work();
     test_energy_mass_ring();
+    test_pair_energy_balance();
 
     std::printf("\n=== %s (провалов: %d) ===\n",
                 failures == 0 ? "ПРОЙДЕН" : "ПРОВАЛЕН", failures);
