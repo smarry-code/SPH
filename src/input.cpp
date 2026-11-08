@@ -389,6 +389,18 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             else if (value == "position") cfg.xsph_mode = 1;
             else throw std::runtime_error("xsph_mode: допустимы velocity и position, получено '" + value + "'");
         }
+        else if (key == "axisym_pair_mass")
+        {
+            if (value == "flat") cfg.axisym_pair_mass = 0;
+            else if (value == "ring")
+            {
+                cfg.axisym_pair_mass = 1;
+                // Только 2D осесимметрия (dim == 2, axis_sim); иначе ключ игнорируется.
+                if constexpr (!(axis_sim && dim == 2))
+                    std::cerr << "axisym_pair_mass = ring игнорируется: нужна 2D осесимметрия (SPH_DIM=2, axis_sim)\n";
+            }
+            else throw std::runtime_error("axisym_pair_mass: допустимы flat и ring, получено '" + value + "'");
+        }
         else if (key == "jc_chi")
         {
             std::size_t pos = 0;
