@@ -534,7 +534,7 @@ public:
                         "n_broken_h=%zu w_f_max=%.9g t_first_break=%.9g w_f_at_first_break=%.9g w_p_max=%.9g "
                         "m_ej=%.9g n_tunnel=%zu max_delta_ff/d=%.9g max_delta_fs/d=%.9g contacts_per_crossing=%.9g "
                         "guard_reason=%s eps_p_max=%.9g W_p=%.9g n_bonds_plastic=%zu%s",
-                     config_name(sc_.config), level_name(sc_.level), sc_.V0, sc_.mu, outcome_name(st_.outcome), VR,
+                     config_name_str(sc_.config, sc_.n_plies).c_str(), level_name(sc_.level), sc_.V0, sc_.mu, outcome_name(st_.outcome), VR,
                      shot_energy(), st_.t_end, st_.steps, wall_s, st_.dt_first, st_.dt_min, st_.E_tot_max / E0,
                      st_.E_tot_end / E0, st_.F_s_z_max, st_.F_f_z_max, st_.n_clamped_s, st_.n_clamped_f,
                      st_.n_broken_v, st_.n_broken_h, st_.w_f_max, st_.t_first_break < 0.0 ? nan : st_.t_first_break,
