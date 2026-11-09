@@ -466,6 +466,8 @@ def run_shot(args, mu, v0, threads, tmax, suffix="", seed=None):
         r = read_result(sdir)
         if r is not None:
             log(args.work, "готово (внешний) %s: %s" % (tag, verdict(r)[1]))
+            if verdict(r)[0] is not None:
+                drop_checkpoint(sdir)
             return r
     ck_every = getattr(args, "checkpoint_every", 0)
     for attempt in (1, 2):

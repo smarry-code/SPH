@@ -10,6 +10,10 @@
      выход за --k-max -> ошибка;
   4. пока N - P > 1: две точки на третях [P; N] (округление, без дублей и концов) параллельно; одна новая -- один выстрел.
 «Не определён» после продолжения до --t-max-long -> серия останавливается (rc 1), угадывания нет.
+--sequential: выстрелы одного раунда идут по одному (не парами); перед каждым пересчитываются границы, точка внутри
+уже известной границы пропускается (кроме точек --k-first). search.md обновляется после каждого выстрела.
+--k-jump=24,32: когда все пробиты, сначала эти k (по возрастанию, > P), затем шаг +--k-step.
+Память: --ram-per-ply-mb > 0 -- выстрел kT не ставится, если k * МБ/слой > MemTotal - --ram-reserve-mb (ошибка, серия стоп).
 Результаты: <work>/search.md и search.json после каждого раунда. Выстрелы -- window_pinball.py (очередь, чекпоинты).
 --dry-run --fake-kstar=K: выстрелов нет, исход k <= K -> «пробит» (проверка алгоритма).
 """
@@ -48,7 +52,14 @@ def next_points(res, args):
     if n is None:
         if p >= args.k_max:
             return "error", "все k до --k-max = %d пробиты, N не найдено" % args.k_max
-        pts = [k for k in (p + args.k_step, p + 2 * args.k_step) if k <= args.k_max]
+        jumps = sorted(int(x) for x in args.k_jump.split(",") if x.strip())
+        for k in jumps:
+            if k > p and k not in res and k <= args.k_max:
+                return "go", [k]
+        if args.sequential:
+            pts = [k for k in (p + args.k_step,) if k <= args.k_max]
+        else:
+            pts = [k for k in (p + args.k_step, p + 2 * args.k_step) if k <= args.k_max]
         pts = [k for k in pts if k not in res]
         return "go", pts
     if n - p <= 1:
@@ -57,10 +68,30 @@ def next_points(res, args):
     return "go", sorted({a, b} - {p, n} - set(res))
 
 
+def mem_total_mb():
+    """MemTotal из /proc/meminfo, МБ; None, если файла нет."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return float(line.split()[1]) / 1024.0
+    except OSError:
+        pass
+    return None
+
+
 def real_shot(args, k):
     """Выстрел kT: возвращает (вердикт, запись). Копия args с config = kT."""
     a = copy.copy(args)
     a.config = "%dT" % k
+    if args.ram_per_ply_mb > 0:
+        sdir = wp.shot_dir(args.work, a.mu, a.v0, "", a.config)
+        if wp.read_result(sdir) is None and not wp.shot_running(sdir):
+            need = k * args.ram_per_ply_mb
+            total = mem_total_mb()
+            if total is not None and need > total - args.ram_reserve_mb:
+                raise RuntimeError("%dT не помещается в память: нужно ≈ %.0f МБ, всего %.0f МБ (резерв %.0f МБ)" % (
+                    k, need, total, args.ram_reserve_mb))
     rec = {"shots": []}
     t0 = time.time()
     if args.no_long:
@@ -135,32 +166,60 @@ def run_search(args):
             final = "Серия ОСТАНОВЛЕНА: новых точек нет, а границы не сошлись (res=%s)" % res
             save()
             return 1, final, None, rounds
-        rounds.append(pts)
+        done_pts = [] if args.sequential else list(pts)
+        rounds.append(done_pts)
         wp.log(args.work, "раунд %d: %s" % (len(rounds), ", ".join("%dT" % k for k in pts)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(pts)) as ex:
-            futs = {k: ex.submit(shot, args, k) for k in pts}
-            outs = {}
-            for k, f in futs.items():  # дождаться всех, даже если один упал
-                try:
-                    outs[k] = f.result()
-                except Exception as exc:
-                    outs[k] = exc
-        for k in pts:
-            o = outs[k]
+
+        def accept(k, o):
+            """Принять результат выстрела k; False -- выстрел упал (серия остановлена)."""
+            nonlocal final
             if isinstance(o, Exception):
                 final = "Серия ОСТАНОВЛЕНА: выстрел %dT: %s" % (k, o)
                 wp.log(args.work, final)
                 save()
-                return 1, final, None, rounds
+                return False
             res[k] = o[0]
             entries.append(o[1])
             wp.log(args.work, "%dT: %s (%s)" % (k, wp.word(o[0]), o[1]["why"]))
+            return True
+
+        if args.sequential:
+            first = {int(x) for x in args.k_first.split(",")}
+            for k in pts:
+                p, n, _ = bounds(res)
+                if k not in first and ((p is not None and k <= p) or (n is not None and k >= n)):
+                    wp.log(args.work, "%dT пропущен: граница уже P = %s, N = %s" % (k, p, n))
+                    continue
+                try:
+                    o = shot(args, k)
+                except Exception as exc:
+                    o = exc
+                if not accept(k, o):
+                    return 1, final, None, rounds
+                done_pts.append(k)
+                save()
+                if res[k] is None:
+                    break
+            if not done_pts:
+                rounds.pop()
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(pts)) as ex:
+                futs = {k: ex.submit(shot, args, k) for k in pts}
+                outs = {}
+                for k, f in futs.items():  # дождаться всех, даже если один упал
+                    try:
+                        outs[k] = f.result()
+                    except Exception as exc:
+                        outs[k] = exc
+            for k in pts:
+                if not accept(k, outs[k]):
+                    return 1, final, None, rounds
         p, n, nonmono = bounds(res)
         if nonmono:
             note = "немонотонно: пробиты %s при N = %s" % (nonmono, n)
             if note not in notes:
                 notes.append(note)
-        und = [k for k in pts if res[k] is None]
+        und = [k for k in done_pts if res[k] is None]
         if und:
             final = "не определён при %s -- серия остановлена, вывод невозможен" % ", ".join("%dT" % k for k in und)
             notes.append(final)
@@ -200,6 +259,10 @@ def main():
     ap.add_argument("--k-first", default="4,8")
     ap.add_argument("--k-step", type=int, default=2)
     ap.add_argument("--k-max", type=int, default=40)
+    ap.add_argument("--sequential", action="store_true", help="выстрелы по одному, границы пересчитываются перед каждым")
+    ap.add_argument("--k-jump", default="", help="k через запятую, проверяемые по возрастанию, когда все пробиты (24,32)")
+    ap.add_argument("--ram-per-ply-mb", type=float, default=0, help="МБ на слой; >0 -- проверка памяти перед выстрелом")
+    ap.add_argument("--ram-reserve-mb", type=float, default=1000)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fake-kstar", type=int, default=0)
     args = ap.parse_args()
@@ -211,8 +274,8 @@ def main():
             if not path or not os.path.exists(path):
                 print("нет файла: " + path, file=sys.stderr)
                 return 1
-    wp.log(args.work, "поиск k: V0=%g mu=%g k-first=%s шаг=%d k-max=%d E=%g contact=%d fib=%s%s" % (
-        args.v0, args.mu, args.k_first, args.k_step, args.k_max, args.fiber_E, args.contact, args.fib,
+    wp.log(args.work, "поиск k: V0=%g mu=%g k-first=%s шаг=%d k-max=%d sequential=%s k-jump=%s ram=%g/слой E=%g contact=%d fib=%s%s" % (
+        args.v0, args.mu, args.k_first, args.k_step, args.k_max, args.sequential, args.k_jump or "-", args.ram_per_ply_mb, args.fiber_E, args.contact, args.fib,
         " [DRY-RUN kstar=%d]" % args.fake_kstar if args.dry_run else ""))
     if args.extra:
         wp.log(args.work, "доп. ключи: " + args.extra)
