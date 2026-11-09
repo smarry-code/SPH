@@ -26,7 +26,7 @@ env -u OMP_NUM_THREADS python3 "$W/ply_search.py" --work="$W" \
   --fib="$W/twaron_s25_dmg0.00415.fib" --fiber-E=8e10 --eps-break=0.05 --contact=3 --mu=0.27 --verdict-ball --stop-vz-frac=0 \
   --level=base --v0=550 --k-first="$K_FIRST" --k-step=2 \
   --extra="--dt-scale=0.5 --impulse-push-tau=5e-7 --ball-d=6.253e-3 --ball-mass=1e-3 --ball-dx=3e-4" \
-  --threads=4 --t-max=4e-4 --t-max-long=1e-3 --save-t=2e-5 --energy-log=100 --checkpoint-every=2000 \
+  --threads=4 --t-max=4e-4 --t-max-long=1e-3 --save-t=7.5e-6 --energy-log=100 --checkpoint-every=2000 \
   --slot-script="$HOME/proj_runs/threads_free.sh" --proj-status="$HOME/proj_runs/proj_status.sh" \
   --min-uptime=600 --slot-poll=300 --slot-verify-s=120 \
   >> "$W/driver.out" 2>&1
