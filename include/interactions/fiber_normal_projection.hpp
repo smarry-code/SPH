@@ -270,35 +270,44 @@ struct NormalStageView
     double fiber_v(std::size_t d, rhs::index_t k) const { return trial_fiber(d, k) + acc_fiber[d][k]; }
     double solid_v(std::size_t d, rhs::index_t s) const { return trial_solid(d, s) + acc_solid[d][s]; }
 
-    // pdot_c = -n.(v_A - v_B) и W~_c нить-нить.
-    void eval_ff(const FiberNormalContact& c, double& pdot, double& Wt) const
+    // pdot_c = -n.(v_A - v_B) и W~_c нить-нить. Необязательный выход Wplain --
+    // W_c = sum w^2/m_k БЕЗ счётчиков c_k (= 1/m_red контакта, только диагностика
+    // остатка): бусина с c_k = 0 (зажим, бесконечная масса) в сумму не входит.
+    void eval_ff(const FiberNormalContact& c, double& pdot, double& Wt, double* Wplain = nullptr) const
     {
         double rel[dim] = {};
         double W = 0.0;
+        double Wp = 0.0;
         fiber_normal_for_each_bead(c, [&](rhs::index_t k, double w, double sg, std::uint16_t) {
             for (std::size_t d = 0; d < dim; ++d) rel[d] += sg * w * fiber_v(d, k);
             W += bead_count[k] * (w * w) / state.mass[k];
+            if (bead_count[k] > 0.0) Wp += (w * w) / state.mass[k];
         });
         double rn = 0.0;
         for (std::size_t d = 0; d < dim; ++d) rn += c.n[d] * rel[d];
         pdot = -rn;
         Wt = W;
+        if (Wplain != nullptr) *Wplain = Wp;
     }
 
-    // Нить-Solid: A = Solid, B = точка нити; n от нити к Solid.
-    void eval_fs(const FiberSolidNormalContact& c, double& pdot, double& Wt) const
+    // Нить-Solid: A = Solid, B = точка нити; n от нити к Solid. Wplain -- как у eval_ff
+    // (частица Solid с c_s = 0 тоже не входит).
+    void eval_fs(const FiberSolidNormalContact& c, double& pdot, double& Wt, double* Wplain = nullptr) const
     {
         double rel[dim];
         for (std::size_t d = 0; d < dim; ++d) rel[d] = solid_v(d, c.s);
         double W = solid_count[c.s] / sys.mass[c.s];
+        double Wp = solid_count[c.s] > 0.0 ? 1.0 / sys.mass[c.s] : 0.0;
         fiber_solid_normal_for_each_bead(c, [&](rhs::index_t k, double w, double sg, std::uint16_t) {
             for (std::size_t d = 0; d < dim; ++d) rel[d] += sg * w * fiber_v(d, k);
             W += bead_count[k] * (w * w) / state.mass[k];
+            if (bead_count[k] > 0.0) Wp += (w * w) / state.mass[k];
         });
         double rn = 0.0;
         for (std::size_t d = 0; d < dim; ++d) rn += c.n[d] * rel[d];
         pdot = -rn;
         Wt = W;
+        if (Wplain != nullptr) *Wplain = Wp;
     }
 };
 
@@ -310,8 +319,10 @@ struct SlotAgg
 {
     std::size_t active = 0;
     std::size_t warm = 0;
-    double resid = 0.0;     // max pdot^+
-    double resid_rel = 0.0; // max pdot^+ / (W~ P) по слотам с P > 0 и W~ > 0
+    double resid = 0.0;       // max pdot^+
+    double resid_rel = 0.0;   // max pdot^+ / (W_c P_c) по слотам с P_c > 0 и W_c > 0 (W_c без c_k)
+    double sum_missing = 0.0; // sum_c pdot_c^+ / W~_c по активным слотам с W~_c > 0 (недостающий импульс)
+    double sum_P = 0.0;       // sum_c P_c по тем же слотам
 };
 
 inline SlotAgg agg_combine(SlotAgg a, const SlotAgg& b)
@@ -320,17 +331,25 @@ inline SlotAgg agg_combine(SlotAgg a, const SlotAgg& b)
     a.warm += b.warm;
     a.resid = std::max(a.resid, b.resid);
     a.resid_rel = std::max(a.resid_rel, b.resid_rel);
+    a.sum_missing += b.sum_missing;
+    a.sum_P += b.sum_P;
     return a;
 }
 
-inline SlotAgg agg_one(bool warm, double pdot, double Wt, double P)
+// Wt -- W~_c (с разделением массы), Wc -- W_c = sum w^2/m_k без c_k (1/m_red).
+inline SlotAgg agg_one(bool warm, double pdot, double Wt, double Wc, double P)
 {
     SlotAgg a;
     a.active = 1;
     a.warm = warm ? 1u : 0u;
     const double pp = std::max(0.0, pdot);
     a.resid = pp;
-    if (P > 0.0 && Wt > 0.0) a.resid_rel = pp / (Wt * P);
+    if (P > 0.0 && Wc > 0.0) a.resid_rel = pp / (Wc * P);
+    if (Wt > 0.0)
+    {
+        a.sum_missing = pp / Wt;
+        a.sum_P = P;
+    }
     return a;
 }
 
@@ -350,10 +369,17 @@ inline SlotAgg agg_one(bool warm, double pdot, double Wt, double P)
 //   stats                  -- диагностика шага (заполняется целиком, enabled = true).
 // Диагностика:
 //   resid     = max_c (pdot_c^{n+1})^+ после K итераций (один дополнительный проход);
-//   resid_rel = max_c pdot^+/(W~_c P_c) по слотам с P_c > 0, W~_c > 0 -- доля
-//               нагрузки: импульс, которого ещё не хватает (pdot^+/W~), делённый
-//               на накопленный P_c. (Комментарий в типах NormalProjectionStats
-//               "pdot^+ W~/(h N)" размерно неверен: pdot*W~ -- не импульс.)
+//   resid_rel = max_c pdot_c^+/(W_c P_c) по слотам с P_c > 0, W_c > 0, где
+//               W_c = sum w^2/m_k (+ 1/m_s) БЕЗ счётчиков c_k (= 1/m_red контакта; бусины
+//               и частицы с c = 0, то есть зажимы, в сумму не входят). Это остаток в долях
+//               h N_c/m_red (ТЗ A4): импульс pdot^+/W_c, которого не хватает «честному»
+//               контакту двух масс, делённый на накопленный P_c. Метрика НЕ МЕНЬШЕ
+//               прежней (с W~_c): при c_k >= 1 W~_c >= W_c, то есть строже;
+//   resid_load = (sum_c pdot_c^+ / W~_c) / (sum_c P_c) по ВСЕМ активным слотам с W~_c > 0:
+//               недостающий импульс (в терминах итерации Якоби, с W~_c) в долях полной
+//               нагрузки; в отличие от resid_rel учитывает и слоты с P_c = 0 (контакт,
+//               который итерации не успели «включить»). sum P = 0 -- 0. Суммы идут по
+//               фиксированным отрезкам parallel_reduce (детерминированно);
 //   warm_frac = (число активных слотов с slot.warm) / (число активных слотов);
 //   W_stage   = sum m (|v|^2 - |v~|^2)/2 = sum m (v~.Δv + |Δv|^2/2) по бусинам и частицам,
 //               фиксированные отрезки parallel_reduce, затем последовательное сложение;
@@ -492,9 +518,9 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberNormalContact& c = ff_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
-            double pdot, Wt;
-            view.eval_ff(c, pdot, Wt);
-            return detail_normal::agg_one(c.warm, pdot, Wt, c.P);
+            double pdot, Wt, Wc;
+            view.eval_ff(c, pdot, Wt, &Wc);
+            return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
         },
         detail_normal::agg_combine);
     const detail_normal::SlotAgg agg_fs = exec.parallel_reduce(
@@ -502,14 +528,15 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberSolidNormalContact& c = fs_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
-            double pdot, Wt;
-            view.eval_fs(c, pdot, Wt);
-            return detail_normal::agg_one(c.warm, pdot, Wt, c.P);
+            double pdot, Wt, Wc;
+            view.eval_fs(c, pdot, Wt, &Wc);
+            return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
         },
         detail_normal::agg_combine);
     const detail_normal::SlotAgg agg = detail_normal::agg_combine(agg_ff, agg_fs);
     stats.resid = agg.resid;
     stats.resid_rel = agg.resid_rel;
+    stats.resid_load = agg.sum_P > 0.0 ? agg.sum_missing / agg.sum_P : 0.0;
     stats.warm_frac = agg.active > 0 ? static_cast<double>(agg.warm) / static_cast<double>(agg.active) : 0.0;
 
     stats.max_ck = exec.parallel_reduce(

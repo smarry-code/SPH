@@ -1,5 +1,7 @@
 #pragma once
+#include <atomic>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 // simulation_config.hpp
@@ -193,7 +195,9 @@ inline void SimulationConfig::apply_defaults()
 
 // Проверка настроек проекции скорости нормального контакта (fiber/TZ_LAW3_PROJECTION.md).
 // Бросает std::runtime_error (по-русски). Обе проекции выключены -- ничего не делает.
-// Вызывается после разбора конфига/аргументов (input.cpp, guo2019_shot, time_integration).
+// Вызывается после разбора конфига/аргументов (input.cpp, guo2019_shot, time_integration);
+// в выстреле Guo -- дважды (guo2019_shot и run_time_integration), поэтому предупреждения
+// (γ != 1; warm = 0) печатаются ОДИН раз за процесс.
 inline void validate_fiber_contact_projection(const SimulationConfig& cfg)
 {
     const int pf = cfg.fiber_fiber_contact_predictor, ps = cfg.fiber_solid_contact_predictor;
@@ -208,7 +212,7 @@ inline void validate_fiber_contact_projection(const SimulationConfig& cfg)
     if (cfg.fiber_contact_projection_warm != 0 && cfg.fiber_contact_projection_warm != 1)
         throw std::runtime_error("fiber_contact_projection_warm: допустимы 0 и 1, получено " +
                                  std::to_string(cfg.fiber_contact_projection_warm));
-    bool gamma_warned = false;
+    std::string gamma_names; // виды контакта с γ != 1 (для одного общего предупреждения)
     auto check_kind = [&](const char* name, int predictor, int type, double push_tau, double gamma)
     {
         if (predictor != 1) return;
@@ -218,15 +222,26 @@ inline void validate_fiber_contact_projection(const SimulationConfig& cfg)
         if (push_tau > 0.0)
             throw std::runtime_error(std::string(name) + "_contact_impulse_push_tau > 0 запрещён в режиме проекции (" +
                                      name + "_contact_predictor = 1)");
-        if (gamma != 1.0 && !gamma_warned)
+        if (gamma != 1.0)
         {
-            gamma_warned = true;
-            std::cerr << "ПРЕДУПРЕЖДЕНИЕ: " << name << "_contact_impulse_gamma = " << gamma
-                      << " != 1: γ игнорируется в режиме проекции\n";
+            if (!gamma_names.empty()) gamma_names += ", ";
+            std::ostringstream os;
+            os << name << "_contact_impulse_gamma = " << gamma;
+            gamma_names += os.str();
         }
     };
     check_kind("fiber_fiber", pf, cfg.fiber_fiber_contact_type, cfg.fiber_fiber_contact_impulse_push_tau,
                cfg.fiber_fiber_contact_impulse_gamma);
     check_kind("fiber_solid", ps, cfg.fiber_solid_contact_type, cfg.fiber_solid_contact_impulse_push_tau,
                cfg.fiber_solid_contact_impulse_gamma);
+
+    // Один раз за процесс (функция вызывается из одного потока; atomic -- на случай нескольких).
+    static std::atomic<bool> gamma_warned{false};
+    if (!gamma_names.empty() && !gamma_warned.exchange(true))
+        std::cerr << "ПРЕДУПРЕЖДЕНИЕ: " << gamma_names << " != 1: γ игнорируется в режиме проекции\n";
+    static std::atomic<bool> warm_warned{false};
+    if (cfg.fiber_contact_projection_warm == 0 && !warm_warned.exchange(true))
+        std::cerr << "ПРЕДУПРЕЖДЕНИЕ: fiber_contact_projection_warm = 0 (без тёплого старта) в режиме проекции: "
+                     "K итераций Якоби при ударе недостаточно (серия Guo 1T, V0 = 79: прогон C5 с K = 8 и warm = 0 дал "
+                     "n_tunnel = 44 и пробитие, с тёплым стартом -- 0). Рекомендуется fiber_contact_projection_warm = 1.\n";
 }

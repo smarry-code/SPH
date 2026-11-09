@@ -18,7 +18,7 @@
 //   Т3      -- связанные контакты (узел из 3 нитей, Solid на трёх бусинах, цепочка
 //              Solid-нить-нить): таблица остатка для K = 1,2,4,8 с тёплым стартом и без;
 //   Т4/Т5   -- энергия стадии и импульс в Т1-Т3 и на случайной сцене;
-//   Т6      -- сходимость по шагу (dt_scale 1; 0,5; 0,25);
+//   Т6      -- сходимость по шагу (dt_scale 1; 0,5; 0,25): конечные значения и ряды delta(t), v(t) на 20 моментах;
 //   Т7      -- побитовая одинаковость на 1 и 8 потоках.
 // Собирается с SPH_DIM=3 (CMakeLists.txt).
 #include "contact_force.hpp"
@@ -1096,18 +1096,21 @@ T3Run run_t3(const SceneInfo& sc, int threads, int K, bool warm, std::size_t ste
 
 void test_t3()
 {
-    std::printf("[Т3] связанные контакты, 100 шагов: остаток resid_rel = max pdot^+/(W~ P)\n");
+    std::printf("[Т3] связанные контакты, 100 шагов: остаток resid_rel = max pdot^+/(W_c P_c), W_c = sum w^2/m без c_k "
+                "(доли h N_c/m_red, ТЗ A4); resid_load = sum(pdot^+/W~) / sum P (доля полной нагрузки)\n");
     const int Ks[4] = {1, 2, 4, 8};
     for (const SceneInfo& sc : kScenes)
     {
         std::printf("  сцена: %s\n", sc.name);
-        std::printf("    %-3s | %-16s | %-16s\n", "K", "холодный старт", "тёплый старт");
+        std::printf("    %-3s | %-16s | %-16s | %-16s | %-16s\n", "K", "resid_rel хол.", "resid_rel тёпл.",
+                    "resid_load хол.", "resid_load тёпл.");
         for (int K : Ks)
         {
             const T3Run cold = run_t3(sc, 1, K, false, 100);
             const T3Run wrm = run_t3(sc, 1, K, true, 100);
-            std::printf("    %-3d | %-16.3e | %-16.3e   (resid, м/с: %.2e | %.2e)\n", K, cold.st.resid_rel,
-                        wrm.st.resid_rel, cold.st.resid, wrm.st.resid);
+            std::printf("    %-3d | %-16.3e | %-16.3e | %-16.3e | %-16.3e   (resid, м/с: %.2e | %.2e)\n", K,
+                        cold.st.resid_rel, wrm.st.resid_rel, cold.st.resid_load, wrm.st.resid_load, cold.st.resid,
+                        wrm.st.resid);
         }
         const T3Run r = run_t3(sc, 1, 8, true, 100);
         check(r.st.n_slots_ff == sc.nff && r.st.n_slots_fs == sc.nfs, "число активных слотов совпадает со сценой");
@@ -1116,8 +1119,9 @@ void test_t3()
         check(r.st.warm_frac == 1.0, "доля слотов с тёплым стартом = 1");
         check(r.Wpos_rel <= 1e-12, std::string("Т4: W_stage <= 1e-12 E (") + sc.name + ")");
         check(r.mom_rel < 1e-12, std::string("Т5: |sum m a_stage| на уровне округления (") + sc.name + ")");
-        std::printf("    stats: max c_k = %.0f, max c_s = %.0f, W_stage(последний) = %.3e Дж, max N_err = %.2e\n", r.st.max_ck,
-                    r.st.max_cs, r.st.W_stage, r.maxerr_N);
+        std::printf("    stats: max c_k = %.0f, max c_s = %.0f, W_stage(последний) = %.3e Дж, max N_err = %.2e, "
+                    "resid_rel = %.3e, resid_load = %.3e (K = 8, тёплый старт)\n",
+                    r.st.max_ck, r.st.max_cs, r.st.W_stage, r.maxerr_N, r.st.resid_rel, r.st.resid_load);
     }
 }
 
@@ -1225,8 +1229,13 @@ void test_random_scene()
         Sim s(1);
         make_random(s, 2026, false);
         run_random_steps(s);
-        std::printf("    импульс: max |sum m Δv| / sum m|Δv| = %.3e; W_pos/E = %.3e; max c_k = %.0f, max c_s = %.0f; resid_rel = %.3e\n",
-                    s.mom_rel_max, s.E_ref > 0.0 ? s.Wpos_max / s.E_ref : 0.0, s.st.max_ck, s.st.max_cs, s.st.resid_rel);
+        std::printf("    импульс: max |sum m Δv| / sum m|Δv| = %.3e; max c_k = %.0f, max c_s = %.0f; resid_rel = %.3e; "
+                    "resid_load = %.3e\n",
+                    s.mom_rel_max, s.st.max_ck, s.st.max_cs, s.st.resid_rel, s.st.resid_load);
+        // Т4 на случайной (связной, c_k >= 3) сцене: положительная работа стадии <= 1e-12 E на каждом шаге.
+        const double wpos_rel = s.E_ref > 0.0 ? s.Wpos_max / s.E_ref : 0.0;
+        std::printf("T4 random: W_pos/E = %.3e (порог 1e-12)\n", wpos_rel);
+        check(wpos_rel <= 1e-12, "Т4: W_stage <= 1e-12 E на каждом шаге (случайная сцена)");
         check(s.mom_rel_max < 1e-12, "Т5: суммарный импульс стадии = 0 с точностью округления (все свободны)");
         check(s.st.max_ck >= 3.0, "сцена действительно связная: max c_k >= 3");
     }
@@ -1249,6 +1258,7 @@ void test_random_scene()
         for (std::size_t k = 0; pe && k < a.fs.size(); ++k) pe = std::memcmp(&a.fs[k].P, &b.fs[k].P, sizeof(double)) == 0;
         bool st = std::memcmp(&a.st.resid, &b.st.resid, sizeof(double)) == 0 &&
                   std::memcmp(&a.st.resid_rel, &b.st.resid_rel, sizeof(double)) == 0 &&
+                  std::memcmp(&a.st.resid_load, &b.st.resid_load, sizeof(double)) == 0 &&
                   std::memcmp(&a.st.W_stage, &b.st.W_stage, sizeof(double)) == 0 && a.st.max_ck == b.st.max_ck;
         bool wt = a.warm.size() == b.warm.size();
         for (std::size_t k = 0; wt && k < a.warm.size(); ++k)
@@ -1284,6 +1294,62 @@ void test_t7_scenes()
 // ============================================================================
 // Т6. Сходимость по шагу: dt_scale = 1; 0,5; 0,25 на одном физическом времени.
 // ============================================================================
+
+// Удар из зазора на закреплённую бусину под нагрузкой (одна и та же сцена для проверки по концу и по рядам).
+constexpr double kT6ImpactV = 79.0; // скорость удара, м/с (характерная скорость сцены удара)
+void setup_t6_impact(Sim& s, double dt)
+{
+    s.dt = dt;
+    s.init(2, 0);
+    s.fixed_f[0] = 1;
+    s.finalize_fixed();
+    s.fb.x[2][1] = kD + 20.0 * kT6ImpactV * kDt0; // фиксированный зазор
+    s.fb.vx[2][1] = -kT6ImpactV;
+    s.ext_f[2][1] = -kG;
+    s.ffdef.push_back(FFDef{1, -1, 0, -1, 0.0, 0.0, kD, 0.3});
+}
+
+// Ряд delta(t) и v(t) подвижной бусины 1 в npts одинаковых физических моментах t_j = t_first + j*t_step.
+// Моменты кратны 0,25*kDt0 (наименьший шаг серии), поэтому для dt_scale 0,5 и 0,25 номер шага
+// n_j = t_j/dt целый -- шаг точен, интерполяция не нужна (для dt_scale 1 в серии удара полуцелые t_j
+// округляются до ближайшего шага; эта пара только печатается). Снимается состояние (x^n, v^n) после n_j шагов;
+// скорость v^n сдвинута от t_j на dt/2 (полунеявная схема), разница между шагами <= g*dt/2 = 0,125 м/с.
+struct T6Series
+{
+    std::vector<double> delta, v;
+};
+
+T6Series sample_t6_series(Sim& s, double t_first, double t_step, int npts)
+{
+    T6Series r;
+    std::size_t done = 0;
+    for (int j = 0; j < npts; ++j)
+    {
+        const double tj = t_first + static_cast<double>(j) * t_step;
+        const std::size_t target = static_cast<std::size_t>(std::llround(tj / s.dt));
+        while (done < target)
+        {
+            s.step();
+            ++done;
+        }
+        r.delta.push_back(s.ff_delta(0));
+        r.v.push_back(s.fb.vx[2][1]);
+    }
+    return r;
+}
+
+// max_j |a_j - b_j| / ref для delta и v ряда.
+void series_diff(const T6Series& a, const T6Series& b, double delta_ref, double v_ref, double& ed, double& ev)
+{
+    ed = 0.0;
+    ev = 0.0;
+    for (std::size_t j = 0; j < a.delta.size() && j < b.delta.size(); ++j)
+    {
+        ed = std::max(ed, std::fabs(a.delta[j] - b.delta[j]) / delta_ref);
+        ev = std::max(ev, std::fabs(a.v[j] - b.v[j]) / v_ref);
+    }
+}
+
 void test_t6()
 {
     std::printf("[Т6] сходимость по шагу: dt_scale 1; 0.5; 0.25\n");
@@ -1309,14 +1375,7 @@ void test_t6()
     {
         const double dt = kDt0 * scales[i];
         Sim s(1);
-        s.dt = dt;
-        s.init(2, 0);
-        s.fixed_f[0] = 1;
-        s.finalize_fixed();
-        s.fb.x[2][1] = kD + 20.0 * 79.0 * kDt0; // фиксированный зазор
-        s.fb.vx[2][1] = -79.0;
-        s.ext_f[2][1] = -kG;
-        s.ffdef.push_back(FFDef{1, -1, 0, -1, 0.0, 0.0, kD, 0.3});
+        setup_t6_impact(s, dt);
         const std::size_t steps = static_cast<std::size_t>(std::llround(60.0 * kDt0 / dt));
         for (std::size_t k = 0; k < steps; ++k) s.step();
         de[i] = s.ff_delta(0);
@@ -1328,6 +1387,48 @@ void test_t6()
           "удар: delta_end сходится (разница < 1% d)");
     check(std::fabs(ve[0]) < 1e-9 && std::fabs(ve[1]) < 1e-9 && std::fabs(ve[2]) < 1e-9,
           "удар: скорость после удара 0 при всех шагах (e = 0, нагрузка удержана)");
+
+    // (c) РЯДЫ по времени: 20 одинаковых физических моментов, допуск 1 % (ТЗ A5) между dt_scale 0,5 и 0,25
+    //     (между 1 и 0,5 -- только печать). Масштабы отнесения:
+    //     - статика: delta(t) -- к delta0 = 0,1 d; скорость -- к g*dt0 = 1 м/с (скорость, которую бусина
+    //       набрала бы за базовый шаг без контакта; сама скорость в статике ~0, так что делить на неё нельзя);
+    //     - удар: delta(t) -- к d (как проверка по концу выше); скорость -- к скорости удара 79 м/с
+    //       (мгновенная скорость после остановки ~0, делить на неё нельзя).
+    //     Моменты удара сдвинуты на 1,5*kDt0: остановка бусины происходит при t_c ~ 18..19 kDt0, а сетка
+    //     3*j*kDt0 попала бы прямо в t_c, где ряды разных шагов различались бы на скачок скорости.
+    {
+        const int npts = 20;
+        T6Series st_ser[3], im_ser[3];
+        for (int i = 0; i < 3; ++i)
+        {
+            const double dt = kDt0 * scales[i];
+            {
+                Sim s(1);
+                s.dt = dt;
+                s.K = 8;
+                s.warm_on = true;
+                s.check_momentum = false;
+                make_static_scene(s, 0, 0.1 * kD);
+                st_ser[i] = sample_t6_series(s, T / npts, T / npts, npts);
+            }
+            {
+                Sim s(1);
+                setup_t6_impact(s, dt);
+                im_ser[i] = sample_t6_series(s, 1.5 * kDt0, 3.0 * kDt0, npts);
+            }
+        }
+        double ed12, ev12, ed23, ev23;
+        series_diff(st_ser[0], st_ser[1], 0.1 * kD, kG * kDt0, ed12, ev12);
+        series_diff(st_ser[1], st_ser[2], 0.1 * kD, kG * kDt0, ed23, ev23);
+        std::printf("    ряды, статика (20 точек): max |d delta|/delta0 = %.3e (1 vs 0.5), %.3e (0.5 vs 0.25); "
+                    "max |d v|/(g dt0) = %.3e, %.3e\n", ed12, ed23, ev12, ev23);
+        check(ed23 < 0.01 && ev23 < 0.01, "статика: ряды delta(t), v(t) на 20 моментах между шагами 0.5 и 0.25 отличаются < 1%");
+        series_diff(im_ser[0], im_ser[1], kD, kT6ImpactV, ed12, ev12);
+        series_diff(im_ser[1], im_ser[2], kD, kT6ImpactV, ed23, ev23);
+        std::printf("    ряды, удар (20 точек): max |d delta|/d = %.3e (1 vs 0.5), %.3e (0.5 vs 0.25); "
+                    "max |d v|/V0 = %.3e, %.3e\n", ed12, ed23, ev12, ev23);
+        check(ed23 < 0.01 && ev23 < 0.01, "удар: ряды delta(t), v(t) на 20 моментах между шагами 0.5 и 0.25 отличаются < 1%");
+    }
 }
 
 } // namespace

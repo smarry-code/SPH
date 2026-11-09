@@ -179,6 +179,7 @@ struct MonitorStats
     // Проекция скорости нормального контакта (fiber_*_contact_predictor = 1): максимумы за ВЕСЬ
     // прогон по шагам (из fiber::Model::proj_stats). При выключенной проекции не заполняются.
     double proj_resid_max = 0.0, proj_resid_rel_max = 0.0;
+    double proj_resid_load_max = 0.0; // max по шагам resid_load: недостающий импульс в долях полной нагрузки
     double W_proj_pos_max = 0.0;      // max(0, max W_stage): положительная работа стадии (теоретически 0)
     std::size_t proj_slots_max = 0;   // max (n_slots_ff + n_slots_fs) за шаг
 };
@@ -363,8 +364,12 @@ public:
                 }
                 // Только в режиме проекции: столбцы после всех прежних (при выключенной -- заголовок прежний).
                 if (proj_on_)
+                {
                     std::fprintf(csv_, ",proj_n_ff,proj_n_fs,proj_max_ck,proj_max_cs,proj_resid,proj_resid_rel,"
                                        "proj_warm_frac,W_proj_pos_max");
+                    // Новый столбец -- строго после прежних (номера прежних не сдвигаются).
+                    if (csv_load_col_) std::fprintf(csv_, ",proj_resid_load");
+                }
                 std::fprintf(csv_, "\n");
             }
         }
@@ -602,7 +607,7 @@ public:
         o(nb);
         o(nply);
         o(proj);
-        state_io(o);
+        state_io(o, kStateVersion);
         return std::move(o.b);
     }
 
@@ -630,10 +635,28 @@ public:
         in(nb);
         in(nply);
         in(proj);
-        if (magic != kStateMagic) throw std::runtime_error("состояние монитора в чекпоинте: неизвестный формат");
+        int version = 0;
+        if (magic == kStateMagic)
+            version = 2;
+        else if (magic == kStateMagicV1)
+            version = 1;
+        else
+            throw std::runtime_error("состояние монитора в чекпоинте: неизвестный формат");
         if (nt != nt_ || nb != nb_ || nply != nply_ || (proj != 0) != proj_on_)
             throw std::runtime_error("состояние монитора в чекпоинте от другой сцены (частицы, бусины, слои или проекция)");
-        state_io(in);
+        if (version == 1)
+        {
+            // Старый формат без proj_resid_load: новые поля -- нули, столбец proj_resid_load в monitor.csv
+            // не добавляется (шапка старого файла остаётся согласованной со строками).
+            st_.proj_resid_load_max = 0.0;
+            pw_resid_load_ = 0.0;
+            csv_load_col_ = false;
+            if (proj_on_)
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте старого формата GUOMON01: "
+                                     "proj_resid_load_max до шага рестарта неизвестен (0), столбец proj_resid_load "
+                                     "в monitor.csv не пишется.\n");
+        }
+        state_io(in, version);
         if (in.pos != blob.size()) throw std::runtime_error("состояние монитора в чекпоинте: лишние байты");
         if (st_.steps != guard_steps)
             throw std::runtime_error("состояние монитора в чекпоинте: шагов " + std::to_string(st_.steps) +
@@ -742,8 +765,10 @@ public:
         if (proj_on_)
         {
             // Ключи режима проекции -- строго в конец строки.
-            std::fprintf(f, " proj_resid_max=%.9g proj_resid_rel_max=%.9g W_proj_pos_max=%.9g proj_slots_max=%zu\n",
-                         st_.proj_resid_max, st_.proj_resid_rel_max, st_.W_proj_pos_max, st_.proj_slots_max);
+            std::fprintf(f, " proj_resid_max=%.9g proj_resid_rel_max=%.9g W_proj_pos_max=%.9g proj_slots_max=%zu"
+                            " proj_resid_load_max=%.9g\n",
+                         st_.proj_resid_max, st_.proj_resid_rel_max, st_.W_proj_pos_max, st_.proj_slots_max,
+                         st_.proj_resid_load_max);
         }
         std::fclose(f);
     }
@@ -1232,9 +1257,12 @@ private:
         if (proj_on_)
         {
             // Окно -- с прошлой записанной строки; пустое окно (нет шагов с проекцией) -- нули, warm_frac = 1.
-            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n", pw_.n_ff, pw_.n_fs, pw_.max_ck, pw_.max_cs,
+            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e", pw_.n_ff, pw_.n_fs, pw_.max_ck, pw_.max_cs,
                          pw_.resid, pw_.resid_rel, pw_.warm_frac, pw_.W_pos);
+            if (csv_load_col_) std::fprintf(csv_, ",%.9e", pw_resid_load_);
+            std::fprintf(csv_, "\n");
             pw_ = ProjWindow{};
+            pw_resid_load_ = 0.0;
         }
     }
 
@@ -1242,6 +1270,8 @@ private:
     //   n_ff, n_fs, max_ck, max_cs, resid, resid_rel -- максимумы по шагам окна;
     //   warm_frac -- МИНИМУМ по шагам окна с активными слотами (1, если слотов не было);
     //   W_pos     -- max(0, max W_stage по шагам окна): положительная работа стадии (теоретически 0).
+    // Максимум resid_load по окну лежит ОТДЕЛЬНО (pw_resid_load_): ProjWindow пишется в чекпоинт
+    // побайтно (state_io), и изменение его размера сломало бы чтение формата GUOMON01.
     struct ProjWindow
     {
         std::size_t n_ff = 0, n_fs = 0;
@@ -1258,23 +1288,30 @@ private:
         pw_.max_cs = std::max(pw_.max_cs, ps.max_cs);
         pw_.resid = std::max(pw_.resid, ps.resid);
         pw_.resid_rel = std::max(pw_.resid_rel, ps.resid_rel);
+        pw_resid_load_ = std::max(pw_resid_load_, ps.resid_load);
         const std::size_t n_slots = ps.n_slots_ff + ps.n_slots_fs;
         if (n_slots > 0) pw_.warm_frac = std::min(pw_.warm_frac, ps.warm_frac);
         pw_.W_pos = std::max(pw_.W_pos, ps.W_stage);
         // весь прогон
         st_.proj_resid_max = std::max(st_.proj_resid_max, ps.resid);
         st_.proj_resid_rel_max = std::max(st_.proj_resid_rel_max, ps.resid_rel);
+        st_.proj_resid_load_max = std::max(st_.proj_resid_load_max, ps.resid_load);
         st_.W_proj_pos_max = std::max(st_.W_proj_pos_max, ps.W_stage);
         st_.proj_slots_max = std::max(st_.proj_slots_max, n_slots);
     }
 
-    static constexpr std::uint64_t kStateMagic = 0x3130'4e4f'4d4f'5547ull; // "GUOMON01"
+    // Формат состояния: GUOMON02 (текущий) = GUOMON01 + в конце proj_resid_load_max и pw_resid_load_.
+    static constexpr std::uint64_t kStateMagicV1 = 0x3130'4e4f'4d4f'5547ull; // "GUOMON01"
+    static constexpr std::uint64_t kStateMagic = 0x3230'4e4f'4d4f'5547ull;   // "GUOMON02"
+    static constexpr int kStateVersion = 2;
 
     // Все поля, меняющиеся после конструктора (накопленные величины, исход, окно проекции, последняя строка).
     // Величины конструктора (x0 зажатых, массы, z0, U_int0, пакет слоёв) -- от исходной сцены, она та же.
-    // ДОБАВЛЯЯ поле в MonitorStats или изменяемый член класса -- добавить его сюда.
+    // ДОБАВЛЯЯ поле в MonitorStats или изменяемый член класса -- добавить его сюда, В КОНЕЦ, под
+    // условием на новую версию (version -- версия формата: 1 = GUOMON01, 2 = GUOMON02; запись всегда
+    // текущей, kStateVersion), и поднять magic.
     template <class F>
-    void state_io(F& f)
+    void state_io(F& f, int version)
     {
         MonitorStats& s = st_;
         f(s.steps), f(s.t_end), f(s.dt_first), f(s.dt_min);
@@ -1327,6 +1364,9 @@ private:
             wp_bond_.clear();
             for (std::size_t i = 0; i < keys.size(); ++i) wp_bond_[keys[i]] = vals[i];
         }
+
+        // GUOMON02: поля метрики resid_load (в GUOMON01 их нет -- остаются нулями).
+        if (version >= 2) f(s.proj_resid_load_max), f(pw_resid_load_);
     }
 
     // monitor.csv после рестарта с состоянием: заголовок и строки с шагом <= st_.steps (полные: столько же
@@ -1409,6 +1449,8 @@ private:
     bool restored_ = false;    // состояние восстановлено из чекпоинта
     bool proj_on_ = false; // режим проекции нормального контакта включён в конфиге сцены
     ProjWindow pw_;
+    double pw_resid_load_ = 0.0; // max resid_load по окну monitor.csv (вне ProjWindow, см. комментарий там)
+    bool csv_load_col_ = true;   // писать столбец proj_resid_load (false -- рестарт из чекпоинта GUOMON01)
     Row last_;
     bool last_written_ = true;
 

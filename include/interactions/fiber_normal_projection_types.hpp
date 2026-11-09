@@ -132,7 +132,8 @@ struct NormalProjectionStats
     double max_ck = 0.0;         // max счётчик c_k по бусинам
     double max_cs = 0.0;         // max счётчик c_s по частицам Solid
     double resid = 0.0;          // max_c (pdot_c^{n+1})^+ после K итераций, м/с
-    double resid_rel = 0.0;      // max_c (pdot^+ / W~_c) / P_c: недостающий импульс в долях накопленного (P_c > 0)
+    double resid_rel = 0.0;      // max_c pdot_c^+/(W_c P_c), P_c > 0, W_c = sum w^2/m_k БЕЗ c_k (= 1/m_red): остаток в долях h N_c/m_red
+    double resid_load = 0.0;     // (sum_c pdot_c^+/W~_c) / (sum_c P_c) по активным слотам: недостающий импульс в долях полной нагрузки
     double warm_frac = 0.0;      // доля активных слотов с тёплым стартом
     double W_stage = 0.0;        // работа стадии за шаг: sum m (|v|^2 - |v~|^2)/2, Дж (теоретически <= 0)
     int iters = 0;               // K

@@ -598,13 +598,8 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
     info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
     info.emplace_back("dt_scale", fmtg(opt.dt_scale));
-    if (opt.ff_predictor == 1 || opt.fs_predictor == 1)
-    {
-        info.emplace_back("ff_contact_predictor", std::to_string(opt.ff_predictor == 1 ? 1 : 0));
-        info.emplace_back("fs_contact_predictor", std::to_string(opt.fs_predictor == 1 ? 1 : 0));
-        info.emplace_back("contact_proj_iters", std::to_string(opt.proj_iters >= 0 ? opt.proj_iters : 8));
-        info.emplace_back("contact_proj_warm", std::to_string(opt.proj_warm >= 0 ? opt.proj_warm : 1));
-    }
+    // Ключи проекции нормального контакта пишутся в shot.txt отдельно (по sc.cfg после применения CLI,
+    // см. run_shot): здесь cfg выстрела ещё не заполнен, а сама функция зовётся только при переопределениях нити.
     return info;
 }
 
@@ -819,6 +814,15 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         add("frame_sph_bytes", fmtg(frame_sph, 10));
         add("frame_fiber_bytes", fmtg(frame_fiber, 10));
         for (const auto& kvp : fiber_info) add(kvp.first, kvp.second);
+        // Режим проекции (любой вид контакта): ключи из ИТОГОВОЙ конфигурации sc.cfg (после CLI); при
+        // выключенном режиме строка shot.txt не меняется. Место в строке -- прежнее (перед mu_ff).
+        if (sc.cfg.fiber_fiber_contact_predictor == 1 || sc.cfg.fiber_solid_contact_predictor == 1)
+        {
+            add("ff_contact_predictor", std::to_string(sc.cfg.fiber_fiber_contact_predictor == 1 ? 1 : 0));
+            add("fs_contact_predictor", std::to_string(sc.cfg.fiber_solid_contact_predictor == 1 ? 1 : 0));
+            add("contact_proj_iters", std::to_string(sc.cfg.fiber_contact_projection_iters));
+            add("contact_proj_warm", std::to_string(sc.cfg.fiber_contact_projection_warm));
+        }
         add("mu_ff", fmtg(mu_ff));
         add("mu_fs", fmtg(mu_fs));
         {
