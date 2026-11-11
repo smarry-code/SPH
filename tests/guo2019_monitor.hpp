@@ -182,6 +182,12 @@ struct MonitorStats
     double proj_resid_load_max = 0.0; // max по шагам resid_load: недостающий импульс в долях полной нагрузки
     double W_proj_pos_max = 0.0;      // max(0, max W_stage): положительная работа стадии (теоретически 0)
     std::size_t proj_slots_max = 0;   // max (n_slots_ff + n_slots_fs) за шаг
+    // GUOMON03: остаток после трения и энергетическая безопасность тёплого старта.
+    double proj_resid_post_max = 0.0;      // max по шагам resid_post (остаток по итоговым скоростям, после трения)
+    double proj_resid_load_post_max = 0.0; // max по шагам resid_load_post
+    double W_warm_pos_max = 0.0;           // max(0, max W_warm): положительная работа тёплого старта до масштабирования
+    double proj_warm_scale_min = 1.0;      // min множителя тёплого старта (1 -- ни разу не уменьшался)
+    std::size_t proj_warm_scaled_steps = 0; // число шагов с warm_scale < 1
 };
 
 namespace mon_detail
@@ -256,7 +262,13 @@ struct StateIn
         {
             std::uint64_t n = 0;
             (*this)(n);
-            if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+            // Каждый элемент занимает в блоке не меньше min_elem_bytes байт (тривиальный тип -- sizeof,
+            // вложенный вектор/строка -- 8 байт длины), поэтому n сверяется с числом ЭЛЕМЕНТОВ, которые могут
+            // поместиться в остаток: повреждённая длина не вызывает огромного выделения памяти до ошибки.
+            using E = typename T::value_type;
+            constexpr std::size_t min_elem_bytes =
+                (is_std_vector<E>::value || std::is_same_v<E, std::string>) ? sizeof(std::uint64_t) : sizeof(E);
+            if (n > (b.size() - pos) / min_elem_bytes) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
             v.resize(static_cast<std::size_t>(n));
             for (auto& e : v) (*this)(e);
         }
@@ -369,6 +381,7 @@ public:
                                        "proj_warm_frac,W_proj_pos_max");
                     // Новый столбец -- строго после прежних (номера прежних не сдвигаются).
                     if (csv_load_col_) std::fprintf(csv_, ",proj_resid_load");
+                    if (csv_v3_cols_) std::fprintf(csv_, ",proj_resid_post,proj_warm_scale_min");
                 }
                 std::fprintf(csv_, "\n");
             }
@@ -637,6 +650,8 @@ public:
         in(proj);
         int version = 0;
         if (magic == kStateMagic)
+            version = 3;
+        else if (magic == kStateMagicV2)
             version = 2;
         else if (magic == kStateMagicV1)
             version = 1;
@@ -655,6 +670,22 @@ public:
                 std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте старого формата GUOMON01: "
                                      "proj_resid_load_max до шага рестарта неизвестен (0), столбец proj_resid_load "
                                      "в monitor.csv не пишется.\n");
+        }
+        if (version <= 2)
+        {
+            // Без полей GUOMON03: значения по умолчанию, столбцы proj_resid_post,proj_warm_scale_min
+            // не добавляются (шапка старого monitor.csv остаётся согласованной со строками).
+            st_.proj_resid_post_max = 0.0;
+            st_.proj_resid_load_post_max = 0.0;
+            st_.W_warm_pos_max = 0.0;
+            st_.proj_warm_scale_min = 1.0;
+            st_.proj_warm_scaled_steps = 0;
+            pw3_ = ProjWindow3{};
+            csv_v3_cols_ = false;
+            if (proj_on_ && version == 2)
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте формата GUOMON02: "
+                                     "proj_resid_post_max и proj_warm_scale_min до шага рестарта "
+                                     "неизвестны, их столбцы в monitor.csv не пишутся.\n");
         }
         state_io(in, version);
         if (in.pos != blob.size()) throw std::runtime_error("состояние монитора в чекпоинте: лишние байты");
@@ -766,9 +797,11 @@ public:
         {
             // Ключи режима проекции -- строго в конец строки.
             std::fprintf(f, " proj_resid_max=%.9g proj_resid_rel_max=%.9g W_proj_pos_max=%.9g proj_slots_max=%zu"
-                            " proj_resid_load_max=%.9g\n",
+                            " proj_resid_load_max=%.9g proj_resid_post_max=%.9g proj_resid_load_post_max=%.9g"
+                            " W_warm_pos_max=%.9g proj_warm_scale_min=%.17g proj_warm_scaled_steps=%zu\n",
                          st_.proj_resid_max, st_.proj_resid_rel_max, st_.W_proj_pos_max, st_.proj_slots_max,
-                         st_.proj_resid_load_max);
+                         st_.proj_resid_load_max, st_.proj_resid_post_max, st_.proj_resid_load_post_max,
+                         st_.W_warm_pos_max, st_.proj_warm_scale_min, st_.proj_warm_scaled_steps);
         }
         std::fclose(f);
     }
@@ -1260,9 +1293,11 @@ private:
             std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e", pw_.n_ff, pw_.n_fs, pw_.max_ck, pw_.max_cs,
                          pw_.resid, pw_.resid_rel, pw_.warm_frac, pw_.W_pos);
             if (csv_load_col_) std::fprintf(csv_, ",%.9e", pw_resid_load_);
+            if (csv_v3_cols_) std::fprintf(csv_, ",%.9e,%.17g", pw3_.resid_post, pw3_.warm_scale_min);
             std::fprintf(csv_, "\n");
             pw_ = ProjWindow{};
             pw_resid_load_ = 0.0;
+            pw3_ = ProjWindow3{};
         }
     }
 
@@ -1278,6 +1313,14 @@ private:
         double max_ck = 0.0, max_cs = 0.0, resid = 0.0, resid_rel = 0.0;
         double warm_frac = 1.0;
         double W_pos = 0.0;
+    };
+
+    // Окно столбцов GUOMON03 (тоже отдельно от ProjWindow): resid_post -- максимум, warm_scale_min --
+    // минимум (1 -- тёплый старт не уменьшался). Поля -- по одному в state_io.
+    struct ProjWindow3
+    {
+        double resid_post = 0.0;
+        double warm_scale_min = 1.0;
     };
 
     void accumulate_proj(const interactions::NormalProjectionStats& ps)
@@ -1298,12 +1341,25 @@ private:
         st_.proj_resid_load_max = std::max(st_.proj_resid_load_max, ps.resid_load);
         st_.W_proj_pos_max = std::max(st_.W_proj_pos_max, ps.W_stage);
         st_.proj_slots_max = std::max(st_.proj_slots_max, n_slots);
+        // GUOMON03
+        if (ps.resid_post_valid)
+        {
+            pw3_.resid_post = std::max(pw3_.resid_post, ps.resid_post);
+            st_.proj_resid_post_max = std::max(st_.proj_resid_post_max, ps.resid_post);
+            st_.proj_resid_load_post_max = std::max(st_.proj_resid_load_post_max, ps.resid_load_post);
+        }
+        pw3_.warm_scale_min = std::min(pw3_.warm_scale_min, ps.warm_scale);
+        st_.W_warm_pos_max = std::max(st_.W_warm_pos_max, ps.W_warm);
+        st_.proj_warm_scale_min = std::min(st_.proj_warm_scale_min, ps.warm_scale);
+        if (ps.warm_scale < 1.0) ++st_.proj_warm_scaled_steps;
     }
 
-    // Формат состояния: GUOMON02 (текущий) = GUOMON01 + в конце proj_resid_load_max и pw_resid_load_.
+    // Формат состояния: GUOMON02 = GUOMON01 + в конце proj_resid_load_max и pw_resid_load_;
+    // GUOMON03 (текущий) = GUOMON02 + в конце поля остатка после трения и масштабирования тёплого старта.
     static constexpr std::uint64_t kStateMagicV1 = 0x3130'4e4f'4d4f'5547ull; // "GUOMON01"
-    static constexpr std::uint64_t kStateMagic = 0x3230'4e4f'4d4f'5547ull;   // "GUOMON02"
-    static constexpr int kStateVersion = 2;
+    static constexpr std::uint64_t kStateMagicV2 = 0x3230'4e4f'4d4f'5547ull; // "GUOMON02"
+    static constexpr std::uint64_t kStateMagic = 0x3330'4e4f'4d4f'5547ull;   // "GUOMON03"
+    static constexpr int kStateVersion = 3;
 
     // Все поля, меняющиеся после конструктора (накопленные величины, исход, окно проекции, последняя строка).
     // Величины конструктора (x0 зажатых, массы, z0, U_int0, пакет слоёв) -- от исходной сцены, она та же.
@@ -1367,6 +1423,14 @@ private:
 
         // GUOMON02: поля метрики resid_load (в GUOMON01 их нет -- остаются нулями).
         if (version >= 2) f(s.proj_resid_load_max), f(pw_resid_load_);
+        // GUOMON03: остаток после трения и масштабирование тёплого старта (в GUOMON01/02 -- значения по
+        // умолчанию: нули и warm_scale_min = 1).
+        if (version >= 3)
+        {
+            f(s.proj_resid_post_max), f(s.proj_resid_load_post_max), f(s.W_warm_pos_max), f(s.proj_warm_scale_min);
+            f(s.proj_warm_scaled_steps);
+            f(pw3_.resid_post), f(pw3_.warm_scale_min);
+        }
     }
 
     // monitor.csv после рестарта с состоянием: заголовок и строки с шагом <= st_.steps (полные: столько же
@@ -1410,9 +1474,15 @@ private:
         {
             std::ofstream out(tmp, std::ios::trunc);
             for (const auto& l : keep) out << l << '\n';
+            out.flush();
+            if (!out)
+                throw std::runtime_error("монитор: не удалось записать " + tmp + " при продолжении monitor.csv после рестарта");
         }
-        std::rename(tmp.c_str(), opt_.csv_path.c_str());
+        // Ошибка на любом шаге -- исключение: молча продолжать без monitor.csv нельзя (ревью Codex).
+        if (std::rename(tmp.c_str(), opt_.csv_path.c_str()) != 0)
+            throw std::runtime_error("монитор: не удалось заменить " + opt_.csv_path + " (rename из " + tmp + ")");
         csv_ = std::fopen(opt_.csv_path.c_str(), "a");
+        if (!csv_) throw std::runtime_error("монитор: не удалось открыть " + opt_.csv_path + " для дописывания");
         std::fprintf(stderr, "монитор: состояние восстановлено на шаге %zu; monitor.csv: оставлено строк %zu (последняя -- шаг %zu), "
                              "отброшено после чекпоинта %zu.\n", st_.steps, keep.empty() ? 0 : keep.size() - 1, last_step,
                      dropped_tail);
@@ -1451,6 +1521,8 @@ private:
     ProjWindow pw_;
     double pw_resid_load_ = 0.0; // max resid_load по окну monitor.csv (вне ProjWindow, см. комментарий там)
     bool csv_load_col_ = true;   // писать столбец proj_resid_load (false -- рестарт из чекпоинта GUOMON01)
+    ProjWindow3 pw3_;            // окно столбцов GUOMON03 (вне ProjWindow, см. комментарий там)
+    bool csv_v3_cols_ = true;    // писать столбцы GUOMON03 (false -- рестарт из чекпоинта GUOMON01/02)
     Row last_;
     bool last_written_ = true;
 

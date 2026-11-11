@@ -135,8 +135,16 @@ struct NormalProjectionStats
     double resid_rel = 0.0;      // max_c pdot_c^+/(W_c P_c), P_c > 0, W_c = sum w^2/m_k БЕЗ c_k (= 1/m_red): остаток в долях h N_c/m_red
     double resid_load = 0.0;     // (sum_c pdot_c^+/W~_c) / (sum_c P_c) по активным слотам: недостающий импульс в долях полной нагрузки
     double warm_frac = 0.0;      // доля активных слотов с тёплым стартом
-    double W_stage = 0.0;        // работа стадии за шаг: sum m (|v|^2 - |v~|^2)/2, Дж (теоретически <= 0)
+    double W_stage = 0.0;        // работа стадии за шаг: sum m (|v|^2 - |v~|^2)/2, Дж (<= 0, см. run_normal_projection)
     int iters = 0;               // K
+    double W_warm = 0.0;         // работа одного тёплого старта (до итераций и до масштабирования), Дж
+    double warm_scale = 1.0;     // множитель тёплого старта: 1 -- W_warm <= 0; < 1 -- P^(0) уменьшен до W = 0
+    // Остаток условия Синьорини ПОСЛЕ стадии трения (по итоговым скоростям шага: трение может дать
+    // нормальную составляющую в соседних контактах). Заполняет normal_projection_post_residual;
+    // resid_post_valid = false -- не считался.
+    bool resid_post_valid = false;
+    double resid_post = 0.0;      // max_c (pdot_c^{n+1})^+ по итоговым скоростям, м/с
+    double resid_load_post = 0.0; // как resid_load, по итоговым скоростям
 };
 
 } // namespace interactions

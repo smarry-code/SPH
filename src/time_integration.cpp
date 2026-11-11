@@ -765,6 +765,16 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 #endif
         }
 
+        // Остаток условия Синьорини по итоговым скоростям шага (после трения и зажимов [3]) -- только
+        // диагностика для монитора сцены: трение может дать нормальную составляющую в соседних контактах.
+        if (proj_on && proj_stats != nullptr && proj_stats->enabled)
+        {
+            const auto fupd = solver.fiber_velocity_update(fb, dt);
+            const auto supd = solver.solid_velocity_update(sys, dt);
+            interactions::normal_projection_post_residual(fiber_exec, fb, fupd, solver.fiber_rhs.dv, normal_ff, sys,
+                                                          supd, solver.solid_rhs.dvx, normal_fs, proj_ws, *proj_stats);
+        }
+
         // Реакция опоры шага ([1] + [3], в этом порядке) -- в отчёт сцене.
         if (has_clamps && clamp_report != nullptr)
         {

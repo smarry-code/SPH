@@ -14,6 +14,10 @@
 #include "run_guard.hpp"
 #include "time_integration.hpp"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -647,6 +651,96 @@ int main()
         const std::string e2 = try_read(root + "/w2", root + "/v2.ckpt", false, [](SimulationConfig&) {}, &out2);
         e2e::check(e2.empty(), "файл v2 читается" + (e2.empty() ? std::string() : ": " + e2));
         e2e::check(out2.user_state.empty(), "v2: user_state пуст");
+    });
+
+    // 9-10. Проекция нормального контакта (закон 3, predictor = 1) на сцене с пересекающимися нитями:
+    // рестарт с ЗАПОЛНЕННОЙ таблицей тёплого старта и независимость полного шага от числа потоков
+    // (поиск -> слоты -> стадия проекции -> трение -> таблица -> следующий шаг). Ревью Codex: прежде
+    // это проверялось только вручную на сцене Guo.
+    const auto set_proj_law3 = [](SimulationConfig& c) {
+        c.fiber_fiber_contact_type = 3;
+        c.fiber_solid_contact_type = 3;
+        c.fiber_fiber_contact_predictor = 1;
+        c.fiber_solid_contact_predictor = 1;
+    };
+    // 2N шагов сцены с контактом на заданном числе потоков; снимок, статистика последнего шага.
+    const auto run_contact = [&](const std::string& dir, int threads, std::size_t steps, double& time,
+                                 interactions::NormalProjectionStats& st) {
+#ifdef _OPENMP
+        omp_set_num_threads(threads);
+#else
+        (void)threads;
+#endif
+        CkptScene sc = build_checkpoint_scene(dir, 0.5, 0, true);
+        set_proj_law3(sc.cfg);
+        e2e::check(run_steps(sc, steps, time), "сцена с контактом: шаги выполнены");
+        st = sc.model.proj_stats;
+        return snapshot(sc, time);
+    };
+
+    run_case("9. проекция: рестарт с заполненным тёплым стартом побитово равен непрерывному прогону", [&] {
+        e2e::ScopedWorkDir wd("sph_ckpt", "proj_restart");
+        const fs::path root = wd.dir();
+        const std::string ck = (root / "state.ckpt").string();
+        double tA = 0.0;
+        interactions::NormalProjectionStats stA;
+        const std::vector<Blob> snap_a = run_contact((root / "A").string(), 1, 2 * N, tA, stA);
+        std::printf("         A: слотов нить-нить %zu, resid = %.3e м/с, W_stage = %.3e Дж, warm_scale = %.17g\n",
+                    stA.n_slots_ff, stA.resid, stA.W_stage, stA.warm_scale);
+        e2e::check(stA.enabled && stA.n_slots_ff >= 1, "в сцене есть активный нормальный слот нить-нить");
+
+        {
+            CkptScene sc = build_checkpoint_scene((root / "B1").string(), 0.5, 0, true);
+            set_proj_law3(sc.cfg);
+            sc.cfg.checkpoint_file = ck;
+            sc.cfg.checkpoint_every_steps = N;
+            double time = 0.0;
+            e2e::check(run_steps(sc, N, time), "B1: N шагов выполнены");
+        }
+        {
+            CkptScene sc = build_checkpoint_scene((root / "R").string(), 0.5, 0, true);
+            set_proj_law3(sc.cfg);
+            checkpoint::Payload pl;
+            checkpoint::RestoreOptions opt;
+            std::size_t nt = sc.ntotal;
+            checkpoint::read(ck, sc.cfg, sc.model, nt, pl, opt, nullptr);
+            std::printf("         чекпоинт на шаге %llu: записей тёплого старта %zu, h_prev = %.3e\n",
+                        static_cast<unsigned long long>(pl.loop.step), pl.proj_warm.size(), pl.proj_h_prev);
+            e2e::check(!pl.proj_warm.empty() && pl.proj_h_prev > 0.0, "в чекпоинте непустая таблица тёплого старта");
+        }
+        std::vector<Blob> snap_b;
+        {
+            CkptScene sc = build_checkpoint_scene((root / "B2").string(), 0.5, 0, true);
+            set_proj_law3(sc.cfg);
+            sc.cfg.restart_file = ck;
+            double time = 0.0;
+            e2e::check(run_steps(sc, 2 * N, time), "B2: рестарт дошёл до 2N шагов");
+            snap_b = snapshot(sc, time);
+            const interactions::NormalProjectionStats& stB = sc.model.proj_stats;
+            e2e::check(std::memcmp(&stA.W_stage, &stB.W_stage, sizeof(double)) == 0 &&
+                           std::memcmp(&stA.resid, &stB.resid, sizeof(double)) == 0 &&
+                           stA.n_slots_ff == stB.n_slots_ff && stA.warm_frac == stB.warm_frac,
+                       "статистика стадии последнего шага совпадает побитово (тёплый старт восстановлен)");
+        }
+        e2e::check(compare_snapshots(snap_a, snap_b), "состояние после рестарта побитово равно непрерывному прогону");
+    });
+
+    run_case("10. проекция: полный шаг на 1 и 4 потоках побитово одинаков", [&] {
+        e2e::ScopedWorkDir wd("sph_ckpt", "proj_threads");
+        const fs::path root = wd.dir();
+        double t1 = 0.0, t4 = 0.0;
+        interactions::NormalProjectionStats s1, s4;
+        const std::vector<Blob> a = run_contact((root / "T1").string(), 1, 2 * N, t1, s1);
+        const std::vector<Blob> b = run_contact((root / "T4").string(), 4, 2 * N, t4, s4);
+#ifdef _OPENMP
+        omp_set_num_threads(1);
+#endif
+        e2e::check(s1.n_slots_ff >= 1, "в сцене есть активный нормальный слот");
+        e2e::check(compare_snapshots(a, b), "состояние после 2N шагов на 1 и 4 потоках побитово одинаково");
+        e2e::check(std::memcmp(&s1.W_stage, &s4.W_stage, sizeof(double)) == 0 &&
+                       std::memcmp(&s1.resid_post, &s4.resid_post, sizeof(double)) == 0 &&
+                       std::memcmp(&s1.warm_scale, &s4.warm_scale, sizeof(double)) == 0,
+                   "статистика стадии (W_stage, resid_post, warm_scale) одинакова побитово");
     });
 
     std::printf("\nпровалено кейсов: %d\n", g_failed_cases);

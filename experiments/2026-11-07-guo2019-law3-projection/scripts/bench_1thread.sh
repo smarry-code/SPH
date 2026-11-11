@@ -6,6 +6,10 @@
 # Запуск: nohup bash bench_1thread.sh <SHOT_BIN> <fib-файл ткани> <каталог> > nohup.out 2>&1 &
 set -u
 B=${1:?guo2019_shot}; FIB=${2:?twaron_s25_dmg0.00415.fib}; R=${3:?каталог результатов}
+[ -x "$B" ] || { echo "нет исполняемого $B" >&2; exit 2; }
+[ -f "$FIB" ] || { echo "нет файла $FIB" >&2; exit 2; }
+mkdir -p "$R" && R=$(cd "$R" && pwd)   # абсолютный путь: rm -rf ниже -- только внутри него
+[ "$R" != "/" ] && [ "$R" != "$HOME" ] || { echo "каталог результатов $R недопустим" >&2; exit 2; }
 COMMON="--v0=79 --config=1T --level=base --mu=0.27 --frames=off --save-t=1e-4 --threads=1 --n-mon=10 --n-diag=100 --repeat=1 --no-bracket --t-max=4e-5 --fiber-inelastic=$FIB --eps-break=0.05 --fiber-E=8e10 --dt-scale=0.5 --impulse-push-tau=0"
 declare -A V
 V[H]="--ff-contact=0 --fs-contact=0"
@@ -20,7 +24,7 @@ sampler(){ while kill -0 "$2" 2>/dev/null; do
 log "start bin md5=$(md5sum "$B" | cut -c1-32)"
 for job in H:t1 P:t1 H:perf P:perf L3:perf; do
   v=${job%%:*}; pass=${job##*:}; d=$R/$v.$pass
-  rm -rf "$d"; mkdir -p "$d"; cd "$d"
+  rm -rf -- "$d"; mkdir -p "$d"; cd "$d" || exit 1
   log "run $v $pass"; s=$(date +%s.%N)
   if [ "$pass" = perf ]; then
     perf record -F 499 -o "$d/perf.data" -- taskset -c 1 "$B" $COMMON ${V[$v]} --out="$d/out" > "$d/stdout.log" 2>&1 &

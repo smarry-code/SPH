@@ -34,9 +34,13 @@
 // контактов, а контакт при расчёте dP видит только долю 1/c_k массы -- поэтому
 // число контактов на бусину не вызывает перекомпенсации. Порядок стадии:
 //   0. пробные скорости; 1. начальные импульсы P^(0) (тёплый старт, уже лежат в
-//   slot.P), один проход «применить»; 2. K итераций (parallel_for_segments по
-//   слотам -> вклады -> reduce -> Δv += ); 3. диагностика; 4. Δv/h добавляется в
-//   dv_fiber / dvx_solid (ускорение), slot.P -- итоговый накопленный импульс.
+//   slot.P), один проход «применить»; 1'. энергетическая безопасность тёплого
+//   старта: если его работа W0 > 0, все P^(0) и Δv умножаются на lambda < 1 так,
+//   что W0 = 0 (stats.warm_scale; вывод -- в run_normal_projection); 2. K итераций
+//   (parallel_for_segments по слотам -> вклады -> reduce -> Δv += ), каждая не
+//   увеличивает работу стадии (D >= A); 3. работа стадии W <= 0; 4. диагностика;
+//   5. Δv/h добавляется в dv_fiber / dvx_solid (ускорение), slot.P -- итоговый
+//   накопленный импульс. Остаток после стадии трения -- normal_projection_post_residual.
 //
 // ЗАЖИМЫ. Счётчик c = 0 у бусины/частицы, входящей в слот, означает бесконечную
 // массу: вклад в W~ нулевой, Δv не получает (пробная скорость остаётся скоростью
@@ -165,6 +169,10 @@ struct NormalProjectionWorkspace
     std::vector<rhs::ContributionBuffer<NormalDelta>> fiber_buffers, solid_buffers;
     std::vector<NormalDelta> fiber_sum, solid_sum;
     rhs::ReduceScratch scratch;
+
+    // Нулевые Δv для normal_projection_post_residual (скорость = база + h*dv итоговое).
+    std::vector<double> zero_fiber[dim];
+    std::vector<double> zero_solid[dim];
 };
 
 // ----------------------------------------------------------------------
@@ -508,11 +516,128 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
     stats.n_slots_fs = n_active_fs;
     if (n_active_ff + n_active_fs == 0) return;
 
-    // 1. начальные импульсы (тёплый старт), 2. K итераций Якоби
+    // Работа стадии W = sum m (v~.Δv + |Δv|^2/2) по текущим Δv (без вычитания близких величин).
+    //
+    // ПОЧЕМУ W <= 0 (ревью Codex, W_proj_pos_max > 0 в серии C). С v = v~ + M^-1 J^T P стадия минимизирует
+    // f(P) = b^T P + P^T A P / 2, A = J M^-1 J^T, b = -pdot по пробной скорости; f(0) = 0. Без движущихся
+    // опор f(P) = W (работа над свободными частицами). Шаг Якоби P <- max(0, P - D^-1 grad f), D = diag(W~_c), --
+    // минимизация мажоранты f(P) + grad f^T d + d^T D d / 2, и он не увеличивает f, если D >= A. С разделением
+    // массы это так: x^T A x = sum_k |sum_{c э k} sigma w x_c n_c|^2 / m_k <= sum_k c_k sum_{c э k} w^2 x_c^2 / m_k
+    // = x^T D x (Коши-Буняковский по c_k слотам бусины; частицы Solid -- так же, закреплённые не входят ни туда,
+    // ни туда). Значит, итерации f не наращивают, и f > 0 может прийти только из НАЧАЛЬНОЙ точки -- тёплого
+    // старта P^(0) с f(P^(0)) > 0 (импульс прошлого шага у пары, которая уже расходится, или разгруженной
+    // перестройкой соседей). Поэтому f(P^(0)) = A0 + B0/2 считается до итераций и при f > 0 весь тёплый старт
+    // умножается на lambda = -2 A0/B0 (наибольший множитель с f(lambda P^(0)) <= 0; A0 >= 0 -- холодный старт).
+    // Импульс сохраняется (Δv линейны по P), P >= 0 остаётся; при f(P^(0)) <= 0 (равновесие, цепочки) ничего
+    // не меняется. ДВИЖУЩАЯСЯ опора (закреплённая с ненулевой заданной скоростью) может законно совершать
+    // положительную работу W над свободными частицами: W = f - работа опоры, гарантия -- f <= 0.
+    // Суммы -- по фиксированным отрезкам parallel_reduce: lambda от числа потоков не зависит.
+    const auto stage_work = [&]() {
+        const double W_fiber = exec.parallel_reduce(
+            nfiber, 0.0,
+            [&](std::size_t i) -> double {
+                double s = 0.0;
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    const double a = ws.dvel_fiber[d][i];
+                    if (a != 0.0) s += view.trial_fiber(d, static_cast<rhs::index_t>(i)) * a + 0.5 * a * a;
+                }
+                return state.mass[i] * s;
+            },
+            [](double a, double b) { return a + b; });
+        const double W_solid = exec.parallel_reduce(
+            nsolid, 0.0,
+            [&](std::size_t i) -> double {
+                double s = 0.0;
+                for (std::size_t d = 0; d < dim; ++d)
+                {
+                    const double a = ws.dvel_solid[d][i];
+                    if (a != 0.0) s += view.trial_solid(d, static_cast<rhs::index_t>(i)) * a + 0.5 * a * a;
+                }
+                return sys.mass[i] * s;
+            },
+            [](double a, double b) { return a + b; });
+        return W_fiber + W_solid;
+    };
+
+    // 1. начальные импульсы (тёплый старт) и их энергетическая безопасность.
+    //    g0 = f(P^(0)) = A0 + B0/2: A0 = sum_c P_c^(0) * (-pdot_c) по пробной скорости (Δv ещё нулевые),
+    //    B0 = P^T A P = sum m |Δv0|^2 после прохода «применить». A0 считается по ОТНОСИТЕЛЬНЫМ скоростям
+    //    контактов, а не по скоростям частиц: у движущейся опоры (закреплённая бусина с заданной скоростью)
+    //    работа стадии над свободными частицами законно может быть > 0 (опора толкает), а убывает при
+    //    итерациях именно f. Без движущихся опор f = W_stage.
+    const double A0_ff = exec.parallel_reduce(
+        nff, 0.0,
+        [&](std::size_t k) -> double {
+            const FiberNormalContact& c = ff_slots[k];
+            if (!c.active || !(c.P > 0.0)) return 0.0;
+            double pdot, Wt;
+            view.eval_ff(c, pdot, Wt);
+            return -pdot * c.P;
+        },
+        [](double x, double y) { return x + y; });
+    const double A0_fs = exec.parallel_reduce(
+        nfs, 0.0,
+        [&](std::size_t k) -> double {
+            const FiberSolidNormalContact& c = fs_slots[k];
+            if (!c.active || !(c.P > 0.0)) return 0.0;
+            double pdot, Wt;
+            view.eval_fs(c, pdot, Wt);
+            return -pdot * c.P;
+        },
+        [](double x, double y) { return x + y; });
+    const double A0 = A0_ff + A0_fs;
     emit_pass(true);
+    const auto dv_square = [&]() {
+        const double Bf = exec.parallel_reduce(
+            nfiber, 0.0,
+            [&](std::size_t i) -> double {
+                double q = 0.0;
+                for (std::size_t d = 0; d < dim; ++d) q += ws.dvel_fiber[d][i] * ws.dvel_fiber[d][i];
+                return state.mass[i] * q;
+            },
+            [](double x, double y) { return x + y; });
+        const double Bs = exec.parallel_reduce(
+            nsolid, 0.0,
+            [&](std::size_t i) -> double {
+                double q = 0.0;
+                for (std::size_t d = 0; d < dim; ++d) q += ws.dvel_solid[d][i] * ws.dvel_solid[d][i];
+                return sys.mass[i] * q;
+            },
+            [](double x, double y) { return x + y; });
+        return Bf + Bs;
+    };
+    const double B0 = dv_square();
+    stats.warm_scale = 1.0;
+    stats.W_warm = A0 + 0.5 * B0; // без тёплого старта A0 = B0 = 0
+    if (stats.W_warm > 0.0)
+    {
+        // Наибольший lambda с f(lambda P^(0)) = lambda A0 + lambda^2 B0/2 <= 0; A0 >= 0 -- холодный старт.
+        const double lambda = (A0 < 0.0 && B0 > 0.0) ? std::min(1.0, -2.0 * A0 / B0) : 0.0;
+        stats.warm_scale = lambda;
+        exec.parallel_for_segments(nff, [&](std::size_t, std::size_t k) {
+            if (ff_slots[k].active) ff_slots[k].P *= lambda;
+        });
+        exec.parallel_for_segments(nfs, [&](std::size_t, std::size_t k) {
+            if (fs_slots[k].active) fs_slots[k].P *= lambda;
+        });
+        // Проход «применить» заново с lambda P^(0): та же формула вкладов, что и у итераций
+        // (умножение уже накопленных Δv на lambda нарушало бы точную антисимметрию вкладов пары).
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            ws.dvel_fiber[d].assign(nfiber, 0.0);
+            ws.dvel_solid[d].assign(nsolid, 0.0);
+        }
+        emit_pass(true);
+    }
+
+    // 2. K итераций Якоби (каждая не увеличивает W, см. выше)
     for (int it = 0; it < iters; ++it) emit_pass(false);
 
-    // 3. диагностика после последней итерации
+    // 3. работа стадии за шаг
+    stats.W_stage = stage_work();
+
+    // 4. диагностика после последней итерации
     const detail_normal::SlotAgg agg_ff = exec.parallel_reduce(
         nff, detail_normal::SlotAgg{},
         [&](std::size_t k) -> detail_normal::SlotAgg {
@@ -546,34 +671,7 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
         nsolid, 0.0, [&](std::size_t i) { return ws.solid_count[i]; },
         [](double a, double b) { return std::max(a, b); });
 
-    // W_stage = sum m (v~.Δv + |Δv|^2/2): без вычитания близких величин.
-    const double W_fiber = exec.parallel_reduce(
-        nfiber, 0.0,
-        [&](std::size_t i) -> double {
-            double s = 0.0;
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const double a = ws.dvel_fiber[d][i];
-                if (a != 0.0) s += view.trial_fiber(d, static_cast<rhs::index_t>(i)) * a + 0.5 * a * a;
-            }
-            return state.mass[i] * s;
-        },
-        [](double a, double b) { return a + b; });
-    const double W_solid = exec.parallel_reduce(
-        nsolid, 0.0,
-        [&](std::size_t i) -> double {
-            double s = 0.0;
-            for (std::size_t d = 0; d < dim; ++d)
-            {
-                const double a = ws.dvel_solid[d][i];
-                if (a != 0.0) s += view.trial_solid(d, static_cast<rhs::index_t>(i)) * a + 0.5 * a * a;
-            }
-            return sys.mass[i] * s;
-        },
-        [](double a, double b) { return a + b; });
-    stats.W_stage = W_fiber + W_solid;
-
-    // 4. выход: ускорение Δv/h
+    // 5. выход: ускорение Δv/h
     const double hf = fupd.h;
     const double hs = supd.h;
     exec.parallel_for(nfiber, [&](std::size_t i) {
@@ -590,6 +688,60 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
             if (a != 0.0) dvx_solid[d][i] += a / hs;
         }
     });
+}
+
+// ----------------------------------------------------------------------
+// normal_projection_post_residual -- остаток условия Синьорини по ИТОГОВЫМ
+// скоростям шага (после стадии трения и повторной проекции зажимов, до
+// advance): v = база + h*dv (+ av у Solid), dv_fiber / dvx_solid -- полные
+// ускорения шага. Трение идёт после нормальной стадии и может дать нормальную
+// составляющую в соседних контактах (ревью Codex), поэтому stats.resid
+// (после K итераций) его не видит. Только диагностика: слоты и скорости не
+// меняются. ws.bead_count / ws.solid_count -- те же, что у стадии этого шага.
+// Заполняет stats.resid_post, stats.resid_load_post, stats.resid_post_valid.
+// ----------------------------------------------------------------------
+inline void normal_projection_post_residual(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                                            const ode::FiberVelocityUpdate& fupd,
+                                            const std::vector<double> (&dv_fiber)[dim],
+                                            const std::vector<FiberNormalContact>& ff_slots, const ParticleSystem& sys,
+                                            const ode::SolidVelocityUpdate& supd,
+                                            const std::vector<std::vector<double>>& dvx_solid,
+                                            const std::vector<FiberSolidNormalContact>& fs_slots,
+                                            NormalProjectionWorkspace& ws, NormalProjectionStats& stats)
+{
+    const std::size_t nfiber = state.size();
+    const std::size_t nsolid = ws.solid_count.size();
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        ws.zero_fiber[d].assign(nfiber, 0.0);
+        ws.zero_solid[d].assign(nsolid, 0.0);
+    }
+    const NormalStageView view{state, fupd,      dv_fiber,      ws.zero_fiber,        sys,
+                               supd,  dvx_solid, ws.zero_solid, ws.bead_count.data(), ws.solid_count.data()};
+    const detail_normal::SlotAgg agg_ff = exec.parallel_reduce(
+        ff_slots.size(), detail_normal::SlotAgg{},
+        [&](std::size_t k) -> detail_normal::SlotAgg {
+            const FiberNormalContact& c = ff_slots[k];
+            if (!c.active) return detail_normal::SlotAgg{};
+            double pdot, Wt, Wc;
+            view.eval_ff(c, pdot, Wt, &Wc);
+            return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
+        },
+        detail_normal::agg_combine);
+    const detail_normal::SlotAgg agg_fs = exec.parallel_reduce(
+        fs_slots.size(), detail_normal::SlotAgg{},
+        [&](std::size_t k) -> detail_normal::SlotAgg {
+            const FiberSolidNormalContact& c = fs_slots[k];
+            if (!c.active) return detail_normal::SlotAgg{};
+            double pdot, Wt, Wc;
+            view.eval_fs(c, pdot, Wt, &Wc);
+            return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
+        },
+        detail_normal::agg_combine);
+    const detail_normal::SlotAgg agg = detail_normal::agg_combine(agg_ff, agg_fs);
+    stats.resid_post = agg.resid;
+    stats.resid_load_post = agg.sum_P > 0.0 ? agg.sum_missing / agg.sum_P : 0.0;
+    stats.resid_post_valid = true;
 }
 
 // ----------------------------------------------------------------------

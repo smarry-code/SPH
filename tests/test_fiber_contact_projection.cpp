@@ -1017,8 +1017,10 @@ void test_t2()
               std::string("относительная нормальная скорость после удара < 1e-10 v0 (mA/mB = ") +
                   std::to_string(static_cast<int>(mA / mB)) + ")");
         check(std::fabs(p_after - p_before) < 1e-12 * (mA + mB) * v0, "импульс пары сохраняется");
-        check(std::fabs(s.fb.vx[0][0] - vA3_10) < 1e-9 * v0 && std::fabs(s.fb.vx[0][1] - vB3_10) < 1e-9 * v0,
-              "скорости после удара совпадают с законом 3 (gamma = 1) до округления");
+        // «До округления»: прежний допуск 1e-9 v0 был на 5 порядков шире фактического отличия (7e-15 м/с,
+        // ревью Codex); 1e-12 v0 -- около 4500 ulp от v0 = 79 м/с, с запасом на 10 шагов накопления.
+        check(std::fabs(s.fb.vx[0][0] - vA3_10) < 1e-12 * v0 && std::fabs(s.fb.vx[0][1] - vB3_10) < 1e-12 * v0,
+              "скорости после удара совпадают с законом 3 (gamma = 1) до округления (< 1e-12 v0)");
         (void)vA3;
         (void)vB3;
         check(s.Wpos_max <= 1e-12 * s.E_ref, "Т4: W_stage <= 1e-12 E");
@@ -1153,6 +1155,16 @@ void make_random(Sim& s, std::uint64_t seed, bool with_fixed)
     {
         for (std::size_t i = 0; i < nf; ++i) s.fixed_f[i] = (rng.uni() < 0.1) ? 1 : 0;
         for (std::size_t i = 0; i < ns; ++i) s.fixed_s[i] = (rng.uni() < 0.1) ? 1 : 0;
+        // Закреплённые -- НЕПОДВИЖНЫЕ опоры, как зажимы сцены (CLAMP_BOX): у движущейся опоры бесконечной массы
+        // положительная работа над свободными частицами законна (опора толкает), и критерий Т4 к ней не
+        // применим. Прежде здесь оставались случайные скорости -- отсюда «+3e-3 Дж за шаг» (ревью Codex).
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            for (std::size_t i = 0; i < nf; ++i)
+                if (s.fixed_f[i]) s.fb.vx[d][i] = 0.0;
+            for (std::size_t i = 0; i < ns; ++i)
+                if (s.fixed_s[i]) s.sys.vx[d][i] = 0.0;
+        }
     }
     s.finalize_fixed();
     auto weight = [&](double& w) {
@@ -1267,7 +1279,69 @@ void test_random_scene()
         check(eq && pe && st && wt,
               std::string("Т7: стадия на 1 и 8 потоках побитово одинакова (со ") + (with_fixed ? "" : "без ") +
                   "закреплённых), W_stage = " + std::to_string(a.st.W_stage));
+        check(std::memcmp(&a.st.warm_scale, &b.st.warm_scale, sizeof(double)) == 0 &&
+                  std::memcmp(&a.st.W_warm, &b.st.W_warm, sizeof(double)) == 0,
+              "Т7: множитель тёплого старта и его работа одинаковы на 1 и 8 потоках (побитово)");
+        // Т4 на той же сцене (ревью: со закреплёнными бусинами прежде было +3e-3 Дж за шаг).
+        const double wpos_rel = a.E_ref > 0.0 ? a.Wpos_max / a.E_ref : 0.0;
+        std::printf("    Т4 random (%s закреплённых): W_pos/E = %.3e (порог 1e-12); последний шаг: W_warm = %.3e Дж, "
+                    "warm_scale = %.17g, W_stage = %.3e Дж\n",
+                    with_fixed ? "со" : "без", wpos_rel, a.st.W_warm, a.st.warm_scale, a.st.W_stage);
+        check(wpos_rel <= 1e-12, std::string("Т4: W_stage <= 1e-12 E на каждом шаге (случайная сцена ") +
+                                     (with_fixed ? "со" : "без") + " закреплённых)");
     }
+}
+
+// ============================================================================
+// Т4а. Тёплый старт на расходящейся паре (ревью Codex): импульс прошлого шага у пары,
+// которая уже разлетается, дал бы положительную работу. Энергетически безопасный тёплый
+// старт уменьшает P^(0) так, что его работа <= 0 (здесь -- до нуля): стадия пару не разгоняет.
+// ============================================================================
+void test_warm_separating()
+{
+    std::printf("[Т4а] тёплый старт на расходящейся паре\n");
+    Sim s(1);
+    s.init(2, 0);
+    const double delta0 = 0.05 * kD;
+    s.fb.x[0][0] = -0.5 * (kD - delta0); // A слева, n -- от B к A, то есть -x
+    s.fb.x[0][1] = 0.5 * (kD - delta0);
+    s.fb.vx[0][0] = -1.0; // пара разлетается: pdot = -n.(vA - vB) = -2 м/с
+    s.fb.vx[0][1] = 1.0;
+    s.ffdef.push_back(FFDef{0, -1, 1, -1, 0.0, 0.0, kD, 0.3});
+    // Таблица тёплого старта: большой импульс прошлого шага у этой пары, h_prev = h.
+    std::vector<NormalWarmEntry> tab(1);
+    tab[0].key = make_ff_pair_key(0, -1, 1, -1);
+    tab[0].P = 10.0 * kM; // без отбрасывания добавил бы паре 10 м/с на бусину
+    s.warm.set(tab, s.dt);
+    const double vA0 = s.fb.vx[0][0], vB0 = s.fb.vx[0][1];
+    s.step();
+    std::printf("    расходящаяся: W_warm = %.3e Дж, warm_scale = %.17g, P = %.3e, W_stage = %.3e Дж\n", s.st.W_warm,
+                s.st.warm_scale, s.ff[0].P, s.st.W_stage);
+    check(s.st.n_slots_ff == 1 && s.st.W_warm > 0.0, "слот активен, работа тёплого старта положительна");
+    check(s.st.warm_scale == 0.0, "тёплый старт обнулён (warm_scale = 0: он только разгонял пару)");
+    check(s.ff[0].P == 0.0, "импульс шага P = 0");
+    check(s.fb.vx[0][0] == vA0 && s.fb.vx[0][1] == vB0, "скорости пары не изменились (побитово)");
+    check(s.st.W_stage == 0.0, "работа стадии 0");
+    check(s.warm.size() == 0, "в таблицу тёплого старта пара не попала (P = 0)");
+
+    // Та же пара, но сближается: тёплый старт сохраняется (отбрасывается только у расходящихся).
+    Sim c(1);
+    c.init(2, 0);
+    c.fb.x[0][0] = -0.5 * (kD - delta0);
+    c.fb.x[0][1] = 0.5 * (kD - delta0);
+    c.fb.vx[0][0] = 1.0;
+    c.fb.vx[0][1] = -1.0;
+    c.ffdef.push_back(FFDef{0, -1, 1, -1, 0.0, 0.0, kD, 0.3});
+    c.warm.set(tab, c.dt);
+    c.step();
+    std::printf("    сближающаяся: W_warm = %.3e Дж, warm_scale = %.17g, P/(m v) = %.6f\n", c.st.W_warm, c.st.warm_scale,
+                c.ff[0].P / kM);
+    // P^(0) = 10 m при нужном 1 m: работа тёплого старта > 0, lambda = -2A0/B0 = 0.2, затем итерации доводят до 1 m.
+    check(c.ff[0].warm && c.st.warm_scale > 0.0 && c.st.warm_scale < 1.0,
+          "сближающаяся пара с завышенным P^(0): тёплый старт уменьшен, но не отброшен");
+    check(std::fabs(c.ff[0].P / kM - 1.0) < 1e-12, "сближающаяся пара: итоговый импульс = m_red * 2 м/с = 1 m");
+    check(std::fabs(c.fb.vx[0][0] - c.fb.vx[0][1]) < 1e-12, "сближающаяся пара: относительная скорость погашена");
+    check(c.Wpos_max <= 1e-12 * c.E_ref, "сближающаяся пара: W_stage <= 1e-12 E");
 }
 
 void test_t7_scenes()
@@ -1444,6 +1518,7 @@ int main()
     test_t2();
     test_t3();
     test_random_scene();
+    test_warm_separating();
     test_t7_scenes();
     test_t6();
     test_t1();
