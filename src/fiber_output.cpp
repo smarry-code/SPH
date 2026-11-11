@@ -118,7 +118,7 @@ void fiber_output(const FiberState& fiber, const FiberTopology& topology, const 
         file << b.i << " " << b.j << " " << b.l0 << " " << l << " " << b.l_break << " " << elongation;
         if (extended)
         {
-            const FiberMaterial& mat = materials[static_cast<std::size_t>(fiber.material_id[b.i])];
+            const FiberMaterial& mat = materials[static_cast<std::size_t>(bond_material_id(b, fiber))];
             const double A = interactions::fiber_cross_section_area(mat);
             const double eps = (b.l0 > 0.0) ? l / b.l0 - 1.0 : 0.0;
             double eps_p = 0.0, sigma = 0.0, wp = 0.0, wv = 0.0;

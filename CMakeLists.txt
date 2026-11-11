@@ -426,6 +426,24 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- Связи-стежки (fiber/plan-quilt-fabric.md, этап 2a): директива BOND в .fib,
+#     материал связи FiberBond::mat, разрыв связи вне цепочки. SPH_DIM=3.
+add_executable(test_fiber_stitch tests/test_fiber_stitch.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_stitch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_stitch PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_stitch PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_stitch PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_stitch PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_stitch PRIVATE -fopenmp)
+    target_link_options(test_fiber_stitch PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_stitch_test COMMAND test_fiber_stitch)
+set_tests_properties(fiber_stitch_test PROPERTIES LABELS "3d")
+
 # --- Пластичность нити, этап 1 (fiber/fiber-plasticity-design.md): чистая
 #     функция bond_constitutive_update, тесты Т1-Т7. Без решателя и SPH_DIM.
 add_executable(test_fiber_plasticity tests/test_fiber_plasticity.cpp)

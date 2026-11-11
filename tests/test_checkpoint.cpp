@@ -137,6 +137,7 @@ std::vector<Blob> snapshot(const CkptScene& sc, double time)
         add_val(o, p + "j", b.j);
         add_val(o, p + "l0", b.l0);
         add_val(o, p + "l_break", b.l_break);
+        add_val(o, p + "mat", b.mat);
         // Каждое поле BondState отдельно: отступы структуры в сравнение не попадают.
         add_val(o, p + "eps_p", b.st.eps_p);
         add_val(o, p + "q", b.st.q);
@@ -184,9 +185,23 @@ fs::path scratch_root(const char* tag)
     return fs::temp_directory_path() / (std::string("sph_ckpt_") + tag);
 }
 
+// Связь-стежок между свободными концами двух нитей (бусины 3 и 7, расстояние
+// 10 мм), собственный материал 0, mat задан явно (не -1): проверка, что поле
+// проходит через чекпоинт и стежок остаётся растяжимой связью вне цепочки.
+void add_stitch(CkptScene& sc)
+{
+    fiber::FiberBond b;
+    b.i = 3;
+    b.j = 7;
+    b.l0 = 0.01;
+    b.l_break = (1.0 + sc.model.materials[0].eps_break) * b.l0;
+    b.mat = 0;
+    sc.model.topology.bonds.push_back(b);
+}
+
 // Общая часть кейсов 1 и 2: A -- 2N шагов подряд; B -- N шагов с чекпоинтом, затем рестарт.
 // Возвращает число связей в A на шаге N (до рестарта оно же) для проверки разрыва.
-void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_break)
+void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_break, bool stitch = false)
 {
     e2e::ScopedWorkDir wd("sph_ckpt", tag);
     const fs::path root = wd.dir();
@@ -196,6 +211,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::size_t bonds_initial = 0, bonds_at_N = 0;
     {
         CkptScene sc = build_checkpoint_scene((root / "probe").string(), eps_break, ode_solver);
+        if (stitch) add_stitch(sc);
         bonds_initial = sc.model.topology.bonds.size();
         double time = 0.0;
         e2e::check(run_steps(sc, N, time), "зонд: N шагов выполнены");
@@ -212,6 +228,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::vector<Blob> snap_a;
     {
         CkptScene sc = build_checkpoint_scene((root / "A").string(), eps_break, ode_solver);
+        if (stitch) add_stitch(sc);
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "A: 2N шагов выполнены");
         snap_a = snapshot(sc, time);
@@ -220,6 +237,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     // Прогон B, часть 1: N шагов, чекпоинт на шаге N (периодический = финальный).
     {
         CkptScene sc = build_checkpoint_scene((root / "B1").string(), eps_break, ode_solver);
+        if (stitch) add_stitch(sc);
         sc.cfg.checkpoint_file = ck;
         sc.cfg.checkpoint_every_steps = N;
         double time = 0.0;
@@ -231,6 +249,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::vector<Blob> snap_b;
     {
         CkptScene sc = build_checkpoint_scene((root / "B2").string(), eps_break, ode_solver);
+        if (stitch) add_stitch(sc);
         sc.cfg.restart_file = ck;
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "B2: рестарт дошёл до 2N шагов");
@@ -300,6 +319,7 @@ int main()
     // 1. Побитовый round-trip, предиктор-корректор и Эйлер
     run_case("1a. round-trip PC (ode_solver=0), связи целы", [] { roundtrip("rt_pc", 0.5, 0, false); });
     run_case("1b. round-trip Euler (ode_solver=1), связи целы", [] { roundtrip("rt_eu", 0.5, 1, false); });
+    run_case("1c. round-trip PC со стежком (mat >= 0)", [] { roundtrip("rt_stitch", 0.5, 0, false, true); });
 
     // 2. Разрыв связей до чекпоинта (eps_break=0.002 рвёт 4 из 6 связей за 40 шагов -- проверяется зондом)
     run_case("2a. round-trip PC, связи рвутся до шага N", [] { roundtrip("brk_pc", 0.002, 0, true); });
@@ -335,6 +355,14 @@ int main()
         const std::string e3 = try_read(root + "/w4", root + "/magic.ckpt", false, [](SimulationConfig&) {});
         e2e::check(!e3.empty(), "неверный magic -> ошибка");
         e2e::note("сообщение: " + e3);
+
+        // Старый формат (версия 1, связи без индекса материала) читать нельзя.
+        std::vector<char> oldver = good;
+        oldver[8] = 1; // u32 little-endian сразу после 8-байтовой сигнатуры
+        spit(root + "/oldver.ckpt", oldver);
+        const std::string e5 = try_read(root + "/w6", root + "/oldver.ckpt", false, [](SimulationConfig&) {});
+        e2e::check(e5.find("версия формата 1") != std::string::npos, "версия формата 1 -> понятная ошибка");
+        e2e::note("сообщение: " + e5);
 
         const std::string e4 = try_read(root + "/w5", root + "/net_takogo.ckpt", false, [](SimulationConfig&) {});
         e2e::check(!e4.empty(), "несуществующий файл -> ошибка");

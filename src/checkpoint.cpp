@@ -32,7 +32,7 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 #endif
 
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
-constexpr std::uint32_t kFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 2; // 2: связь нити несёт индекс собственного материала (стежки)
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -434,6 +434,7 @@ void write_topology(Writer& w, const fiber::FiberTopology& t)
         w.f64(s.kappa);
         w.f64(s.eps0);
         w.f64(s.w_d);
+        w.i64(static_cast<std::int64_t>(bd.mat)); // индекс материала связи, -1 = материал бусины i
     }
     w.end_block(b);
 }
@@ -691,7 +692,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     topo.next.resize(rt.count(8));
     for (auto& v : topo.next) v = rt.i64();
     topo.version = rt.u64();
-    topo.bonds.resize(rt.count(8 * 13));
+    topo.bonds.resize(rt.count(8 * 14));
     for (auto& bd : topo.bonds)
     {
         bd.i = static_cast<size_t>(rt.u64());
@@ -708,6 +709,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         s.kappa = rt.f64();
         s.eps0 = rt.f64();
         s.w_d = rt.f64();
+        bd.mat = static_cast<int>(rt.i64());
         if (bd.i >= nf || bd.j >= nf) fail("индекс связи нити выходит за число бусин");
     }
     rt.expect_end("TOPO");
