@@ -101,12 +101,17 @@ struct FiberContactStepParams
     // Только для типа 4 и лога энергии: ядро считает лишь вязкую часть силы.
     bool damper_only = false;
     // РЕЖИМ ПРОЕКЦИИ (законы 1-3, fiber/TZ_LAW3_PROJECTION.md): если задан, ядро НЕ считает
-    // нормальную силу, а заполняет нормальные слоты (по одному на primitive, индекс k) для
-    // стадии run_normal_projection; вкладов в ускорение, слота трения и предела шага (в
-    // pair_dt_limit -- kNoLimit) нет. normal_ff -- ядро нить-нить, normal_fs -- нить-Solid.
+    // нормальную силу, а заполняет нормальные слоты для стадии run_normal_projection -- сжатым
+    // массивом только активных контактов (delta > 0) по возрастанию primitive, с индексом
+    // primitive (prim) и номером отрезка (seg); вкладов в ускорение, слота трения и предела шага
+    // (в pair_dt_limit -- kNoLimit) нет. normal_ff -- ядро нить-нить, normal_fs -- нить-Solid.
     // nullptr -- прежний путь, побитово.
     std::vector<FiberNormalContact>* normal_ff = nullptr;
     std::vector<FiberSolidNormalContact>* normal_fs = nullptr;
+    // Рабочая память сбора нормальных слотов по отрезкам (живёт между шагами, память только
+    // растёт; заголовки векторов -- в своих кэш-линиях). nullptr -- ядро заводит временную.
+    std::vector<rhs::CpuExecutor::SegPart<FiberNormalContact>>* normal_ff_parts = nullptr;
+    std::vector<rhs::CpuExecutor::SegPart<FiberSolidNormalContact>>* normal_fs_parts = nullptr;
 };
 
 // Есть ли у закона новые (не Герц) типы -- нужен ли dt_bead.

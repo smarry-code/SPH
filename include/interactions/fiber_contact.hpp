@@ -788,9 +788,14 @@ inline bool compute_fiber_contact_contributions(
     // primitive: каждый отрезок пишет свои слоты в local[seg] (по возрастанию k), затем отрезки склеиваются
     // по порядку. prim и seg слота -- индекс primitive и номер отрезка (см. FiberNormalContact).
     std::vector<FiberNormalContact>* const normal = penalty ? params.normal_ff : nullptr;
-    if (normal) normal->clear();
-    if (n == 0) return false;
-    std::vector<std::vector<FiberNormalContact>> normal_local(normal ? nworkers : 0);
+    if (n == 0)
+    {
+        if (normal) normal->clear();
+        return false;
+    }
+    std::vector<rhs::CpuExecutor::SegPart<FiberNormalContact>> parts_tmp;
+    auto& normal_local = params.normal_ff_parts ? *params.normal_ff_parts : parts_tmp;
+    if (normal) exec.prepare_segment_parts(normal_local);
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberFrictionContact{};
@@ -817,7 +822,7 @@ inline bool compute_fiber_contact_contributions(
             slot.mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
                                                  materials[static_cast<std::size_t>(state.material_id[prim.b0])]);
             slot.key = make_ff_pair_key(prim.a0, prim.a1, prim.b0, prim.b1);
-            normal_local[seg].push_back(slot);
+            normal_local[seg].v.push_back(slot);
             if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
             return;
         }
@@ -892,13 +897,7 @@ inline bool compute_fiber_contact_contributions(
         }
     });
 
-    if (normal)
-    {
-        std::size_t m = 0;
-        for (const auto& v : normal_local) m += v.size();
-        normal->reserve(m);
-        for (const auto& v : normal_local) normal->insert(normal->end(), v.begin(), v.end());
-    }
+    if (normal) exec.concat_segments(normal_local, *normal);
 
     const std::size_t active_count = exec.parallel_reduce(
         n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },

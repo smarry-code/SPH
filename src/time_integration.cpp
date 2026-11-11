@@ -178,6 +178,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // predictor = 1 соответствующего вида; иначе остаются пустыми) и таблица тёплого старта.
     std::vector<interactions::FiberNormalContact> normal_ff;
     std::vector<interactions::FiberSolidNormalContact> normal_fs;
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FiberNormalContact>> normal_ff_parts;      // сбор по отрезкам
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FiberSolidNormalContact>> normal_fs_parts;
     interactions::NormalProjectionWorkspace proj_ws;
     interactions::NormalWarmStart proj_warm;
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fiber_solid_fiber_buffers;
@@ -461,6 +463,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             fiber_fiber_params.bead_dt_ref = &fiber_bead_dt_ref;
             fiber_fiber_params.pair_dt_limit = &fiber_contact_search.pair_dt_limit;
             fiber_fiber_params.normal_ff = proj_ff ? &normal_ff : nullptr; // проекция: слоты вместо силы
+            fiber_fiber_params.normal_ff_parts = &normal_ff_parts;
             // Только нормальная сила; заполняет слоты трения friction_contacts.
             has_active_friction_contacts = interactions::compute_fiber_contact_contributions(
                 fiber_exec, fb, materials, fiber_contact_search.primitives, fiber_contact_thread_buffers,
@@ -494,6 +497,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             fiber_solid_params.bead_dt_ref = &fiber_bead_dt_ref;
             fiber_solid_params.pair_dt_limit = &fiber_solid_search.pair_dt_limit;
             fiber_solid_params.normal_fs = proj_fs ? &normal_fs : nullptr; // проекция: слоты вместо силы
+            fiber_solid_params.normal_fs_parts = &normal_fs_parts;
             has_active_solid_friction_contacts = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
                 fiber_solid_solid_buffers, fiber_solid_search, fiber_solid_fiber_delta, fiber_solid_solid_delta,

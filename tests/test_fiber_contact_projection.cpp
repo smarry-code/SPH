@@ -1308,6 +1308,197 @@ void test_random_scene()
 }
 
 // ============================================================================
+// Т8. Сжатые нормальные слоты против полного массива (ревью Codex коммита 280b0f4). Ядра контакта
+// отдают только активные слоты (delta > 0) с индексом primitive (prim) и номером отрезка (seg);
+// прежде массив шёл по одному слоту на primitive. Здесь одна и та же случайная сцена считается
+// с ПОЛНЫМ массивом (неактивные слоты на месте, seg -- отрезок kDetSegments индекса k, как в ядре)
+// и со СЖАТЫМ (только активные, те же prim/seg). Полный массив обходится по тем же отрезкам
+// с пропуском неактивных -- ровно прежний порядок. Всё сравнивается побитово: счётчики c_k/c_s,
+// Δv стадии и итоговые ускорения на каждом шаге, все поля статистики (A0 через W_warm и
+// warm_scale, сводки SlotAgg, остаток после «трения»), P активных слотов, таблица тёплого
+// старта, слоты трения. Сцена: дыры между активными, контакты на границах отрезков, нить-нить и
+// нить-Solid на общих бусинах; 1/2/7/8 потоков; затем повтор с резко меньшим числом активных
+// слотов на той же рабочей памяти.
+// ============================================================================
+static void set_dense_segs(Sim& s)
+{
+    const std::size_t S = s.exec.det_segments();
+    const std::size_t nff = s.ff.size(), nfs = s.fs.size();
+    for (std::size_t g = 0; g < S; ++g)
+    {
+        for (std::size_t k = nff * g / S; k < nff * (g + 1) / S; ++k)
+        {
+            s.ff[k].prim = k;
+            s.ff[k].seg = static_cast<std::uint16_t>(g);
+        }
+        for (std::size_t k = nfs * g / S; k < nfs * (g + 1) / S; ++k)
+        {
+            s.fs[k].prim = k;
+            s.fs[k].seg = static_cast<std::uint16_t>(g);
+        }
+    }
+}
+
+// Активность: ~frac слотов, плюс первый и последний индекс каждого отрезка (границы).
+static void set_activity(Sim& s, std::uint64_t seed, double frac)
+{
+    Rng rng(seed);
+    const std::size_t S = s.exec.det_segments();
+    for (auto& c : s.ff) c.active = rng.uni() < frac;
+    for (auto& c : s.fs) c.active = rng.uni() < frac;
+    if (frac >= 0.2)
+        for (std::size_t g = 0; g < S; ++g)
+        {
+            const std::size_t nff = s.ff.size(), nfs = s.fs.size();
+            if (nff * g / S < nff * (g + 1) / S)
+            {
+                s.ff[nff * g / S].active = true;
+                s.ff[nff * (g + 1) / S - 1].active = true;
+            }
+            if (nfs * g / S < nfs * (g + 1) / S) s.fs[nfs * (g + 1) / S - 1].active = true;
+        }
+}
+
+template <class Slot>
+static std::vector<Slot> compressed(const std::vector<Slot>& v)
+{
+    std::vector<Slot> out;
+    for (const Slot& c : v)
+        if (c.active) out.push_back(c);
+    return out;
+}
+
+static bool dbl_eq(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+static bool stats_eq(const NormalProjectionStats& a, const NormalProjectionStats& b)
+{
+    return a.n_slots_ff == b.n_slots_ff && a.n_slots_fs == b.n_slots_fs && dbl_eq(a.max_ck, b.max_ck) &&
+           dbl_eq(a.max_cs, b.max_cs) && dbl_eq(a.resid, b.resid) && dbl_eq(a.resid_rel, b.resid_rel) &&
+           dbl_eq(a.resid_load, b.resid_load) && dbl_eq(a.warm_frac, b.warm_frac) && dbl_eq(a.W_stage, b.W_stage) &&
+           dbl_eq(a.W_warm, b.W_warm) && dbl_eq(a.warm_scale, b.warm_scale) &&
+           a.resid_post_valid == b.resid_post_valid && dbl_eq(a.resid_post, b.resid_post) &&
+           dbl_eq(a.resid_load_post, b.resid_load_post);
+}
+
+// Остаток после «трения» -- по итоговым ускорениям стадии (до advance).
+static void post_residual(Sim& s)
+{
+    ode::FiberVelocityUpdate fupd{};
+    ode::SolidVelocityUpdate supd{};
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        fupd.base[d] = &s.fb.vx[d];
+        supd.base[d] = &s.sys.vx[d];
+    }
+    fupd.h = s.dt;
+    supd.h = s.dt;
+    supd.av = s.av.empty() ? nullptr : &s.av;
+    normal_projection_post_residual(s.exec, s.fb, fupd, s.dv_f, s.ff, s.sys, supd, s.dvx_s, s.fs, s.ws, s.st);
+}
+
+static bool same_step(const Sim& a, const Sim& b)
+{
+    bool eq = bits_equal(a.ws.bead_count, b.ws.bead_count) && bits_equal(a.ws.solid_count, b.ws.solid_count);
+    for (std::size_t d = 0; d < dim; ++d)
+        eq = eq && bits_equal(a.dv_f[d], b.dv_f[d]) && bits_equal(a.dvx_s[d], b.dvx_s[d]) &&
+             bits_equal(a.ws.dvel_fiber[d], b.ws.dvel_fiber[d]) && bits_equal(a.ws.dvel_solid[d], b.ws.dvel_solid[d]);
+    eq = eq && stats_eq(a.st, b.st);
+    // P активных слотов: полный массив (активные по порядку) против сжатого
+    const auto ffa = compressed(a.ff);
+    const auto fsa = compressed(a.fs);
+    eq = eq && ffa.size() == b.ff.size() && fsa.size() == b.fs.size();
+    for (std::size_t j = 0; eq && j < ffa.size(); ++j)
+        eq = dbl_eq(ffa[j].P, b.ff[j].P) && ffa[j].warm == b.ff[j].warm && ffa[j].prim == b.ff[j].prim;
+    for (std::size_t j = 0; eq && j < fsa.size(); ++j)
+        eq = dbl_eq(fsa[j].P, b.fs[j].P) && fsa[j].warm == b.fs[j].warm && fsa[j].prim == b.fs[j].prim;
+    eq = eq && a.warm.size() == b.warm.size();
+    for (std::size_t k = 0; eq && k < a.warm.size(); ++k)
+        eq = dbl_eq(a.warm.entries()[k].P, b.warm.entries()[k].P) && a.warm.entries()[k].key == b.warm.entries()[k].key;
+    return eq;
+}
+
+static bool same_friction(const Sim& a, const Sim& b)
+{
+    // Слоты трения по primitive: массивы сброшены (как это делает ядро), затем заполнены из нормальных.
+    std::vector<FiberFrictionContact> fa(a.ff.size()), fb_(a.ff.size());
+    std::vector<FiberSolidFrictionContact> sa(a.fs.size()), sb(a.fs.size());
+    const bool ra = fill_friction_slots_from_normal(a.exec, a.dt, a.ff, a.fs, fa, sa);
+    const bool rb = fill_friction_slots_from_normal(b.exec, b.dt, b.ff, b.fs, fb_, sb);
+    bool eq = ra == rb && fa.size() == fb_.size() && sa.size() == sb.size();
+    for (std::size_t k = 0; eq && k < fa.size(); ++k)
+    {
+        const auto &x = fa[k], &y = fb_[k];
+        eq = x.active == y.active && x.a0 == y.a0 && x.a1 == y.a1 && x.b0 == y.b0 && x.b1 == y.b1 && dbl_eq(x.s, y.s) &&
+             dbl_eq(x.t, y.t) && dbl_eq(x.N, y.N) && dbl_eq(x.mu, y.mu) && dbl_eq(x.n[0], y.n[0]) &&
+             dbl_eq(x.n[1], y.n[1]) && dbl_eq(x.n[2], y.n[2]);
+    }
+    for (std::size_t k = 0; eq && k < sa.size(); ++k)
+    {
+        const auto &x = sa[k], &y = sb[k];
+        eq = x.active == y.active && x.a == y.a && x.b == y.b && x.s == y.s && dbl_eq(x.lambda, y.lambda) &&
+             dbl_eq(x.N, y.N) && dbl_eq(x.mu, y.mu) && dbl_eq(x.n[0], y.n[0]) && dbl_eq(x.n[1], y.n[1]) &&
+             dbl_eq(x.n[2], y.n[2]);
+    }
+    return eq;
+}
+
+void test_compressed_slots()
+{
+    std::printf("[Т8] сжатые нормальные слоты против полного массива (побитово, 1/2/7/8 потоков)\n");
+    bool ok = true, ok_fr = true, ok_less = true;
+    std::size_t n_active_seen = 0;
+    for (int nt : {1, 2, 7, 8})
+    {
+        for (int with_fixed = 0; with_fixed < 2; ++with_fixed)
+        {
+            Sim d(nt), c(nt);
+            for (Sim* s : {&d, &c})
+            {
+                make_random(*s, 4242 + static_cast<std::uint64_t>(with_fixed), with_fixed != 0);
+                set_activity(*s, 99, 0.35);
+                set_dense_segs(*s);
+                s->K = 8;
+                s->warm_on = true;
+            }
+            c.ff = compressed(c.ff);
+            c.fs = compressed(c.fs);
+            n_active_seen = c.ff.size() + c.fs.size();
+            for (int it = 0; it < 3; ++it)
+            {
+                for (Sim* s : {&d, &c})
+                {
+                    s->st = NormalProjectionStats{}; // как в time_integration: статистика шага заново
+                    s->prepare_dv();
+                    s->stage();
+                    post_residual(*s);
+                }
+                ok = ok && same_step(d, c);
+                ok_fr = ok_fr && same_friction(d, c);
+                d.advance();
+                c.advance();
+            }
+            // Повтор на той же рабочей памяти: активных резко меньше (~3 %), таблица тёплого старта прежняя.
+            set_activity(d, 7, 0.03);
+            set_dense_segs(d);
+            c.ff = compressed(d.ff);
+            c.fs = compressed(d.fs);
+            for (Sim* s : {&d, &c})
+            {
+                s->st = NormalProjectionStats{};
+                s->prepare_dv();
+                s->stage();
+                post_residual(*s);
+            }
+            ok_less = ok_less && same_step(d, c) && same_friction(d, c);
+        }
+    }
+    std::printf("    активных слотов в сжатом массиве: %zu из %d\n", n_active_seen, 350);
+    check(ok, "Т8: сжатые слоты -- c_k, Δv, ускорения, статистика, P, тёплый старт побитово как у полного массива");
+    check(ok_fr, "Т8: слоты трения из сжатых нормальных -- побитово как из полного массива");
+    check(ok_less, "Т8: повтор с ~3 % активных на той же рабочей памяти -- побитово как у полного массива");
+}
+
+// ============================================================================
 // Т4а. Тёплый старт на расходящейся паре (ревью Codex): импульс прошлого шага у пары,
 // которая уже разлетается, дал бы положительную работу. Энергетически безопасный тёплый
 // старт уменьшает P^(0) так, что его работа <= 0 (здесь -- до нуля): стадия пару не разгоняет.
@@ -1533,6 +1724,7 @@ int main()
     test_t2();
     test_t3();
     test_random_scene();
+    test_compressed_slots();
     test_warm_separating();
     test_t7_scenes();
     test_t6();

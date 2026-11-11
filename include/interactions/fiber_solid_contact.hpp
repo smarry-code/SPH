@@ -706,9 +706,14 @@ inline bool compute_fiber_solid_contact_contributions(
     // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
     // primitive (как у нить-нить, compute_fiber_contact_contributions).
     std::vector<FiberSolidNormalContact>* const normal = penalty ? params.normal_fs : nullptr;
-    if (normal) normal->clear();
-    if (n == 0) return false;
-    std::vector<std::vector<FiberSolidNormalContact>> normal_local(normal ? nworkers : 0);
+    if (n == 0)
+    {
+        if (normal) normal->clear();
+        return false;
+    }
+    std::vector<rhs::CpuExecutor::SegPart<FiberSolidNormalContact>> parts_tmp;
+    auto& normal_local = params.normal_fs_parts ? *params.normal_fs_parts : parts_tmp;
+    if (normal) exec.prepare_segment_parts(normal_local);
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberSolidFrictionContact{};
@@ -733,7 +738,7 @@ inline bool compute_fiber_solid_contact_contributions(
             slot.mu = fiber_solid_friction_coefficient(
                 materials[static_cast<std::size_t>(state.material_id[prim.a])], sys.itype[prim.s]);
             slot.key = make_fs_pair_key(prim.a, slot.b, prim.s);
-            normal_local[seg].push_back(slot);
+            normal_local[seg].v.push_back(slot);
             if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
             return;
         }
@@ -796,13 +801,7 @@ inline bool compute_fiber_solid_contact_contributions(
         }
     });
 
-    if (normal)
-    {
-        std::size_t m = 0;
-        for (const auto& v : normal_local) m += v.size();
-        normal->reserve(m);
-        for (const auto& v : normal_local) normal->insert(normal->end(), v.begin(), v.end());
-    }
+    if (normal) exec.concat_segments(normal_local, *normal);
 
     const std::size_t active_count = exec.parallel_reduce(
         n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
