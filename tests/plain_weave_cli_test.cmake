@@ -37,6 +37,21 @@ _run(2 --preset=test --amp=inf --out=${_dir}/bad3.fib)
 _run(2 --preset=test --rho=1e999 --out=${_dir}/bad4.fib)
 # Невалидное значение материала -- ошибка построения (1).
 _run(1 --preset=test --mu-ff=-1 --out=${_dir}/bad5.fib)
+# Одеяло из патчей: файлы .fib, .layout.txt и .patches.txt.
+_run(0 --preset=twaron_ct717 --patch=34x34 --tile=3x3 --out=${_dir}/quilt.fib)
+foreach(f quilt.fib quilt.fib.layout.txt quilt.fib.patches.txt)
+    if(NOT EXISTS "${_dir}/${f}")
+        set(_fail "${_fail}\nне создан файл ${f}")
+    endif()
+endforeach()
+# Нечётный патч при tile > 1: ошибка построения (1); с --allow-odd-patch -- успех.
+_run(1 --preset=test --patch=3x3 --tile=2x2 --out=${_dir}/odd.fib)
+_run(0 --preset=test --patch=3x3 --tile=2x2 --allow-odd-patch --out=${_dir}/odd_ok.fib)
+# Конфликт с --nx/--ny, неполная пара и разбор -- ошибка использования (2).
+_run(2 --preset=test --patch=4x4 --tile=2x2 --nx=8 --out=${_dir}/c1.fib)
+_run(2 --preset=test --patch=4x4 --out=${_dir}/c2.fib)
+_run(2 --preset=test --patch=4 --tile=2x2 --out=${_dir}/c3.fib)
+_run(2 --preset=test --allow-odd-patch --out=${_dir}/c4.fib)
 
 file(REMOVE_RECURSE "${_dir}")
 if(NOT "${_fail}" STREQUAL "")

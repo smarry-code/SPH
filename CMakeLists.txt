@@ -903,6 +903,23 @@ add_test(NAME plain_weave_gen_cli_test
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plain_weave_cli_test.cmake)
 set_tests_properties(plain_weave_gen_cli_test PROPERTIES LABELS "3d" TIMEOUT 60)
 
+# --- Ткань-«одеяло» из патчей и сетка стёжки слоёв (include/fiber/plain_weave_quilt.hpp).
+add_executable(test_plain_weave_quilt tests/test_plain_weave_quilt.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_plain_weave_quilt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_plain_weave_quilt PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_quilt PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_plain_weave_quilt PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_plain_weave_quilt PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_quilt PRIVATE -fopenmp)
+    target_link_options(test_plain_weave_quilt PRIVATE -fopenmp)
+endif()
+add_test(NAME plain_weave_quilt_test COMMAND test_plain_weave_quilt)
+set_tests_properties(plain_weave_quilt_test PROPERTIES LABELS "3d" TIMEOUT 120)
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый

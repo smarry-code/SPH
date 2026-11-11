@@ -7,13 +7,16 @@
 //                   [--profile=cos|arcs] [--center=cx,cy,cz]
 //                   [--clamp=none|x|y|xy] [--clamp-edge=<м>]
 //                   [--E=<Па>] [--nu=] [--rho=<кг/м³>] [--eps-break=]
-//                   [--mu-ff=] [--mu-fs=] [--allow-penetration] [--help]
+//                   [--mu-ff=] [--mu-fs=] [--allow-penetration]
+//                   [--patch=NXxNY --tile=TXxTY [--allow-odd-patch]] [--help]
 //
 // Пример:
 //   plain_weave_gen --preset=test --out=weave.fib --layout=weave.layout.txt
 //   plain_weave_gen --preset=twaron_ct717 --out=twaron.fib --clamp-edge=0.06
+//   plain_weave_gen --preset=twaron_ct717 --patch=34x34 --tile=3x3 --out=quilt.fib
 
 #include <fiber/plain_weave.hpp>
+#include <fiber/plain_weave_quilt.hpp>
 #include <chrono>
 #include <cerrno>
 #include <cmath>
@@ -70,6 +73,15 @@ bool parse_center(const char* str, double& cx, double& cy, double& cz)
            parse_double(s.substr(pos2 + 1).c_str(), cz);
 }
 
+// Парсинг "AxB" (два целых через 'x').
+bool parse_pair(const char* str, int& a, int& b)
+{
+    const std::string s(str);
+    const std::size_t pos = s.find('x');
+    if (pos == std::string::npos) return false;
+    return parse_int(s.substr(0, pos).c_str(), a) && parse_int(s.substr(pos + 1).c_str(), b);
+}
+
 void print_help()
 {
     fprintf(stderr,
@@ -101,6 +113,10 @@ void print_help()
             "  --mu-ff=<>               Трение нить–нить\n"
             "  --mu-fs=<>               Трение нить–Solid\n"
             "  --allow-penetration      Разрешить проникание\n"
+            "  --patch=NXxNY            Одеяло: патч NX нитей основы x NY нитей утка (например 34x34)\n"
+            "  --tile=TXxTY             Одеяло: патчей вдоль x и вдоль y (например 3x3); нужны оба ключа,\n"
+            "                           несовместимо с --nx/--ny; пишется <out>.patches.txt\n"
+            "  --allow-odd-patch        Разрешить нечётный патч при tile > 1 (с предупреждением)\n"
             "  --help                   Эта справка\n");
 }
 
@@ -112,6 +128,8 @@ int main(int argc, char** argv)
 
     fiber::PlainWeaveParams q;
     std::string out_file, layout_file, preset_name;
+    int patch_nx = 0, patch_ny = 0, tile_x = 0, tile_y = 0;
+    bool patch_set = false, tile_set = false, allow_odd_patch = false, nx_set = false, ny_set = false;
 
     // Пресет применяется ДО явных параметров (явный параметр сильнее пресета,
     // ТЗ §4.2), поэтому сначала ищем --preset среди всех аргументов.
@@ -166,6 +184,33 @@ int main(int argc, char** argv)
             q.allow_penetration = true;
             continue;
         }
+        if (arg == "--allow-odd-patch")
+        {
+            allow_odd_patch = true;
+            continue;
+        }
+        if (const char* v = value_of("--patch="))
+        {
+            patch_set = true;
+            if (!parse_pair(v, patch_nx, patch_ny) || patch_nx < 1 || patch_ny < 1)
+            {
+                fprintf(stderr, "Ошибка: --patch=%s (ожидается NXxNY, целые >= 1)\n", v);
+                ++failures;
+            }
+            continue;
+        }
+        if (const char* v = value_of("--tile="))
+        {
+            tile_set = true;
+            if (!parse_pair(v, tile_x, tile_y) || tile_x < 1 || tile_y < 1)
+            {
+                fprintf(stderr, "Ошибка: --tile=%s (ожидается TXxTY, целые >= 1)\n", v);
+                ++failures;
+            }
+            continue;
+        }
+        if (value_of("--nx=")) nx_set = true;
+        if (value_of("--ny=")) ny_set = true;
         if (const char* v = value_of("--out=")) { out_file = v; continue; }
         if (const char* v = value_of("--layout=")) { layout_file = v; continue; }
         if (value_of("--preset=")) continue; // уже применён
@@ -246,6 +291,22 @@ int main(int argc, char** argv)
         fprintf(stderr, "Ошибка: необходимо --out=<файл.fib>\n");
         ++failures;
     }
+    const bool quilt = patch_set || tile_set;
+    if (quilt && !(patch_set && tile_set))
+    {
+        fprintf(stderr, "Ошибка: --patch и --tile задаются вместе\n");
+        ++failures;
+    }
+    if (quilt && (nx_set || ny_set))
+    {
+        fprintf(stderr, "Ошибка: --patch/--tile несовместимы с --nx/--ny\n");
+        ++failures;
+    }
+    if (allow_odd_patch && !quilt)
+    {
+        fprintf(stderr, "Ошибка: --allow-odd-patch требует --patch и --tile\n");
+        ++failures;
+    }
     // Отрицательный выступ в PlainWeaveParams означает «по умолчанию p/2»,
     // поэтому явный отрицательный ввод отсекается здесь.
     for (const auto& oh : {std::make_pair(overhang_both_set, overhang_both),
@@ -268,9 +329,23 @@ int main(int argc, char** argv)
 
     // Построить полотно
     fiber::PlainWeave W;
+    fiber::PlainWeaveQuilt Qlt;
     try
     {
-        W = fiber::build_plain_weave(q);
+        if (quilt)
+        {
+            fiber::QuiltParams QP;
+            QP.base = q;
+            QP.patch_nx = patch_nx;
+            QP.patch_ny = patch_ny;
+            QP.tile_x = tile_x;
+            QP.tile_y = tile_y;
+            QP.allow_odd_patch = allow_odd_patch;
+            Qlt = fiber::build_plain_weave_quilt(QP);
+            W = Qlt.W;
+        }
+        else
+            W = fiber::build_plain_weave(q);
     }
     catch (const std::exception& e)
     {
@@ -326,12 +401,36 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Раскладка по патчам
+    std::string patches_file;
+    if (quilt)
+    {
+        patches_file = out_file + ".patches.txt";
+        std::ofstream ps(patches_file);
+        if (!ps)
+        {
+            fprintf(stderr, "Не удалось открыть файл патчей для записи: %s\n", patches_file.c_str());
+            return 1;
+        }
+        fiber::write_plain_weave_quilt_patches(ps, Qlt);
+    }
+
     // Напечатать сводку и время
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
     for (const auto& w : W.warnings) printf("%s\n", w.c_str());
     fiber::print_plain_weave_summary(stdout, W);
+    if (quilt)
+    {
+        const double p = W.params.pitch;
+        const double Lpx = patch_ny * p, Lpy = patch_nx * p; // размер патча по x (patch_ny нитей утка) и по y
+        double Lx = 0.0, Ly = 0.0;
+        fiber::plain_weave_window(W.params, Lx, Ly);
+        printf("патчей %dx%d по %dx%d нитей, размер патча %.9g x %.9g м, окно ткани %.9g x %.9g м\n", tile_x, tile_y,
+               patch_nx, patch_ny, Lpx, Lpy, Lx, Ly);
+        printf("патчи: %s\n", patches_file.c_str());
+    }
     printf("файл: %s\n", out_file.c_str());
     printf("раскладка: %s\n", layout_file.c_str());
     printf("время генерации: %lld мс\n", (long long)duration.count());
