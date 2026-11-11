@@ -6,8 +6,12 @@
 #   1) один поток: H, P, L3, Pb, затем повторы H, P (шум); процесс привязан к ядру 2;
 #   2) масштабирование: H и P на 2, 4, 8 потоках (taskset 0..N-1, OMP_PROC_BIND=close);
 #   3) профиль (сборка -g -fno-omit-frame-pointer): H и P в 1 потоке (до 25 мкс), H и P на 8 потоках (до 40 мкс).
-# Запуск: bash bench_8t.sh <src NEW> <src BASE> <fib-файл ткани> <каталог результатов>
-# Сборки делает сам: NEW/build (Release), NEW/build-prof, BASE/build (только guo2019_shot).
+# Запуск: bash bench_8t.sh <src NEW> <src BASE|-> <fib-файл ткани> <каталог результатов>
+# Сборки делает сам: NEW/build (Release), NEW/build-prof, BASE/build (только guo2019_shot; BASE = "-" -- без неё).
+# Необязательные переменные окружения:
+#   RUNS    -- список прогонов через пробел (по умолчанию все: H.t1 P.t1 L3.t1 Pb.t1 H.t1b P.t1b H.t2 P.t2 ... P.prof8);
+#   OLD_RES -- каталог результатов прежнего прогона: monitor.csv одноимённых прогонов сравниваются cmp (побитовая
+#              регрессия на полной сцене).
 set -u
 NEW=${1:?исходники NEW}; BASE=${2:?исходники BASE}; FIB=${3:?fib}; R=${4:?каталог результатов}
 [ -f "$FIB" ] || { echo "нет файла $FIB" >&2; exit 2; }
@@ -24,9 +28,10 @@ build() { # src dir flags...
 }
 build "$NEW" build
 build "$NEW" build-prof "-DCMAKE_CXX_FLAGS=-g -fno-omit-frame-pointer"
-build "$BASE" build
+[ "$BASE" != - ] && build "$BASE" build
 B_NEW=$NEW/build/guo2019_shot; B_PROF=$NEW/build-prof/guo2019_shot; B_BASE=$BASE/build/guo2019_shot
-for b in "$B_NEW" "$B_PROF" "$B_BASE"; do [ -x "$b" ] || { log "нет $b -- стоп"; exit 1; }; log "  $b md5=$(md5sum "$b" | cut -c1-32)"; done
+BINS=("$B_NEW" "$B_PROF"); [ "$BASE" != - ] && BINS+=("$B_BASE")
+for b in "${BINS[@]}"; do [ -x "$b" ] || { log "нет $b -- стоп"; exit 1; }; log "  $b md5=$(md5sum "$b" | cut -c1-32)"; done
 
 COMMON="--v0=79 --config=1T --level=base --mu=0.27 --frames=off --save-t=1e-4 --n-mon=10 --n-diag=100 --repeat=1 --no-bracket --fiber-inelastic=$FIB --eps-break=0.05 --fiber-E=8e10 --dt-scale=0.5 --impulse-push-tau=0"
 declare -A V
@@ -62,26 +67,38 @@ run() {
   log "  rc=$rc wall=$(echo "$(date +%s.%N) - $s" | bc) $(grep -o 'шагов=[0-9]*, wall=[0-9.]* с ([0-9.]* с/шаг)' "$d/stdout.log" | head -1)"
 }
 
-# 1) один поток
-run H.t1 H 1 4e-5 0
-run P.t1 P 1 4e-5 0
-run L3.t1 L3 1 4e-5 0
-run Pb.t1 Pb 1 4e-5 0
-run H.t1b H 1 4e-5 0
-run P.t1b P 1 4e-5 0
-# 2) масштабирование
-for nt in 2 4 8; do
-  run H.t$nt H $nt 4e-5 0
-  run P.t$nt P $nt 4e-5 0
+ALL="H.t1 P.t1 L3.t1 Pb.t1 H.t1b P.t1b H.t2 P.t2 H.t4 P.t4 H.t8 P.t8 H.prof1 P.prof1 H.prof8 P.prof8"
+RUNS=${RUNS:-$ALL}
+want() { case " $RUNS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+# имя прогона -> вариант, потоки, t_max, perf
+spec() {
+  local name=$1 v=${1%%.*} rest=${1#*.}
+  case $rest in
+    t1|t1b) echo "$v 1 4e-5 0" ;;
+    t2|t4|t8) echo "$v ${rest#t} 4e-5 0" ;;
+    prof1) echo "$v 1 2.5e-5 999" ;;
+    prof8) echo "$v 8 4e-5 499" ;;
+  esac
+}
+# 1) один поток, 2) масштабирование, 3) профиль -- в порядке ALL
+for name in $ALL; do
+  want "$name" || continue
+  [ "${name%%.*}" = Pb ] && [ "$BASE" = - ] && { log "пропуск $name: нет BASE"; continue; }
+  run "$name" $(spec "$name")
 done
 # детерминизм: monitor.csv на 1 и 8 потоках
 for v in H P; do
   a=$R/$v.t1/out/1T_base_v79.0_r0/monitor.csv; b=$R/$v.t8/out/1T_base_v79.0_r0/monitor.csv
+  [ -f "$a" ] && [ -f "$b" ] || continue
   cmp -s "$a" "$b" && r=СОВПАДАЕТ || r=ОТЛИЧАЕТСЯ; log "детерминизм $v monitor.csv 1 против 8 потоков: $r"
 done
-# 3) профиль
-run H.prof1 H 1 2.5e-5 999
-run P.prof1 P 1 2.5e-5 999
-run H.prof8 H 8 4e-5 499
-run P.prof8 P 8 4e-5 499
+# побитовая регрессия против прежнего прогона (OLD_RES)
+if [ -n "${OLD_RES:-}" ]; then
+  for name in $RUNS; do
+    a=$OLD_RES/$name/out/1T_base_v79.0_r0/monitor.csv; b=$R/$name/out/1T_base_v79.0_r0/monitor.csv
+    [ -f "$a" ] && [ -f "$b" ] || continue
+    cmp -s "$a" "$b" && r=СОВПАДАЕТ || r="ОТЛИЧАЕТСЯ ($(cmp "$a" "$b" | grep -o "line [0-9]*"))"
+    log "регрессия $name monitor.csv против $OLD_RES: $r"
+  done
+fi
 log "DONE"
