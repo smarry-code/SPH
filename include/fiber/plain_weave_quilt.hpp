@@ -29,6 +29,7 @@
 
 #include "fiber/plain_weave.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -260,6 +261,69 @@ build_quilt_stitches(const std::vector<PlainWeave>& plies, const std::vector<dou
         for (double s : seam_x) add_line('x', s);
     if (sp.lines_y)
         for (double s : seam_y) add_line('y', s);
+    return out;
+}
+
+// Шов-строчка (в плоскости слоя): на линии шва каждая поперечная нить (основа на x = seam_x[t], уток на
+// y = seam_y[t]) имеет одну бусину-прокол; проколы сортируются вдоль линии (по y у основы, по x у утка), и
+// соседние проколы (индексы нитей j и j + every при every-фильтре index % every == 0) связываются стежком.
+// Каждый слой прошивается независимо; число стежков на линию = (проколов - 1) на слой. Индексы -- глобальные
+// (тот же порядок, что у build_quilt_stitches): слои по порядку, внутри слоя линии x, затем линии y.
+inline std::vector<std::pair<std::size_t, std::size_t>>
+build_quilt_seam_stitches(const std::vector<PlainWeave>& plies, const std::vector<double>& seam_x,
+                          const std::vector<double>& seam_y, const QuiltStitchParams& sp)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    if (sp.every < 1) throw std::invalid_argument("plain_weave_quilt: stitch every должно быть >= 1");
+    if (plies.empty()) return out;
+
+    const double p = plies.front().params.pitch;
+    const double tol_seam = 1e-9 * p;
+
+    std::size_t base = 0;
+    for (const PlainWeave& P : plies)
+    {
+        // Начало каждой нити внутри слоя.
+        std::vector<std::size_t> fstart(P.fibers.size(), 0);
+        std::size_t s = 0;
+        for (std::size_t f = 0; f < P.fibers.size(); ++f)
+        {
+            fstart[f] = s;
+            s += P.fibers[f].pts.size();
+        }
+        auto add_line = [&](char dir, double seam) {
+            const int axis = dir == 'x' ? 0 : 1;  // у основы бусина на x = seam, у утка на y = seam
+            const int along = 1 - axis;           // координата вдоль линии шва
+            std::vector<std::pair<double, std::size_t>> punct; // (координата вдоль линии, глобальный индекс бусины)
+            for (std::size_t f = 0; f < P.fibers.size(); ++f)
+            {
+                const auto& F = P.fibers[f];
+                if (F.direction != dir || F.index % sp.every != 0) continue;
+                std::size_t hit = F.pts.size();
+                for (std::size_t b = 0; b < F.pts.size(); ++b)
+                    if (std::fabs(F.pts[b][axis] - seam) < tol_seam)
+                    {
+                        hit = b;
+                        break;
+                    }
+                if (hit == F.pts.size())
+                {
+                    std::ostringstream es;
+                    es << "plain_weave_quilt: на линии шва " << (dir == 'x' ? "x" : "y") << " = " << seam
+                       << " у нити " << dir << F.index << " нет бусины (нечётный seg?)";
+                    throw std::invalid_argument(es.str());
+                }
+                punct.emplace_back(F.pts[hit][along], base + fstart[f] + hit);
+            }
+            std::sort(punct.begin(), punct.end());
+            for (std::size_t k = 0; k + 1 < punct.size(); ++k) out.emplace_back(punct[k].second, punct[k + 1].second);
+        };
+        if (sp.lines_x)
+            for (double sx : seam_x) add_line('x', sx);
+        if (sp.lines_y)
+            for (double sy : seam_y) add_line('y', sy);
+        base += s;
+    }
     return out;
 }
 

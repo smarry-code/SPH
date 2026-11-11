@@ -738,6 +738,127 @@ static void test_stitch_contact()
     check(a.max_pen == b.max_pen && a.fn_sum == b.fn_sum, "проникание контактов совпадает побитово");
 }
 
+// 11. Шов-строчка: стежки вдоль линии шва внутри слоя.
+static void seam_case(const QuiltParams& Q, int nplies, int every, bool lx, bool ly, const char* name)
+{
+    PlainWeaveQuilt R0;
+    const std::vector<PlainWeave> plies = make_plies(Q, nplies, R0);
+    fiber::QuiltStitchParams sp;
+    sp.every = every;
+    sp.lines_x = lx;
+    sp.lines_y = ly;
+    const auto st = fiber::build_quilt_seam_stitches(plies, R0.seam_x, R0.seam_y, sp);
+    const int nx = R0.W.params.nx, ny = R0.W.params.ny;
+    const std::size_t per_x = static_cast<std::size_t>((nx + every - 1) / every); // проколов на линии x (основа)
+    const std::size_t per_y = static_cast<std::size_t>((ny + every - 1) / every);
+    const std::size_t lines = (lx ? R0.seam_x.size() * (per_x - 1) : 0) + (ly ? R0.seam_y.size() * (per_y - 1) : 0);
+    const std::size_t expect = lines * static_cast<std::size_t>(nplies);
+    std::printf("    %s: стежков %zu, ожидалось %zu\n", name, st.size(), expect);
+    check(st.size() == expect, std::string(name) + ": число = сумма по линиям (проколов - 1) x слоёв");
+
+    std::vector<std::array<double, 3>> all;
+    std::vector<std::size_t> ply_of;
+    for (std::size_t k = 0; k < plies.size(); ++k)
+        for (const auto& F : plies[k].fibers)
+            for (const auto& P : F.pts)
+            {
+                all.push_back(P);
+                ply_of.push_back(k);
+            }
+    const double p = Q.base.pitch;
+    bool inrange = true, same_ply = true, same_z = true, on_line = true, step = true;
+    std::set<std::pair<std::size_t, std::size_t>> uniq(st.begin(), st.end());
+    for (const auto& pr : st)
+    {
+        if (pr.first >= all.size() || pr.second >= all.size())
+        {
+            inrange = false;
+            continue;
+        }
+        const auto &a = all[pr.first], &b = all[pr.second];
+        if (ply_of[pr.first] != ply_of[pr.second]) same_ply = false;
+        if (std::fabs(a[2] - b[2]) >= 1e-12) same_z = false;
+        // обе бусины на одной линии шва: либо x обеих = seam_x, либо y обеих = seam_y
+        bool lx_ok = false, ly_ok = false;
+        for (double s : R0.seam_x)
+            if (std::fabs(a[0] - s) < 1e-9 * p && std::fabs(b[0] - s) < 1e-9 * p) lx_ok = true;
+        for (double s : R0.seam_y)
+            if (std::fabs(a[1] - s) < 1e-9 * p && std::fabs(b[1] - s) < 1e-9 * p) ly_ok = true;
+        if (!(lx_ok || ly_ok)) on_line = false;
+        const double along = lx_ok ? std::fabs(a[1] - b[1]) : std::fabs(a[0] - b[0]);
+        if (std::fabs(along - every * p) > 1e-9 * p) step = false;
+    }
+    check(inrange, std::string(name) + ": индексы в пределах числа бусин");
+    check(same_ply, std::string(name) + ": обе бусины стежка в одном слое");
+    check(same_z, std::string(name) + ": обе бусины на одной высоте z");
+    check(on_line, std::string(name) + ": обе бусины на одной линии шва");
+    check(step, std::string(name) + ": шаг вдоль линии = every * pitch (1e-9 p)");
+    check(uniq.size() == st.size(), std::string(name) + ": пары не повторяются");
+}
+
+static void test_seam_stitches()
+{
+    std::printf("-- 11. шов-строчка\n");
+    const QuiltParams Q = small_quilt(2, PlainWeaveProfile::Cos, 4, 6, 3, 2); // nx = 8, ny = 18; швов x: 2, y: 1
+    for (int np : {1, 2})
+    {
+        const std::string pf = std::to_string(np) + " сл., ";
+        seam_case(Q, np, 1, true, true, (pf + "every=1").c_str());
+        seam_case(Q, np, 2, true, true, (pf + "every=2").c_str());
+        seam_case(Q, np, 1, true, false, (pf + "только x").c_str());
+        seam_case(Q, np, 2, false, true, (pf + "только y, every=2").c_str());
+    }
+    // Нечётный seg: нет бусины на стыке -> исключение.
+    {
+        const QuiltParams Qo = small_quilt(3, PlainWeaveProfile::Cos, 4, 4, 2, 2);
+        PlainWeaveQuilt R0;
+        const auto plies = make_plies(Qo, 1, R0);
+        bool thrown = false;
+        try
+        {
+            fiber::build_quilt_seam_stitches(plies, R0.seam_x, R0.seam_y, {});
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        check(thrown, "шов-строчка, нечётный seg: std::invalid_argument");
+        fiber::QuiltStitchParams bad;
+        bad.every = 0;
+        thrown = false;
+        try
+        {
+            fiber::build_quilt_seam_stitches(plies, R0.seam_x, R0.seam_y, bad);
+        }
+        catch (const std::invalid_argument&)
+        {
+            thrown = true;
+        }
+        check(thrown, "шов-строчка, every = 0: std::invalid_argument");
+    }
+    // Контакт нить-нить на t = 0 не меняется (1 и 2 слоя).
+    for (int np : {1, 2})
+    {
+        const QuiltParams Qc = small_quilt(2, PlainWeaveProfile::Cos, 4, 4, 3, 3);
+        PlainWeaveQuilt R0;
+        const auto plies = make_plies(Qc, np, R0);
+        const auto st = fiber::build_quilt_seam_stitches(plies, R0.seam_x, R0.seam_y, {});
+        const StackContact a = stack_contact(plies, nullptr);
+        const StackContact b = stack_contact(plies, &st);
+        std::printf("    %d сл.: без стёжки: связей %zu, примитивов %zu, пар %zu, контактов %zu; со швом: связей %zu "
+                    "(стежков %zu), примитивов %zu, пар %zu, контактов %zu\n",
+                    np, a.n_bonds, a.n_prims, a.pair_count, a.contacts, b.n_bonds, b.n_stitch, b.n_prims, b.pair_count,
+                    b.contacts);
+        check(!st.empty() && b.n_stitch == st.size() && b.n_bonds == a.n_bonds + st.size(),
+              "шов: стежки загружены, связей на число стежков больше");
+        check(a.contacts > 0, "контакты есть (тест не пустой)");
+        check(a.n_prims == b.n_prims && a.pair_count == b.pair_count && a.prims == b.prims,
+              "шов: пары и примитивы контакта совпадают");
+        check(a.contacts == b.contacts && a.max_pen == b.max_pen && a.fn_sum == b.fn_sum,
+              "шов: контакты и проникание совпадают побитово");
+    }
+}
+
 int main()
 {
     test_equivalence();
@@ -750,6 +871,7 @@ int main()
     test_patches_file();
     test_stitches();
     test_stitch_contact();
+    test_seam_stitches();
     if (failures == 0)
         std::printf("test_plain_weave_quilt: все проверки пройдены\n");
     else

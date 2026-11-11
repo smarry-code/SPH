@@ -270,6 +270,7 @@ inline bool same_fabric_material(const fiber::PlainWeaveParams& a, const fiber::
 struct StitchSpec
 {
     bool enabled = false;
+    bool seam = false;              // true -- шов-строчка в плоскости слоя (>= 1 слоя), false -- сетка между слоями (>= 2)
     int tile = kFabricTileBase;     // сетка патчей tile x tile; nx и ny делятся на tile
     bool lines_x = true, lines_y = true;
     int every = 1;
@@ -455,7 +456,9 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         for (const auto& P : sc.plies) sc.ply_cz.push_back(P.params.cz);
         if (stitch.enabled)
         {
-            if (sc.n_plies < 2) throw std::invalid_argument("guo2019: стёжка требует пакета из >= 2 слоёв");
+            if (stitch.seam ? sc.n_plies < 1 : sc.n_plies < 2)
+                throw std::invalid_argument(stitch.seam ? "guo2019: шов-строчка требует >= 1 слоя ткани"
+                                                        : "guo2019: стёжка требует пакета из >= 2 слоёв");
             if (stitch.tile < 1 || q.nx % stitch.tile != 0 || q.ny % stitch.tile != 0)
                 throw std::invalid_argument("guo2019: стёжка: nx и ny должны делиться на stitch-tile");
             std::vector<double> sx, sy;
@@ -464,7 +467,8 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             sp.every = stitch.every;
             sp.lines_x = stitch.lines_x;
             sp.lines_y = stitch.lines_y;
-            sc.stitch_pairs = fiber::build_quilt_stitches(sc.plies, sx, sy, sp);
+            sc.stitch_pairs = stitch.seam ? fiber::build_quilt_seam_stitches(sc.plies, sx, sy, sp)
+                                          : fiber::build_quilt_stitches(sc.plies, sx, sy, sp);
             sc.n_stitch = sc.stitch_pairs.size();
         }
     }
@@ -614,7 +618,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             std::ofstream f(sc.fib_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.fib_path.string());
-            if (sc.n_plies == 1)
+            if (sc.n_plies == 1 && !stitch.enabled) // шов-строчка для 1T идёт через писатель пакета (MATERIAL 1, BOND)
                 fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
             else
             {

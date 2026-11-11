@@ -230,10 +230,12 @@ public:
             n_stitch_ = ns;
             if (ns > 0)
             {
-                stitch_l0_.clear();
+                // Начальный относительный вектор пары r0 = x_j - x_i (для slip_mean и gap_mean).
+                stitch_r0_.clear();
                 for (const auto& pr : sc_.stitch_pairs)
-                    stitch_l0_.push_back(std::fabs(fb.x[2][pr.first] - fb.x[2][pr.second]));
-                if (stitch_l0_.size() != sc_.stitch_pairs.size() || sc_.stitch_pairs.empty())
+                    stitch_r0_.push_back({fb.x[0][pr.second] - fb.x[0][pr.first], fb.x[1][pr.second] - fb.x[1][pr.first],
+                                          fb.x[2][pr.second] - fb.x[2][pr.first]});
+                if (stitch_r0_.size() != sc_.stitch_pairs.size() || sc_.stitch_pairs.empty())
                     throw std::runtime_error("guo2019: монитор: в модели есть стежки, но сцена не хранит их пары");
             }
         }
@@ -646,6 +648,8 @@ private:
         std::vector<double> wp;          // прогиб по слоям (только при n_plies >= 2)
         // Стёжка (только при наличии стежков)
         std::size_t n_stitch = 0, n_stitch_broken = 0;
+        // slip_mean -- среднее по исходным парам плоской (x, y) нормы (r(t) - r0), r = x_j - x_i; gap_mean -- среднее
+        // (|r(t)| - |r0|), удлинение пары. Для вертикальных пар сетки r0 в плоскости нулевой: slip -- сдвиг слоёв.
         double F_stitch_max = 0.0, F_stitch_sum = 0.0, slip_mean = 0.0, gap_mean = 0.0;
     };
 
@@ -674,9 +678,10 @@ private:
         for (std::size_t q = 0; q < sc_.stitch_pairs.size(); ++q)
         {
             const std::size_t i = sc_.stitch_pairs[q].first, j = sc_.stitch_pairs[q].second;
-            const double dx = fb.x[0][i] - fb.x[0][j], dy = fb.x[1][i] - fb.x[1][j];
-            slip += std::sqrt(dx * dx + dy * dy);
-            gap += std::fabs(fb.x[2][i] - fb.x[2][j]) - stitch_l0_[q];
+            const auto& r0 = stitch_r0_[q];
+            const double rx = fb.x[0][j] - fb.x[0][i], ry = fb.x[1][j] - fb.x[1][i], rz = fb.x[2][j] - fb.x[2][i];
+            slip += std::sqrt((rx - r0[0]) * (rx - r0[0]) + (ry - r0[1]) * (ry - r0[1]));
+            gap += std::sqrt(rx * rx + ry * ry + rz * rz) - std::sqrt(r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2]);
         }
         const double np = static_cast<double>(sc_.stitch_pairs.size());
         r.n_stitch = intact;
@@ -688,7 +693,7 @@ private:
         r.n_bonds -= intact;
     }
     std::size_t n_stitch_ = 0;
-    std::vector<double> stitch_l0_;
+    std::vector<std::array<double, 3>> stitch_r0_; // начальные относительные векторы пар x_j - x_i
 
     struct ContactFF
     {
