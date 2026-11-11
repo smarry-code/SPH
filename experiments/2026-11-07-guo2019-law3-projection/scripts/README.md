@@ -11,6 +11,8 @@
 | `frames.py` | `<RUN>/{fiber_output_*,sph_output_*,guo2019_fabric_layout.txt,guo2019_fabric.fib,shot.txt}` | CSV: t, δ_ff/d, δ_fs/d, n_tunnel, проходы по кадрам; в stdout сверка с shot.txt | `python3 frames.py ~/proj_analysis/C2 --out ~/proj_analysis_out/frames/C2.csv` |
 | `plots.py` | `<root>`, каталог CSV из frames.py | PNG (подписи по-русски) | `python3 plots.py ~/proj_analysis ~/proj_analysis_out/frames --out ~/proj_analysis_out/png` |
 | `run_all.sh` | `~/proj_analysis` | всё выше в `~/proj_analysis_out` | `bash run_all.sh` |
+| `bench_1thread.sh` | `guo2019_shot`, файл `.fib` ткани | однопоточный бенчмарк H/P/L3 до 40 мкс (§7.1 отчёта): `driver.log`, `wall_samples.txt`, `perf.data` | `nohup bash bench_1thread.sh ~/SPH_proj/build/guo2019_shot ~/bench/in/twaron_s25_dmg0.00415.fib ~/bench > nohup.out 2>&1 &` (~4,5 ч) |
+| `bench_perf_categories.py` | `<каталог>/<V>.perf/perf.data` | доли категорий до контакта и в ударе, нормированные на поиск соседей | `python3 bench_perf_categories.py ~/bench` |
 
 ## Данные
 
