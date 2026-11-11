@@ -48,6 +48,7 @@ inline double fiber_max_current_bond_length(const rhs::CpuExecutor& exec, const 
         nb, 0.0,
         [&](std::size_t k) -> double {
             const fiber::FiberBond& b = topology.bonds[k];
+            if (b.mat >= 0) return 0.0; // связь-стежок -- не сегмент нити: радиус поиска от неё не зависит
             double d2 = 0.0;
             for (std::size_t d = 0; d < dim; ++d)
             {

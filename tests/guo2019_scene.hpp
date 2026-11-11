@@ -45,6 +45,7 @@
 #include "fiber/fiber_input.hpp"
 #include "fiber/model.hpp"
 #include "fiber/plain_weave.hpp"
+#include "fiber/plain_weave_quilt.hpp"
 #include "input.hpp"
 #include "int_force.hpp"
 #include "interactions/clamp.hpp"
@@ -131,6 +132,8 @@ struct GuoScene
     std::vector<PlyLayout> ply_layout;
     std::vector<PlyExpected> ply_expected;
     std::filesystem::path fib_path, layout_path;
+    std::size_t n_stitch = 0;       // число связей-стежков (0 -- без стёжки)
+    std::vector<std::pair<std::size_t, std::size_t>> stitch_pairs; // пары глобальных бусин стежков
 
     // --- диапазоны индексов Solid -----------------------------------------
     std::size_t ntotal = 0;
@@ -263,10 +266,27 @@ inline bool same_fabric_material(const fiber::PlainWeaveParams& a, const fiber::
 
 } // namespace detail
 
+// Стёжка слоёв пакета (этап 2в): сетка стежков на линиях шва «одеяла».
+struct StitchSpec
+{
+    bool enabled = false;
+    int tile = kFabricTileBase;     // сетка патчей tile x tile; nx и ny делятся на tile
+    bool lines_x = true, lines_y = true;
+    int every = 1;
+    double E = 8.5e10, nu = 0.3, d = 0.2e-3, rho = 1440.0, eps_break = 0.03; // материал 1 стежка
+};
+
+// Дополнение .fib: MATERIAL 1 и строки BOND i j 1 (глобальные индексы бусин).
+struct StitchFibExtra
+{
+    const StitchSpec* spec = nullptr;
+    const std::vector<std::pair<std::size_t, std::size_t>>* pairs = nullptr;
+};
+
 // .fib пакета слоёв: одна MATERIAL 0, блоки FIBER всех слоёв по порядку, затем все CLAMP_BOX
 // (правило полей mu_ff/mu_fs -- как у write_plain_weave_fib, include/fiber/plain_weave.hpp).
 inline void write_fabric_stack_fib(std::ostream& os, const std::vector<fiber::PlainWeave>& plies,
-                                   const std::string& command_line)
+                                   const std::string& command_line, const StitchFibExtra& stitch = StitchFibExtra{})
 {
     if (plies.empty()) throw std::invalid_argument("guo2019: write_fabric_stack_fib: нет слоёв");
     const auto& q = plies.front().params;
@@ -315,6 +335,9 @@ inline void write_fabric_stack_fib(std::ostream& os, const std::vector<fiber::Pl
     else if (q.mu_ff != 0.0)
         os << " " << q.mu_ff;
     os << "\n";
+    if (stitch.spec && stitch.pairs)
+        os << "MATERIAL 1 " << stitch.spec->E << " " << stitch.spec->nu << " " << stitch.spec->d << " "
+           << stitch.spec->rho << " " << stitch.spec->eps_break << "\n";
 
     for (const auto& W : plies)
         for (const auto& F : W.fibers)
@@ -322,6 +345,11 @@ inline void write_fabric_stack_fib(std::ostream& os, const std::vector<fiber::Pl
             os << "FIBER 0 " << F.pts.size() << "\n";
             for (const auto& P : F.pts) os << P[0] << " " << P[1] << " " << P[2] << "\n";
         }
+    if (stitch.spec && stitch.pairs)
+    {
+        os << "# стёжка: " << stitch.pairs->size() << " стежков (материал 1)\n";
+        for (const auto& pr : *stitch.pairs) os << "BOND " << pr.first << " " << pr.second << " 1\n";
+    }
     for (std::size_t k = 0; k < plies.size(); ++k)
     {
         if (plies[k].clamp_boxes.empty()) continue;
@@ -355,7 +383,8 @@ inline void write_fabric_stack_layout(std::ostream& os, const std::vector<fiber:
 // Сборка сцены
 // ===========================================================================
 inline GuoScene build_guo_scene(Config config, Level level, double V0, const std::filesystem::path& workdir,
-                                double mu = kMuDefault, bool body_isolation = true, int plate_nz_override = 0)
+                                double mu = kMuDefault, bool body_isolation = true, int plate_nz_override = 0,
+                                const StitchSpec& stitch = StitchSpec{})
 {
     GuoScene sc;
     sc.config = config;
@@ -424,6 +453,20 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         sc.plies = build_fabric_stack(q, sc.n_plies, sc.ply_pitch);
         sc.W = sc.plies.front(); // слой 1 (лицевой): на него опирается остальной код
         for (const auto& P : sc.plies) sc.ply_cz.push_back(P.params.cz);
+        if (stitch.enabled)
+        {
+            if (sc.n_plies < 2) throw std::invalid_argument("guo2019: стёжка требует пакета из >= 2 слоёв");
+            if (stitch.tile < 1 || q.nx % stitch.tile != 0 || q.ny % stitch.tile != 0)
+                throw std::invalid_argument("guo2019: стёжка: nx и ny должны делиться на stitch-tile");
+            std::vector<double> sx, sy;
+            fiber::quilt_seams(q, q.nx / stitch.tile, q.ny / stitch.tile, stitch.tile, stitch.tile, sx, sy);
+            fiber::QuiltStitchParams sp;
+            sp.every = stitch.every;
+            sp.lines_x = stitch.lines_x;
+            sp.lines_y = stitch.lines_y;
+            sc.stitch_pairs = fiber::build_quilt_stitches(sc.plies, sx, sy, sp);
+            sc.n_stitch = sc.stitch_pairs.size();
+        }
     }
 
     // ----------------------------------------------------- грани и тыл мишени
@@ -574,7 +617,15 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             if (sc.n_plies == 1)
                 fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
             else
-                write_fabric_stack_fib(f, sc.plies, "guo2019_scene build_guo_scene");
+            {
+                StitchFibExtra ex;
+                if (stitch.enabled)
+                {
+                    ex.spec = &stitch;
+                    ex.pairs = &sc.stitch_pairs;
+                }
+                write_fabric_stack_fib(f, sc.plies, "guo2019_scene build_guo_scene", ex);
+            }
         }
         {
             std::ofstream f(sc.layout_path);
@@ -649,7 +700,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     sc.expected.n_plate = sc.has_plate ? sc.plate_nx * sc.plate_ny * sc.plate_nz : 0;
     sc.expected.ntotal = sc.expected.n_ball + sc.expected.n_plate;
     sc.actual_beads = sc.model.fiber.size();
-    sc.actual_bonds = sc.model.topology.bonds.size();
+    sc.actual_bonds = sc.model.topology.bonds.size() - sc.n_stitch; // стежки в «связи ткани» не входят
     for (auto m : sc.model.clamps.fiber_mask) if (m != 0) ++sc.actual_clamped_beads;
     for (std::size_t i = sc.plate_begin; i < sc.plate_end; ++i)
         if (sc.model.clamps.solid_mask[i] != 0) ++sc.actual_clamped_plate;
@@ -670,6 +721,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         std::vector<double> ply_mass(static_cast<std::size_t>(sc.n_plies), 0.0);
         for (const auto& b : sc.model.topology.bonds)
         {
+            if (b.mat >= 0) continue; // стежок
             if (!inside(b.i) || !inside(b.j)) continue;
             std::size_t kply = 0; // слой связи по бусине b.i (слоёв не больше 4)
             while (kply + 1 < sc.ply_layout.size() && b.i >= sc.ply_layout[kply].bead_end) ++kply;
@@ -832,6 +884,7 @@ inline GapSide min_gap_range(const GuoScene& sc, std::size_t i0, std::size_t i1,
 
     for (std::size_t bi = 0; bi < bonds.size(); ++bi)
     {
+        if (bonds[bi].mat >= 0) continue; // стежок -- не сегмент нити
         double a[3], b[3], lo[3], hi[3];
         for (int d = 0; d < 3; ++d)
         {

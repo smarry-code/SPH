@@ -12,6 +12,12 @@
 //                [--probe-frame] [--plate-nz=N] [--save-t=<с>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
 //                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
+//                [--stitch=none|grid] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]
+//                [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]
+//   --stitch=grid -- стёжка слоёв пакета (2T/4T) связями-стежками на линиях шва сетки патчей N x N (--stitch-tile,
+//   по умолчанию 3; nx и ny уровня делятся на N); --stitch-lines -- какие линии шва; --stitch-every=N -- прокол на
+//   каждой N-й нити; материал стежка: E (8,5e10 Па), d (0,2e-3 м), eps_break (0,03), nu = 0,3. Ключи --stitch-*
+//   без --stitch=grid и --stitch=grid при < 2 слоёв -- ошибка. --eps-break и --fiber-E к стежкам не относятся.
 //   --mu задаёт ОБА коэффициента (μ_ff нить-нить и μ_fs нить-Solid); --mu-ff / --mu-fs переопределяют только свой
 //   коэффициент и имеют приоритет над --mu независимо от порядка ключей. Не заданный из пары берётся из --mu
 //   (по умолчанию kMuDefault). Без новых ключей поведение прежнее. Значения пишутся в shot.txt (mu_ff=, mu_fs=).
@@ -140,6 +146,13 @@ struct Options
     std::size_t checkpoint_every = 10000; // период чекпоинта, шаги интегрирования
     bool restart = false;          // продолжить выстрел из checkpoint.ckpt
     bool force = false;            // --force: разрешить менять физические настройки при рестарте
+    // Стёжка слоёв (--stitch=grid)
+    bool stitch = false;
+    bool stitch_param_given = false; // задан какой-либо --stitch-* кроме --stitch=
+    int stitch_tile = kFabricTileBase;
+    bool stitch_lines_x = true, stitch_lines_y = true;
+    int stitch_every = 1;
+    double stitch_E = 8.5e10, stitch_d = 0.2e-3, stitch_eps_break = 0.03;
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -186,6 +199,11 @@ void print_usage()
                 "                   [--impulse-push-tau=<с>] [--impulse-push-depth=<доля r>] [--impulse-push-vmax=<м/с>] [--impulse-gamma=<g>]  (тип 3)\n"
                 "                   [--dt-scale=<s из (0;1]>]  (множитель шага, сходимость)\n"
                 "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
+                "                   [--stitch=none|grid] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]\n"
+                "                   [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]  (стёжка слоёв, >= 2 слоя)\n"
+                "  --stitch=grid: связи-стежки между соседними слоями на линиях шва сетки патчей N x N (--stitch-tile, по\n"
+                "  умолчанию 3; nx и ny уровня делятся на N); --stitch-every=N -- прокол на каждой N-й нити; по умолчанию\n"
+                "  E = 8.5e10 Па, d = 0.2e-3 м, eps_break = 0.03. --stitch-* без --stitch=grid -- ошибка.\n"
                 "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
                 "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
                 "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
@@ -352,6 +370,47 @@ int parse_args(int argc, char** argv, Options& o)
             if (o.fiber_inelastic.empty() || !fs::exists(o.fiber_inelastic)) return bad("--fiber-inelastic (файл не найден)");
             o.fiber_inelastic = fs::absolute(o.fiber_inelastic);
         }
+        else if (a == "--stitch=none") o.stitch = false;
+        else if (a == "--stitch=grid") o.stitch = true;
+        else if (a.rfind("--stitch=", 0) == 0) return bad("--stitch (none|grid)");
+        else if (a.rfind("--stitch-tile=", 0) == 0)
+        {
+            if (!parse_ll(val("--stitch-tile="), n) || n < 1 || n > 1000) return bad("--stitch-tile");
+            o.stitch_tile = static_cast<int>(n);
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-lines=", 0) == 0)
+        {
+            const std::string v = val("--stitch-lines=");
+            if (v != "x" && v != "y" && v != "xy") return bad("--stitch-lines (x|y|xy)");
+            o.stitch_lines_x = v.find('x') != std::string::npos;
+            o.stitch_lines_y = v.find('y') != std::string::npos;
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-every=", 0) == 0)
+        {
+            if (!parse_ll(val("--stitch-every="), n) || n < 1 || n > 100000) return bad("--stitch-every");
+            o.stitch_every = static_cast<int>(n);
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-E=", 0) == 0)
+        {
+            if (!parse_double(val("--stitch-E="), d) || !(d > 0.0)) return bad("--stitch-E");
+            o.stitch_E = d;
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-d=", 0) == 0)
+        {
+            if (!parse_double(val("--stitch-d="), d) || !(d > 0.0)) return bad("--stitch-d");
+            o.stitch_d = d;
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-eps-break=", 0) == 0)
+        {
+            if (!parse_double(val("--stitch-eps-break="), d) || !(d > 0.0)) return bad("--stitch-eps-break");
+            o.stitch_eps_break = d;
+            o.stitch_param_given = true;
+        }
         else if (a.rfind("--fiber-E=", 0) == 0)
         {
             if (!parse_double(val("--fiber-E="), d) || !(d > 0.0)) return bad("--fiber-E");
@@ -413,6 +472,26 @@ int parse_args(int argc, char** argv, Options& o)
     {
         std::fprintf(stderr, "Нужно ровно одно из --v0=, --paper-shots, --v0-list=\n");
         return 2;
+    }
+    if (o.stitch_param_given && !o.stitch)
+    {
+        std::fprintf(stderr, "Ключи --stitch-* допустимы только вместе с --stitch=grid\n");
+        return 2;
+    }
+    if (o.stitch)
+    {
+        if (o.config != Config::T2 && o.config != Config::T4)
+        {
+            std::fprintf(stderr, "--stitch=grid требует пакета из >= 2 слоёв (--config=2T|4T)\n");
+            return 2;
+        }
+        const LevelSpec ls = level_spec(o.level);
+        if (ls.nx % o.stitch_tile != 0 || ls.ny % o.stitch_tile != 0)
+        {
+            std::fprintf(stderr, "--stitch-tile=%d: nx = %d и ny = %d уровня должны делиться на N\n", o.stitch_tile,
+                         static_cast<int>(ls.nx), static_cast<int>(ls.ny));
+            return 2;
+        }
     }
     if (o.force && !o.restart) { std::fprintf(stderr, "--force допустим только вместе с --restart\n"); return 2; }
     if (o.bracket < 0) o.bracket = o.paper_shots ? 1 : 0;
@@ -508,7 +587,7 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     // Модуль Юнга -- первым: временный материал директив неупругости ниже строится уже с ним.
     // Сцена (геометрия, массы, l0) от E не зависит; E читается только в счёте.
     if (opt.fiber_E > 0.0)
-        for (fiber::FiberMaterial& m : sc.model.materials) m.E = opt.fiber_E;
+        sc.model.materials.at(0).E = opt.fiber_E; // материал 0; стежок (материал 1) не трогаем
     if (!opt.fiber_inelastic.empty())
     {
         std::ifstream in(opt.fiber_inelastic);
@@ -538,6 +617,7 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
             throw std::runtime_error("--fiber-inelastic: директивы не включили неупругость/критерий разрыва материала 0");
         for (fiber::FiberMaterial& m : sc.model.materials)
         {
+            if (&m != &sc.model.materials[0]) continue; // стежок (материал 1) остаётся упругим
             m.plastic = tmp.materials[0].plastic;
             m.rate = tmp.materials[0].rate;
             m.visco = tmp.materials[0].visco;
@@ -560,9 +640,10 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     }
     if (opt.eps_break > 0.0)
     {
-        for (fiber::FiberMaterial& m : sc.model.materials) m.eps_break = opt.eps_break;
+        sc.model.materials.at(0).eps_break = opt.eps_break; // материал 0; стежок не трогаем
         // l_break лежит в связи: (1 + eps_break) l0, как при загрузке .fib
-        for (fiber::FiberBond& b : sc.model.topology.bonds) b.l_break = (1.0 + opt.eps_break) * b.l0;
+        for (fiber::FiberBond& b : sc.model.topology.bonds)
+            if (b.mat < 0) b.l_break = (1.0 + opt.eps_break) * b.l0;
     }
     info.emplace_back("fiber_eps_break", fmtg(sc.model.materials.at(0).eps_break));
     info.emplace_back("fiber_E", fmtg(sc.model.materials.at(0).E));
@@ -595,7 +676,16 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         GuoScene sc;
         {
             e2e::ScopedSilence silence(true);
-            sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz);
+            StitchSpec ss;
+            ss.enabled = opt.stitch;
+            ss.tile = opt.stitch_tile;
+            ss.lines_x = opt.stitch_lines_x;
+            ss.lines_y = opt.stitch_lines_y;
+            ss.every = opt.stitch_every;
+            ss.E = opt.stitch_E;
+            ss.d = opt.stitch_d;
+            ss.eps_break = opt.stitch_eps_break;
+            sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz, ss);
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
@@ -777,6 +867,17 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         for (const auto& kvp : fiber_info) add(kvp.first, kvp.second);
         add("mu_ff", fmtg(mu_ff));
         add("mu_fs", fmtg(mu_fs));
+        if (opt.stitch)
+        {
+            add("stitch", "grid");
+            add("stitch_tile", std::to_string(opt.stitch_tile));
+            add("stitch_lines", std::string(opt.stitch_lines_x ? "x" : "") + (opt.stitch_lines_y ? "y" : ""));
+            add("stitch_every", std::to_string(opt.stitch_every));
+            add("stitch_E", fmtg(opt.stitch_E));
+            add("stitch_d", fmtg(opt.stitch_d));
+            add("stitch_eps_break", fmtg(opt.stitch_eps_break));
+            add("n_stitch", std::to_string(sc.n_stitch));
+        }
         {
             std::ofstream outf(sub / "shot.txt");
             outf << line << "\n";

@@ -11,7 +11,12 @@
 //   6 test_window        -- окно 3x3 по 34 нити = 119.2 x 119.2 мм;
 //   7 test_weave         -- |z_основы - z_утка| = 2A в пересечениях, нет проникания;
 //   8 test_patches_file  -- формат .patches.txt;
-//   9 test_stitches      -- сетка стёжки: число, вертикальность, every, нечётный seg, ошибки.
+//   9 test_stitches      -- сетка стёжки: число, вертикальность, every, нечётный seg, ошибки;
+//  10 test_stitch_contact -- стёжка не меняет контакты нить-нить на t = 0 (раздел 12.4 плана).
+#include "fiber/fiber_input.hpp"
+#include "fiber/model.hpp"
+#include "interactions/fiber_contact.hpp"
+#include "rhs/cpu_executor.hpp"
 #include "fiber/plain_weave.hpp"
 #include "fiber/plain_weave_quilt.hpp"
 #include "guo2019_case.hpp"
@@ -21,6 +26,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
@@ -656,6 +663,81 @@ static void test_stitches()
     }
 }
 
+// 10. Стёжка не меняет поиск и силы контакта нить-нить на t = 0 (стежок -- не сегмент нити и не меняет prev/next).
+struct StackContact
+{
+    std::size_t n_bonds = 0, n_prims = 0, pair_count = 0, contacts = 0, n_stitch = 0;
+    double max_pen = 0.0, fn_sum = 0.0;
+    std::vector<std::array<std::size_t, 2>> prims;
+};
+
+static StackContact stack_contact(const std::vector<PlainWeave>& plies,
+                                  const std::vector<std::pair<std::size_t, std::size_t>>* stitches)
+{
+    namespace fs = std::filesystem;
+    const fs::path fib = fs::temp_directory_path() / "test_plain_weave_quilt_stack.fib";
+    {
+        std::ofstream os(fib);
+        const auto& q = plies.front().params;
+        os.precision(17);
+        os << "MATERIAL 0 " << q.E << " " << q.nu << " " << q.d << " " << q.rho << " " << q.eps_break << " "
+           << q.mu_ff << " " << q.mu_fs << "\n";
+        if (stitches) os << "MATERIAL 1 8.5e10 0.3 " << 0.5 * q.d << " 1440 0.03\n"; // d стежка < d нити: радиус поиска не растёт
+        for (const auto& W : plies)
+            for (const auto& F : W.fibers)
+            {
+                os << "FIBER 0 " << F.pts.size() << "\n";
+                for (const auto& P : F.pts) os << P[0] << " " << P[1] << " " << P[2] << "\n";
+            }
+        if (stitches)
+            for (const auto& pr : *stitches) os << "BOND " << pr.first << " " << pr.second << " 1\n";
+    }
+    fiber::Model model;
+    fiber::load_fiber_file(fib.string(), model);
+    std::error_code ec;
+    fs::remove(fib, ec);
+    StackContact r;
+    r.n_bonds = model.topology.bonds.size();
+    for (const auto& b : model.topology.bonds)
+        if (b.mat >= 0) ++r.n_stitch;
+    rhs::CpuExecutor exec(2);
+    interactions::FiberContactSearchResult search;
+    interactions::build_fiber_contact_search(exec, model.fiber, model.topology, model.materials, search);
+    const auto dg = interactions::compute_fiber_contact_diagnostics(exec, model.fiber, model.materials, search);
+    r.n_prims = search.primitives.size();
+    r.pair_count = search.pair_count;
+    r.contacts = dg.contact_count;
+    r.max_pen = dg.max_penetration;
+    for (const auto& prim : search.primitives)
+    {
+        r.prims.push_back({static_cast<std::size_t>(prim.a0), static_cast<std::size_t>(prim.b0)});
+        const auto g = interactions::compute_fiber_contact_geometry(model.fiber, model.materials, prim);
+        if (g.contact && !g.rejected_by_ownership && !g.degenerate) r.fn_sum += g.F;
+    }
+    return r;
+}
+
+static void test_stitch_contact()
+{
+    std::printf("-- 10. стёжка и контакт нить-нить на t = 0\n");
+    const QuiltParams Q = small_quilt(2, PlainWeaveProfile::Cos, 4, 4, 3, 3); // 12 x 12 нитей, 2 слоя
+    PlainWeaveQuilt R0;
+    const auto plies = make_plies(Q, 2, R0);
+    const auto st = fiber::build_quilt_stitches(plies, R0.seam_x, R0.seam_y, {});
+    const StackContact a = stack_contact(plies, nullptr);
+    const StackContact b = stack_contact(plies, &st);
+    std::printf("    без стёжки: связей %zu, примитивов %zu, пар %zu, контактов %zu, max_pen %.6g; со стёжкой: связей %zu "
+                "(стежков %zu), примитивов %zu, пар %zu, контактов %zu, max_pen %.6g\n",
+                a.n_bonds, a.n_prims, a.pair_count, a.contacts, a.max_pen, b.n_bonds, b.n_stitch, b.n_prims,
+                b.pair_count, b.contacts, b.max_pen);
+    check(!st.empty() && b.n_stitch == st.size() && b.n_bonds == a.n_bonds + st.size(), "стежки загружены: связей на число стежков больше");
+    check(a.contacts > 0, "контакты между слоями и нитями есть (тест не пустой)");
+    check(a.n_prims == b.n_prims && a.pair_count == b.pair_count, "число пар и примитивов контакта совпадает");
+    check(a.prims == b.prims, "список примитивов совпадает поэлементно");
+    check(a.contacts == b.contacts, "число принятых контактов совпадает");
+    check(a.max_pen == b.max_pen && a.fn_sum == b.fn_sum, "проникание контактов совпадает побитово");
+}
+
 int main()
 {
     test_equivalence();
@@ -667,6 +749,7 @@ int main()
     test_weave();
     test_patches_file();
     test_stitches();
+    test_stitch_contact();
     if (failures == 0)
         std::printf("test_plain_weave_quilt: все проверки пройдены\n");
     else
