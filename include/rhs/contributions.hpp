@@ -242,12 +242,20 @@ template <class Delta>
 void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t particle_count,
                           std::vector<Delta>& output, ReduceScratch& scratch, const ReduceOptions& options)
 {
-    output.assign(particle_count, Delta{});
+    // output обнуляется параллельно: при пустом вводе -- здесь, иначе -- в проходе 3 каждым shard'ом свой
+    // непрерывный диапазон частиц (shard'ы покрывают [0, particle_count) целиком). resize не очищает: значения
+    // прошлого вызова перезаписываются Delta{} до суммирования.
+    output.resize(particle_count);
     if (particle_count == 0) return;
 
     std::size_t total = 0;
     for (std::size_t g = 0; g < nbuf; ++g) total += scratch.seg_size[g];
-    if (total == 0) return;
+    if (total == 0)
+    {
+        Delta* const o = output.data();
+        exec.parallel_for(particle_count, [&](std::size_t i) { o[i] = Delta{}; });
+        return;
+    }
 
     std::size_t shard_count = options.shard_count;
     if (shard_count == 0)
@@ -334,6 +342,7 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
     const std::size_t* const start = scratch.shard_start.data();
     Delta* const out = output.data();
     exec.parallel_for(shard_count, std::size_t(1), [&](std::size_t s) {
+        for (std::size_t i = bound[s]; i < bound[s + 1]; ++i) out[i] = Delta{};
         const void** const begin = refs + start[s];
         const void** const end = refs + start[s + 1];
         if (options.deterministic)

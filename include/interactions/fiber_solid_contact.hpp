@@ -310,6 +310,8 @@ struct FiberSolidContactSearchResult
     // Предел шага на primitive (типы 1-3, FiberContactStepParams::pair_dt_limit):
     // заполняет ядро, минимум берёт compute_fiber_solid_contact_dt_limit.
     std::vector<double> pair_dt_limit;
+    // Векторы отрезков при построении primitive (rhs::CpuExecutor::concat_segments).
+    std::vector<rhs::CpuExecutor::SegPart<FiberSolidContactPrimitive>> prim_parts;
 };
 
 // ----------------------------------------------------------------------
@@ -325,14 +327,19 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
                                               const std::vector<fiber::FiberMaterial>& materials,
                                               FiberSolidContactSearchResult& out)
 {
-    out.primitives.clear();
+    // primitives очищается только на ранних выходах (при построении перезаписывается целиком).
     const std::size_t nfiber = state.size();
-    if (nfiber == 0 || ntotal == 0) return;
+    if (nfiber == 0 || ntotal == 0)
+    {
+        out.primitives.clear();
+        return;
+    }
 
     if constexpr (dim != 3)
     {
         // Нити физически существуют только при dim==3 (см. fiber_contact.hpp,
         // тот же паттерн заглушки для компиляции во всех SPH_DIM-вариантах).
+        out.primitives.clear();
         return;
     }
     else
@@ -352,7 +359,11 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
             eligible.push_back(static_cast<rhs::index_t>(i));
             r_s_max = std::max(r_s_max, solid_contact_radius(sys, i));
         }
-        if (eligible.empty()) return;
+        if (eligible.empty())
+        {
+            out.primitives.clear();
+            return;
+        }
 
         const double radius = fiber_solid_contact_search_radius(exec, state, topology, materials, r_s_max);
 
@@ -372,9 +383,11 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
         out.index.find_pairs_cross_parallel(exec, fcoords, nfiber, radius,
                                              [](rhs::index_t, rhs::index_t) { return true; }, out.pairs);
 
-        out.primitives.reserve(out.pairs.size());
-        for (const auto& pr : out.pairs)
-        {
+        // Пары -> primitive параллельно по отрезкам пар, склейка по порядку отрезков (порядок -- как у
+        // последовательного цикла; см. build_fiber_contact_search).
+        exec.prepare_segment_parts(out.prim_parts);
+        exec.parallel_for_segments(out.pairs.size(), [&](std::size_t seg, std::size_t ip) {
+            const auto& pr = out.pairs[ip];
             const rhs::index_t f = pr.first;        // бусина Fiber ("other")
             const rhs::index_t local_s = pr.second;  // локальный индекс в eligible
             const rhs::index_t s = eligible[local_s];
@@ -392,18 +405,19 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
                     // Изолированная бусина без соседей -- точечный контакт
                     // (решение 2 в шапке файла).
                     prim.has_b = false;
-                    out.primitives.push_back(prim);
+                    out.prim_parts[seg].v.push_back(prim);
                 }
                 // else: сегмент (prev(f),f) покрывает эту зону -- пропуск
                 // (доказано в комментарии у fiber_solid_contact_search_radius).
-                continue;
+                return;
             }
 
             prim.has_b = true;
             prim.b = static_cast<rhs::index_t>(nxt);
             prim.b_is_last = (topology.next[prim.b] == -1);
-            out.primitives.push_back(prim);
-        }
+            out.prim_parts[seg].v.push_back(prim);
+        });
+        exec.concat_segments(out.prim_parts, out.primitives);
     }
 }
 
@@ -689,14 +703,15 @@ inline bool compute_fiber_solid_contact_contributions(
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
     if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
-    // Режим проекции: нормальные слоты по primitive (сбрасываются на каждом вызове).
+    // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
+    // primitive (как у нить-нить, compute_fiber_contact_contributions).
     std::vector<FiberSolidNormalContact>* const normal = penalty ? params.normal_fs : nullptr;
-    if (normal) normal->resize(n);
+    if (normal) normal->clear();
     if (n == 0) return false;
+    std::vector<std::vector<FiberSolidNormalContact>> normal_local(normal ? nworkers : 0);
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberSolidFrictionContact{};
-        if (normal) (*normal)[k] = FiberSolidNormalContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
         if (!geom.contact) return;
@@ -705,8 +720,10 @@ inline bool compute_fiber_solid_contact_contributions(
         if (normal)
         {
             if (!(geom.delta > 0.0)) return;
-            FiberSolidNormalContact& slot = (*normal)[k];
+            FiberSolidNormalContact slot;
             slot.active = true;
+            slot.prim = k;
+            slot.seg = static_cast<std::uint16_t>(seg);
             slot.a = prim.a;
             slot.b = prim.has_b ? static_cast<long long>(prim.b) : -1;
             slot.s = prim.s;
@@ -716,6 +733,7 @@ inline bool compute_fiber_solid_contact_contributions(
             slot.mu = fiber_solid_friction_coefficient(
                 materials[static_cast<std::size_t>(state.material_id[prim.a])], sys.itype[prim.s]);
             slot.key = make_fs_pair_key(prim.a, slot.b, prim.s);
+            normal_local[seg].push_back(slot);
             if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
             return;
         }
@@ -777,6 +795,14 @@ inline bool compute_fiber_solid_contact_contributions(
             fw.emit(prim.b, db, static_cast<std::uint64_t>(k), 2);
         }
     });
+
+    if (normal)
+    {
+        std::size_t m = 0;
+        for (const auto& v : normal_local) m += v.size();
+        normal->reserve(m);
+        for (const auto& v : normal_local) normal->insert(normal->end(), v.begin(), v.end());
+    }
 
     const std::size_t active_count = exec.parallel_reduce(
         n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },

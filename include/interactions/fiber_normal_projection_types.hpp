@@ -81,8 +81,8 @@ struct NormalWarmEntry
 // ----------------------------------------------------------------------
 // Нормальный слот нить-нить: заполняет kernel нормального контакта
 // (interactions/fiber_contact.hpp) в режиме проекции для КАЖДОГО принятого
-// контакта с delta > 0 (независимо от mu). По одному слоту на primitive,
-// запись по индексу k. Поля a0..n -- как у FiberFrictionContact.
+// контакта с delta > 0 (независимо от mu). Массив сжатый: только такие
+// слоты, по возрастанию индекса primitive (prim). Поля a0..n -- как у FiberFrictionContact.
 // P -- накопленный нормальный импульс шага (выход стадии), N = P/h.
 // ----------------------------------------------------------------------
 struct FiberNormalContact
@@ -100,6 +100,12 @@ struct FiberNormalContact
     NormalPairKey key;
     double P = 0.0;
     bool warm = false; // P^(0) взят из таблицы тёплого старта
+    // Место в исходном массиве примитивов. Слоты хранятся СЖАТО (только активные, по возрастанию prim):
+    // seg -- номер отрезка kDetSegments, в котором стоял примитив при обходе ядра (parallel_for_segments по
+    // всем примитивам). Стадия пишет вклады в буфер seg и сворачивает суммы по отрезкам seg -- порядок
+    // суммирования тот же, что при обходе всех примитивов (rhs::CpuExecutor::parallel_for_seg_groups).
+    std::size_t prim = 0;
+    std::uint16_t seg = 0;
 };
 
 // Нормальный слот нить-Solid (interactions/fiber_solid_contact.hpp). Поля
@@ -117,6 +123,8 @@ struct FiberSolidNormalContact
     NormalPairKey key;
     double P = 0.0;
     bool warm = false;
+    std::size_t prim = 0;   // как у FiberNormalContact
+    std::uint16_t seg = 0;
 };
 
 // ----------------------------------------------------------------------

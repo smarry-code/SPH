@@ -888,6 +888,7 @@ void test_friction_fill()
     for (std::size_t k = 0; k < 4; ++k)
     {
         ff[k].active = true;
+        ff[k].prim = k;
         ff[k].a0 = static_cast<rhs::index_t>(k);
         ff[k].b0 = static_cast<rhs::index_t>(k + 10);
         ff[k].a1 = -1;
@@ -902,6 +903,7 @@ void test_friction_fill()
     for (std::size_t k = 0; k < 3; ++k)
     {
         fs[k].active = true;
+        fs[k].prim = k;
         fs[k].a = static_cast<rhs::index_t>(k);
         fs[k].b = -1;
         fs[k].s = static_cast<rhs::index_t>(k + 5);
@@ -922,9 +924,22 @@ void test_friction_fill()
     check(sfr[0].active && sfr[1].active && !sfr[2].active && std::fabs(sfr[1].N - 300.0) < 1e-9 && sfr[1].s == 6 &&
               sfr[1].n[2] == -1.0,
           "нить-Solid: то же");
+    // Слоты трения на шаге сбрасывает ядро контакта (все неактивны, по primitive) -- так и здесь.
+    fr.assign(4, FiberFrictionContact{});
+    sfr.assign(3, FiberSolidFrictionContact{});
     for (auto& f : ff) f.P = 0.0;
     for (auto& f : fs) f.P = 0.0;
     check(!fill_friction_slots_from_normal(exec, 1e-8, ff, fs, fr, sfr), "нет нагрузки -- возвращает false");
+    check(!fr[0].active && !sfr[0].active && fr.size() == 4 && sfr.size() == 3,
+          "без нагрузки слоты не записываются, размеры не меняются");
+    // Сжатый массив нормальных слотов: слот пишется на место своего primitive (prim), остальные не трогаются.
+    std::vector<FiberNormalContact> ffc(1, ff[0]);
+    ffc[0].prim = 6;
+    ffc[0].P = 2e-6;
+    fr.assign(4, FiberFrictionContact{});
+    check(fill_friction_slots_from_normal_ff(exec, 1e-8, ffc, fr) && fr.size() == 7 && fr[6].active &&
+              std::fabs(fr[6].N - 200.0) < 1e-9 && !fr[0].active && !fr[5].active,
+          "сжатый массив: слот трения на месте prim, массив дополнен до prim + 1");
 }
 
 // ============================================================================

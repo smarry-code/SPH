@@ -188,16 +188,16 @@ namespace detail_normal
 inline void emit_counts_ff(const rhs::CpuExecutor& exec, const std::vector<FiberNormalContact>& slots,
                             std::vector<rhs::ContributionBuffer<FiberCountDelta>>& buffers)
 {
-    const std::size_t n = slots.size();
-    if (n == 0) return;
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
-        const FiberNormalContact& c = slots[k];
+    // Сжатый массив слотов: буфер -- отрезок seg исходного primitive, ключ -- prim (как при обходе всех primitive).
+    exec.parallel_for_seg_groups(slots.size(), [&](std::size_t j) { return slots[j].seg; },
+                                 [&](std::size_t seg, std::size_t j) {
+        const FiberNormalContact& c = slots[j];
         if (!c.active) return;
         rhs::ContributionWriter<FiberCountDelta> writer(buffers[seg], kFiberNormalFiberFiberType);
         FiberCountDelta one;
         one.c = 1.0;
         fiber_normal_for_each_bead(c, [&](rhs::index_t bead, double, double, std::uint16_t slot) {
-            writer.emit(bead, one, static_cast<std::uint64_t>(k), slot);
+            writer.emit(bead, one, static_cast<std::uint64_t>(c.prim), slot);
         });
     });
 }
@@ -206,21 +206,20 @@ inline void emit_counts_fs(const rhs::CpuExecutor& exec, const std::vector<Fiber
                             std::vector<rhs::ContributionBuffer<FiberCountDelta>>& fiber_buffers,
                             std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_buffers)
 {
-    const std::size_t n = slots.size();
-    if (n == 0) return;
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
-        const FiberSolidNormalContact& c = slots[k];
+    exec.parallel_for_seg_groups(slots.size(), [&](std::size_t j) { return slots[j].seg; },
+                                 [&](std::size_t seg, std::size_t j) {
+        const FiberSolidNormalContact& c = slots[j];
         if (!c.active) return;
         rhs::ContributionWriter<FiberCountDelta> fw(fiber_buffers[seg], kFiberNormalFiberSolidFiberType);
         rhs::ContributionWriter<SolidCountDelta> sw(solid_buffers[seg], kFiberNormalFiberSolidSolidType);
         FiberCountDelta one;
         one.c = 1.0;
         fiber_solid_normal_for_each_bead(c, [&](rhs::index_t bead, double, double, std::uint16_t slot) {
-            fw.emit(bead, one, static_cast<std::uint64_t>(k), slot);
+            fw.emit(bead, one, static_cast<std::uint64_t>(c.prim), slot);
         });
         SolidCountDelta ones;
         ones.c = 1.0;
-        sw.emit(c.s, ones, static_cast<std::uint64_t>(k), 0);
+        sw.emit(c.s, ones, static_cast<std::uint64_t>(c.prim), 0);
     });
 }
 
@@ -233,8 +232,9 @@ inline void compute_normal_counts(const rhs::CpuExecutor& exec, std::size_t nfib
 {
     detail_friction::prepare(exec, ws.fiber_count_buffers);
     detail_friction::prepare(exec, ws.solid_count_buffers);
-    ws.bead_count.assign(nfiber, 0.0);
-    ws.solid_count.assign(nsolid, 0.0);
+    // bead_count / solid_count целиком перезаписываются (счётчик или 0) -- параллельно, без assign.
+    ws.bead_count.resize(nfiber);
+    ws.solid_count.resize(nsolid);
 
     detail_normal::emit_counts_ff(exec, ff_slots, ws.fiber_count_buffers);
     detail_normal::emit_counts_fs(exec, fs_slots, ws.fiber_count_buffers, ws.solid_count_buffers);
@@ -242,12 +242,20 @@ inline void compute_normal_counts(const rhs::CpuExecutor& exec, std::size_t nfib
     if (!ff_slots.empty() || !fs_slots.empty())
     {
         rhs::reduce_contributions_into(exec, ws.fiber_count_buffers, nfiber, ws.fiber_counts, ws.scratch);
-        for (std::size_t i = 0; i < nfiber; ++i) ws.bead_count[i] = ws.fiber_counts[i].c;
+        exec.parallel_for(nfiber, [&](std::size_t i) { ws.bead_count[i] = ws.fiber_counts[i].c; });
+    }
+    else
+    {
+        exec.parallel_for(nfiber, [&](std::size_t i) { ws.bead_count[i] = 0.0; });
     }
     if (!fs_slots.empty())
     {
         rhs::reduce_contributions_into(exec, ws.solid_count_buffers, nsolid, ws.solid_counts, ws.scratch);
-        for (std::size_t i = 0; i < nsolid; ++i) ws.solid_count[i] = ws.solid_counts[i].c;
+        exec.parallel_for(nsolid, [&](std::size_t i) { ws.solid_count[i] = ws.solid_counts[i].c; });
+    }
+    else
+    {
+        exec.parallel_for(nsolid, [&](std::size_t i) { ws.solid_count[i] = 0.0; });
     }
 }
 
@@ -333,6 +341,23 @@ struct SlotAgg
     double sum_P = 0.0;       // sum_c P_c по тем же слотам
 };
 
+// Накопленные Δv стадии = 0 (параллельно; resize, а не assign -- без последовательного заполнения).
+inline void zero_dvel(const rhs::CpuExecutor& exec, NormalProjectionWorkspace& ws, std::size_t nfiber,
+                      std::size_t nsolid)
+{
+    for (std::size_t d = 0; d < dim; ++d)
+    {
+        ws.dvel_fiber[d].resize(nfiber);
+        ws.dvel_solid[d].resize(nsolid);
+    }
+    exec.parallel_for(nfiber, [&](std::size_t i) {
+        for (std::size_t d = 0; d < dim; ++d) ws.dvel_fiber[d][i] = 0.0;
+    });
+    exec.parallel_for(nsolid, [&](std::size_t i) {
+        for (std::size_t d = 0; d < dim; ++d) ws.dvel_solid[d][i] = 0.0;
+    });
+}
+
 inline SlotAgg agg_combine(SlotAgg a, const SlotAgg& b)
 {
     a.active += b.active;
@@ -413,11 +438,7 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
     assert(std::fabs(fupd.h - supd.h) <= 1e-12 * std::fabs(fupd.h)); // один h на нить и Solid
     assert(fupd.h > 0.0);
 
-    for (std::size_t d = 0; d < dim; ++d)
-    {
-        ws.dvel_fiber[d].assign(nfiber, 0.0);
-        ws.dvel_solid[d].assign(nsolid, 0.0);
-    }
+    detail_normal::zero_dvel(exec, ws, nfiber, nsolid);
     if (nff == 0 && nfs == 0) return;
 
     const NormalStageView view{state,    fupd, dv_fiber, ws.dvel_fiber,   sys,
@@ -429,9 +450,11 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
         detail_friction::prepare(exec, ws.fiber_buffers);
         if (nfs > 0) detail_friction::prepare(exec, ws.solid_buffers);
 
-        exec.parallel_for_segments(nff, [&](std::size_t seg, std::size_t k) {
-            FiberNormalContact& c = ff_slots[k];
+        exec.parallel_for_seg_groups(nff, [&](std::size_t j) { return ff_slots[j].seg; },
+                                     [&](std::size_t seg, std::size_t j) {
+            FiberNormalContact& c = ff_slots[j];
             if (!c.active) return;
+            const std::size_t k = c.prim; // ключ вклада -- индекс primitive
             double dP;
             if (apply_initial)
             {
@@ -456,9 +479,11 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
             });
         });
 
-        exec.parallel_for_segments(nfs, [&](std::size_t seg, std::size_t k) {
-            FiberSolidNormalContact& c = fs_slots[k];
+        exec.parallel_for_seg_groups(nfs, [&](std::size_t j) { return fs_slots[j].seg; },
+                                     [&](std::size_t seg, std::size_t j) {
+            FiberSolidNormalContact& c = fs_slots[j];
             if (!c.active) return;
+            const std::size_t k = c.prim;
             double dP;
             if (apply_initial)
             {
@@ -566,8 +591,10 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
     //    контактов, а не по скоростям частиц: у движущейся опоры (закреплённая бусина с заданной скоростью)
     //    работа стадии над свободными частицами законно может быть > 0 (опора толкает), а убывает при
     //    итерациях именно f. Без движущихся опор f = W_stage.
-    const double A0_ff = exec.parallel_reduce(
-        nff, 0.0,
+    // Суммы по слотам -- по отрезкам исходных primitive (parallel_reduce_seg_groups): порядок сложения тот же,
+    // что при обходе всех primitive с нулём у неактивных.
+    const double A0_ff = exec.parallel_reduce_seg_groups(
+        nff, [&](std::size_t j) { return ff_slots[j].seg; }, 0.0,
         [&](std::size_t k) -> double {
             const FiberNormalContact& c = ff_slots[k];
             if (!c.active || !(c.P > 0.0)) return 0.0;
@@ -576,8 +603,8 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
             return -pdot * c.P;
         },
         [](double x, double y) { return x + y; });
-    const double A0_fs = exec.parallel_reduce(
-        nfs, 0.0,
+    const double A0_fs = exec.parallel_reduce_seg_groups(
+        nfs, [&](std::size_t j) { return fs_slots[j].seg; }, 0.0,
         [&](std::size_t k) -> double {
             const FiberSolidNormalContact& c = fs_slots[k];
             if (!c.active || !(c.P > 0.0)) return 0.0;
@@ -623,11 +650,7 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
         });
         // Проход «применить» заново с lambda P^(0): та же формула вкладов, что и у итераций
         // (умножение уже накопленных Δv на lambda нарушало бы точную антисимметрию вкладов пары).
-        for (std::size_t d = 0; d < dim; ++d)
-        {
-            ws.dvel_fiber[d].assign(nfiber, 0.0);
-            ws.dvel_solid[d].assign(nsolid, 0.0);
-        }
+        detail_normal::zero_dvel(exec, ws, nfiber, nsolid);
         emit_pass(true);
     }
 
@@ -638,8 +661,8 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
     stats.W_stage = stage_work();
 
     // 4. диагностика после последней итерации
-    const detail_normal::SlotAgg agg_ff = exec.parallel_reduce(
-        nff, detail_normal::SlotAgg{},
+    const detail_normal::SlotAgg agg_ff = exec.parallel_reduce_seg_groups(
+        nff, [&](std::size_t j) { return ff_slots[j].seg; }, detail_normal::SlotAgg{},
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberNormalContact& c = ff_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
@@ -648,8 +671,8 @@ inline void run_normal_projection(const rhs::CpuExecutor& exec, const fiber::Fib
             return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
         },
         detail_normal::agg_combine);
-    const detail_normal::SlotAgg agg_fs = exec.parallel_reduce(
-        nfs, detail_normal::SlotAgg{},
+    const detail_normal::SlotAgg agg_fs = exec.parallel_reduce_seg_groups(
+        nfs, [&](std::size_t j) { return fs_slots[j].seg; }, detail_normal::SlotAgg{},
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberSolidNormalContact& c = fs_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
@@ -711,15 +734,16 @@ inline void normal_projection_post_residual(const rhs::CpuExecutor& exec, const 
 {
     const std::size_t nfiber = state.size();
     const std::size_t nsolid = ws.solid_count.size();
+    // Нулевые Δv вида: только читаются, поэтому обнуляются лишь при смене размера.
     for (std::size_t d = 0; d < dim; ++d)
     {
-        ws.zero_fiber[d].assign(nfiber, 0.0);
-        ws.zero_solid[d].assign(nsolid, 0.0);
+        if (ws.zero_fiber[d].size() != nfiber) ws.zero_fiber[d].assign(nfiber, 0.0);
+        if (ws.zero_solid[d].size() != nsolid) ws.zero_solid[d].assign(nsolid, 0.0);
     }
     const NormalStageView view{state, fupd,      dv_fiber,      ws.zero_fiber,        sys,
                                supd,  dvx_solid, ws.zero_solid, ws.bead_count.data(), ws.solid_count.data()};
-    const detail_normal::SlotAgg agg_ff = exec.parallel_reduce(
-        ff_slots.size(), detail_normal::SlotAgg{},
+    const detail_normal::SlotAgg agg_ff = exec.parallel_reduce_seg_groups(
+        ff_slots.size(), [&](std::size_t j) { return ff_slots[j].seg; }, detail_normal::SlotAgg{},
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberNormalContact& c = ff_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
@@ -728,8 +752,8 @@ inline void normal_projection_post_residual(const rhs::CpuExecutor& exec, const 
             return detail_normal::agg_one(c.warm, pdot, Wt, Wc, c.P);
         },
         detail_normal::agg_combine);
-    const detail_normal::SlotAgg agg_fs = exec.parallel_reduce(
-        fs_slots.size(), detail_normal::SlotAgg{},
+    const detail_normal::SlotAgg agg_fs = exec.parallel_reduce_seg_groups(
+        fs_slots.size(), [&](std::size_t j) { return fs_slots[j].seg; }, detail_normal::SlotAgg{},
         [&](std::size_t k) -> detail_normal::SlotAgg {
             const FiberSolidNormalContact& c = fs_slots[k];
             if (!c.active) return detail_normal::SlotAgg{};
@@ -830,74 +854,78 @@ private:
 };
 
 // ----------------------------------------------------------------------
-// Слоты трения из нормальных (после стадии): слот k активен, если нормальный
-// слот активен, P > 0 и mu > 0; геометрия копируется, N = P/h. Неактивные слоты
-// сбрасываются в значение по умолчанию. Размер выходного вектора приводится к
-// размеру нормального (индекс k сохраняется). Возвращает true, если активен хотя
-// бы один слот (детерминированно: фиксированные отрезки parallel_reduce).
-// Два вида заполняются НЕЗАВИСИМО (fill_friction_slots_from_normal_ff / _fs):
-// если проекция включена только для одного вида, слоты трения другого вида
-// (их заполняет ядро нормальной силы) не трогаются.
+// Слоты трения из нормальных (после стадии). Нормальные слоты -- сжатый массив
+// (только активные, prim -- индекс primitive); слоты трения -- по primitive,
+// их на этом шаге уже сбросило ядро контакта (compute_fiber_contact_contributions /
+// compute_fiber_solid_contact: все неактивны, размер = числу primitive). Записываются
+// только слоты c.prim, у которых нормальный слот активен, P > 0 и mu > 0: геометрия
+// копируется, N = P/h. Если массив трения короче prim + 1, он дополняется слотами
+// по умолчанию. Возвращает true, если записан хотя бы один слот (целочисленная
+// сумма -- детерминированно). Два вида заполняются НЕЗАВИСИМО (_ff / _fs): если
+// проекция включена только для одного вида, слоты трения другого вида (их
+// заполняет ядро нормальной силы) не трогаются.
 // ----------------------------------------------------------------------
 inline bool fill_friction_slots_from_normal_ff(const rhs::CpuExecutor& exec, double h,
                                                 const std::vector<FiberNormalContact>& ff_normal,
                                                 std::vector<FiberFrictionContact>& ff_friction)
 {
-    ff_friction.resize(ff_normal.size());
-    exec.parallel_for_segments(ff_normal.size(), [&](std::size_t, std::size_t k) {
-        const FiberNormalContact& c = ff_normal[k];
-        FiberFrictionContact f;
-        if (c.active && c.P > 0.0 && c.mu > 0.0)
-        {
-            f.active = true;
-            f.a0 = c.a0;
-            f.a1 = c.a1;
-            f.b0 = c.b0;
-            f.b1 = c.b1;
-            f.s = c.s;
-            f.t = c.t;
-            for (std::size_t d = 0; d < dim; ++d) f.n[d] = c.n[d];
-            f.N = c.P / h;
-            f.mu = c.mu;
-        }
-        ff_friction[k] = f;
-    });
-    const std::size_t nff = exec.parallel_reduce(
-        ff_friction.size(), std::size_t(0),
-        [&](std::size_t k) -> std::size_t { return ff_friction[k].active ? 1u : 0u; },
-        [](std::size_t a, std::size_t b) { return a + b; });
-    return nff > 0;
+    const std::size_t m = ff_normal.size();
+    if (m == 0) return false;
+    std::size_t need = 0;
+    for (const FiberNormalContact& c : ff_normal) need = std::max(need, c.prim + 1);
+    if (ff_friction.size() < need) ff_friction.resize(need);
+    return exec.parallel_reduce(
+               m, std::size_t(0),
+               [&](std::size_t j) -> std::size_t {
+                   const FiberNormalContact& c = ff_normal[j];
+                   if (!(c.active && c.P > 0.0 && c.mu > 0.0)) return 0u;
+                   FiberFrictionContact f;
+                   f.active = true;
+                   f.a0 = c.a0;
+                   f.a1 = c.a1;
+                   f.b0 = c.b0;
+                   f.b1 = c.b1;
+                   f.s = c.s;
+                   f.t = c.t;
+                   for (std::size_t d = 0; d < dim; ++d) f.n[d] = c.n[d];
+                   f.N = c.P / h;
+                   f.mu = c.mu;
+                   ff_friction[c.prim] = f;
+                   return 1u;
+               },
+               [](std::size_t a, std::size_t b) { return a + b; }) > 0;
 }
 
 inline bool fill_friction_slots_from_normal_fs(const rhs::CpuExecutor& exec, double h,
                                                 const std::vector<FiberSolidNormalContact>& fs_normal,
                                                 std::vector<FiberSolidFrictionContact>& fs_friction)
 {
-    fs_friction.resize(fs_normal.size());
-    exec.parallel_for_segments(fs_normal.size(), [&](std::size_t, std::size_t k) {
-        const FiberSolidNormalContact& c = fs_normal[k];
-        FiberSolidFrictionContact f;
-        if (c.active && c.P > 0.0 && c.mu > 0.0)
-        {
-            f.active = true;
-            f.a = c.a;
-            f.b = c.b;
-            f.s = c.s;
-            f.lambda = c.lambda;
-            for (std::size_t d = 0; d < dim; ++d) f.n[d] = c.n[d];
-            f.N = c.P / h;
-            f.mu = c.mu;
-        }
-        fs_friction[k] = f;
-    });
-    const std::size_t nfs = exec.parallel_reduce(
-        fs_friction.size(), std::size_t(0),
-        [&](std::size_t k) -> std::size_t { return fs_friction[k].active ? 1u : 0u; },
-        [](std::size_t a, std::size_t b) { return a + b; });
-    return nfs > 0;
+    const std::size_t m = fs_normal.size();
+    if (m == 0) return false;
+    std::size_t need = 0;
+    for (const FiberSolidNormalContact& c : fs_normal) need = std::max(need, c.prim + 1);
+    if (fs_friction.size() < need) fs_friction.resize(need);
+    return exec.parallel_reduce(
+               m, std::size_t(0),
+               [&](std::size_t j) -> std::size_t {
+                   const FiberSolidNormalContact& c = fs_normal[j];
+                   if (!(c.active && c.P > 0.0 && c.mu > 0.0)) return 0u;
+                   FiberSolidFrictionContact f;
+                   f.active = true;
+                   f.a = c.a;
+                   f.b = c.b;
+                   f.s = c.s;
+                   f.lambda = c.lambda;
+                   for (std::size_t d = 0; d < dim; ++d) f.n[d] = c.n[d];
+                   f.N = c.P / h;
+                   f.mu = c.mu;
+                   fs_friction[c.prim] = f;
+                   return 1u;
+               },
+               [](std::size_t a, std::size_t b) { return a + b; }) > 0;
 }
 
-// Оба вида сразу (оба выходных вектора перезаписываются).
+// Оба вида сразу.
 inline bool fill_friction_slots_from_normal(const rhs::CpuExecutor& exec, double h,
                                              const std::vector<FiberNormalContact>& ff_normal,
                                              const std::vector<FiberSolidNormalContact>& fs_normal,

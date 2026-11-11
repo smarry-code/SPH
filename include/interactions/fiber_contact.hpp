@@ -252,6 +252,8 @@ struct FiberContactSearchResult
     // Предел шага на primitive (законы 1-3, FiberContactStepParams::pair_dt_limit):
     // заполняет ядро, минимум берёт compute_fiber_contact_dt_limit.
     std::vector<double> pair_dt_limit;
+    // Векторы отрезков при построении primitive (rhs::CpuExecutor::concat_segments).
+    std::vector<rhs::CpuExecutor::SegPart<FiberContactPrimitive>> prim_parts;
 };
 
 inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -259,10 +261,15 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
                                         const std::vector<fiber::FiberMaterial>& materials,
                                         FiberContactSearchResult& out)
 {
-    out.primitives.clear();
+    // primitives очищается только на ранних выходах: при построении он перезаписывается целиком
+    // (concat_segments), resize инициализирует лишь прирост.
     out.pair_count = 0;
     const std::size_t n = state.size();
-    if (n == 0) return;
+    if (n == 0)
+    {
+        out.primitives.clear();
+        return;
+    }
 
     if constexpr (dim != 3)
     {
@@ -272,6 +279,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
         // невозможно. Заглушка нужна только для компиляции заголовка во ВСЕХ
         // SPH_DIM-вариантах пайплайна (см. include/interactions/fiber_bond.hpp,
         // include/fiber/fiber_system.hpp -- тот же паттерн).
+        out.primitives.clear();
         return;
     }
     else
@@ -289,9 +297,11 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
         out.index.find_pairs_parallel(exec, radius, accept, out.pairs);
         out.pair_count = out.pairs.size();
 
-        out.primitives.reserve(out.pairs.size());
-        for (const auto& pr : out.pairs)
-        {
+        // Пары -> primitive: параллельно по фиксированным отрезкам пар, каждый отрезок -- в свой вектор по
+        // возрастанию пары, затем склейка по порядку отрезков: тот же порядок, что у последовательного цикла.
+        exec.prepare_segment_parts(out.prim_parts);
+        exec.parallel_for_segments(out.pairs.size(), [&](std::size_t seg, std::size_t ip) {
+            const auto& pr = out.pairs[ip];
             const rhs::index_t k_a = pr.first;
             const rhs::index_t k_b = pr.second;
 
@@ -305,7 +315,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             }
             else if (a_prev != -1)
             {
-                continue; // k_a -- последняя бусина своей нити: пара отбрасывается целиком
+                return; // k_a -- последняя бусина своей нити: пара отбрасывается целиком
             }
             // иначе: k_a -- изолированная бусина, точечный сегмент (a1 остаётся -1)
 
@@ -319,7 +329,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             }
             else if (b_prev != -1)
             {
-                continue;
+                return;
             }
 
             FiberContactPrimitive prim;
@@ -332,8 +342,9 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             prim.b_prev = b_prev;
             prim.b_has_next_segment = (b1 != -1) && (topology.next[static_cast<std::size_t>(b1)] != -1);
 
-            out.primitives.push_back(prim);
-        }
+            out.prim_parts[seg].v.push_back(prim);
+        });
+        exec.concat_segments(out.prim_parts, out.primitives);
     }
 }
 
@@ -773,14 +784,16 @@ inline bool compute_fiber_contact_contributions(
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
     if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
-    // Режим проекции: нормальные слоты по primitive (сбрасываются на каждом вызове).
+    // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
+    // primitive: каждый отрезок пишет свои слоты в local[seg] (по возрастанию k), затем отрезки склеиваются
+    // по порядку. prim и seg слота -- индекс primitive и номер отрезка (см. FiberNormalContact).
     std::vector<FiberNormalContact>* const normal = penalty ? params.normal_ff : nullptr;
-    if (normal) normal->resize(n);
+    if (normal) normal->clear();
     if (n == 0) return false;
+    std::vector<std::vector<FiberNormalContact>> normal_local(normal ? nworkers : 0);
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
         friction_contacts[k] = FiberFrictionContact{};
-        if (normal) (*normal)[k] = FiberNormalContact{};
         const FiberContactPrimitive& prim = primitives[k];
         const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
         if (!geom.contact) return;
@@ -789,8 +802,10 @@ inline bool compute_fiber_contact_contributions(
         if (normal)
         {
             if (!(geom.delta > 0.0)) return;
-            FiberNormalContact& slot = (*normal)[k];
+            FiberNormalContact slot;
             slot.active = true;
+            slot.prim = k;
+            slot.seg = static_cast<std::uint16_t>(seg);
             slot.a0 = prim.a0;
             slot.a1 = prim.a1;
             slot.b0 = prim.b0;
@@ -802,6 +817,7 @@ inline bool compute_fiber_contact_contributions(
             slot.mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
                                                  materials[static_cast<std::size_t>(state.material_id[prim.b0])]);
             slot.key = make_ff_pair_key(prim.a0, prim.a1, prim.b0, prim.b1);
+            normal_local[seg].push_back(slot);
             if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
             return;
         }
@@ -875,6 +891,14 @@ inline bool compute_fiber_contact_contributions(
             writer.emit(b1, d, static_cast<std::uint64_t>(k), 3);
         }
     });
+
+    if (normal)
+    {
+        std::size_t m = 0;
+        for (const auto& v : normal_local) m += v.size();
+        normal->reserve(m);
+        for (const auto& v : normal_local) normal->insert(normal->end(), v.begin(), v.end());
+    }
 
     const std::size_t active_count = exec.parallel_reduce(
         n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
