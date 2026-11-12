@@ -50,3 +50,20 @@ done
 - ускорение на 8 потоках: H ≈ 5,2, P ≈ 4,8;
 - `monitor.csv` H и P на 1 и 8 потоках побайтно равны (строки «детерминизм» в `results/driver_log.txt`);
 - в профиле на 8 потоках последовательный код главного потока занимает ≈ 26 % его времени, а ожидание на барьерах ≈ 0,1 %.
+
+## 7. Внедрение (2026-11-12)
+
+- **Коммит:** `f1298aa` (поверх `280b0f4`), ветка `contact3_fix`; копия дерева в `~/SPH_c3opt` на обеих машинах, эталон `1658756` — в `~/SPH_c3fix`.
+- **Проверка** на `claude-compute` (2 ядра): скрипт `~/c3opt_tests/run.sh` (сборки, ctest, `test_checkpoint`, законы 0/3/4 и проекция побитово против эталона, 1/2 потока, рестарт); лог — `results/opt_verify_log.txt` (первая попытка на `280b0f4` — `results/opt_verify_try1_log.txt`).
+- **Замер** на `claude-compute-8t` через очередь автозапуска (`~/autostart/register_job.sh c3opt_bench bash ~/c3opt_bench/queue.sh`): задача ждёт `FREE=8` в `~/proj_runs/threads_free.sh` и отсутствия чужих `guo2019_shot`, затем:
+
+```bash
+RUNS="H.t1 P.t1 H.t1b P.t1b P.t2 P.t4 H.t8 P.t8 P.prof1 P.prof8" OLD_RES=~/c3fix_bench/res \
+  bash scripts/bench_8t.sh ~/SPH_c3opt - ~/late/twaron_s25_dmg0.00415.fib ~/c3opt_bench/res
+python3 scripts/bench_tables.py ~/c3opt_bench/res > results/opt_bench_tables.txt
+python3 scripts/perf_threads.py ~/c3opt_bench/res/P.prof1/perf.data --win pre:0.02-0.45 --win imp:0.61-0.97 --top 40 > results/opt_P.prof1.threads.txt
+python3 scripts/perf_threads.py ~/c3opt_bench/res/P.prof8/perf.data --win pre:0.01-0.25 --win imp:0.35-1.0 --top 30 > results/opt_P.prof8.threads.txt
+```
+
+- **Стоимость:** замер 1 ч 2 мин (03:21–04:23), разбор профилей ~15 мин; 179 МБ в `~/c3opt_bench/res`.
+- **Проверка повтора:** строки «регрессия … СОВПАДАЕТ» и «детерминизм … СОВПАДАЕТ» в `results/opt_driver_log.txt`; H.t1 ≈ 0,141 и P.t1 ≈ 0,127 с/шаг, P.t8 ≈ 0,034 с/шаг.
