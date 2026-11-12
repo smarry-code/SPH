@@ -25,7 +25,8 @@
 //   --checkpoint / --checkpoint-every=N -- чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev) каждые N шагов
 //   интегрирования (N >= 1, по умолчанию 10000) и финальный при останове; --restart -- продолжить выстрел из него
 //   (нет файла -- ошибка); --force -- разрешить менять физические настройки при --restart (только с --restart).
-//   Состояние монитора пока не сохраняется: после --restart monitor.csv и вердикт по шару неполные.
+//   Состояние монитора хранится в чекпоинте (блок USER, формат v3): после --restart вердикт, максимумы (n_tunnel,
+//   max_delta_*) и monitor.csv -- как при непрерывном счёте; из чекпоинта v1/v2 -- только с шага рестарта.
 //   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
 //   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
 //   (и l_break всех связей = (1+eps_break) l0).
@@ -141,6 +142,9 @@ struct Options
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
     int fs_contact = -1;
     int ff_contact = -1;
+    // Нормальная сила законов 1-3 как проекция скорости: -1 -- не задано (берётся из конфига).
+    int ff_predictor = -1, fs_predictor = -1;
+    int proj_iters = -1, proj_warm = -1;
     std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
     bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
     bool checkpoint = false;       // писать чекпоинты (--checkpoint или --checkpoint-every)
@@ -188,6 +192,8 @@ void print_usage()
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
                 "                   [--ball-d=<м>] [--ball-mass=<кг>] [--ball-dx=<м>]  (шар: диаметр, масса, шаг решётки; каждый > 0)\n"
                 "                   [--fs-contact=0..4] [--ff-contact=0..4]  (закон контакта нитей, 0 = Герц, 4 = Герц + демпфер)\n"
+                "                   [--ff-contact-predictor=0|1] [--fs-contact-predictor=0|1] [--contact-proj-iters=1..100] [--contact-proj-warm=0|1]\n"
+                "                   (нормальная сила законов 1-3 как проекция скорости; по умолчанию 0)\n"
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
@@ -200,7 +206,8 @@ void print_usage()
                 "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
                 "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
                 "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
-                "  Состояние монитора пока не сохраняется: monitor.csv и вердикт по шару после --restart неполные.\n"
+                "  Состояние монитора хранится в чекпоинте (v3): вердикт, максимумы и monitor.csv после --restart полные\n"
+                "  (из чекпоинта v1/v2 -- только с шага рестарта).\n"
                 "  --force: при --restart разрешить менять физические настройки (без него любое отличие -- отказ со списком полей).\n"
                 "  --force без --restart -- ошибка. Риски --force:\n%s"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
@@ -361,6 +368,26 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 4) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--ff-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--ff-contact-predictor="), n) || n < 0 || n > 1) return bad("--ff-contact-predictor");
+            o.ff_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--fs-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--fs-contact-predictor="), n) || n < 0 || n > 1) return bad("--fs-contact-predictor");
+            o.fs_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-iters=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-iters="), n) || n < 1 || n > 100) return bad("--contact-proj-iters");
+            o.proj_iters = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-warm=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-warm="), n) || n < 0 || n > 1) return bad("--contact-proj-warm");
+            o.proj_warm = static_cast<int>(n);
         }
         else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")
         {
@@ -602,6 +629,8 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
     info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
     info.emplace_back("dt_scale", fmtg(opt.dt_scale));
+    // Ключи проекции нормального контакта пишутся в shot.txt отдельно (по sc.cfg после применения CLI,
+    // см. run_shot): здесь cfg выстрела ещё не заполнен, а сама функция зовётся только при переопределениях нити.
     return info;
 }
 
@@ -680,6 +709,11 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         if (opt.impulse_gamma > 0.0)
             sc.cfg.fiber_solid_contact_impulse_gamma = sc.cfg.fiber_fiber_contact_impulse_gamma = opt.impulse_gamma;
         sc.cfg.dt_scale = opt.dt_scale;
+        if (opt.ff_predictor >= 0) sc.cfg.fiber_fiber_contact_predictor = opt.ff_predictor;
+        if (opt.fs_predictor >= 0) sc.cfg.fiber_solid_contact_predictor = opt.fs_predictor;
+        if (opt.proj_iters >= 0) sc.cfg.fiber_contact_projection_iters = opt.proj_iters;
+        if (opt.proj_warm >= 0) sc.cfg.fiber_contact_projection_warm = opt.proj_warm;
+        validate_fiber_contact_projection(sc.cfg); // ошибка настроек -- исключение выстрела (ОШИБКА)
 #ifdef SPH_CONTACT_STATS
         // Статистика контактов -- в подкаталог выстрела (CWD).
         sc.cfg.contact_stats_every = opt.contact_stats;
@@ -737,9 +771,6 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                 throw std::runtime_error("--restart: нет чекпоинта " + ckpt_path.string() + " (и .prev) в каталоге выстрела");
             sc.cfg.restart_file = (fs::exists(ckpt_path) ? ckpt_path : prev).string();
             sc.cfg.restart_force = opt.force;
-            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --restart: состояние монитора не сохраняется -- monitor.csv и вердикт по "
-                                 "шару для %s после рестарта неполные (monitor.csv перезаписывается с шага рестарта).\n",
-                         sub.string().c_str());
         }
 
         double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
@@ -751,14 +782,20 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         mo.t_max = t_max;
         mo.csv_path = (sub / "monitor.csv").string();
         mo.guard = &guard;
+        mo.restart = opt.restart;
         GuoShotMonitor monitor(sc, mo);
         guard.set_step_observer([&](double d, double t) { monitor.on_step(d, t); });
+        // Состояние монитора -- в блоке USER чекпоинта (только при --checkpoint / --restart).
+        checkpoint::UserState mon_state;
+        mon_state.save = [&monitor] { return monitor.save_state(); };
+        mon_state.restore = [&monitor](const std::string& b, std::size_t n) { monitor.restore_state(b, n); };
+        const checkpoint::UserState* mon_state_ptr = (opt.checkpoint || opt.restart) ? &mon_state : nullptr;
 
         // ---- прогон
         const auto w0 = std::chrono::steady_clock::now();
         {
             e2e::ScopedSilence silence(true);
-            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard);
+            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard, mon_state_ptr);
         }
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
         monitor.finalize();
@@ -829,12 +866,23 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         add("wall_forecast_h", fmtg(wall_fc_h, 6));
         add("monitor_wall_s", fmtg(st.monitor_wall_s, 6));
         add("monitor_share_pct", fmtg(mon_share, 4));
+        // Только при --restart: restored -- вердикт и максимумы за весь выстрел; partial -- только с шага рестарта.
+        if (opt.restart) add("monitor_state", monitor.state_restored() ? "restored" : "partial");
         add("frames_sph_n", std::to_string(fz.n_sph));
         add("frames_fiber_n", std::to_string(fz.n_fiber));
         add("frames_bytes_total", std::to_string(fz.bytes_sph + fz.bytes_fiber));
         add("frame_sph_bytes", fmtg(frame_sph, 10));
         add("frame_fiber_bytes", fmtg(frame_fiber, 10));
         for (const auto& kvp : fiber_info) add(kvp.first, kvp.second);
+        // Режим проекции (любой вид контакта): ключи из ИТОГОВОЙ конфигурации sc.cfg (после CLI); при
+        // выключенном режиме строка shot.txt не меняется. Место в строке -- прежнее (перед mu_ff).
+        if (sc.cfg.fiber_fiber_contact_predictor == 1 || sc.cfg.fiber_solid_contact_predictor == 1)
+        {
+            add("ff_contact_predictor", std::to_string(sc.cfg.fiber_fiber_contact_predictor == 1 ? 1 : 0));
+            add("fs_contact_predictor", std::to_string(sc.cfg.fiber_solid_contact_predictor == 1 ? 1 : 0));
+            add("contact_proj_iters", std::to_string(sc.cfg.fiber_contact_projection_iters));
+            add("contact_proj_warm", std::to_string(sc.cfg.fiber_contact_projection_warm));
+        }
         add("mu_ff", fmtg(mu_ff));
         add("mu_fs", fmtg(mu_fs));
         if (opt.ball_d > 0.0 || opt.ball_m > 0.0 || opt.ball_dx > 0.0) // шар не по умолчанию

@@ -9,6 +9,8 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <cstring>
+#include <cmath>
 #include <vector>
 #ifdef _WIN32
 #define NOMINMAX // std::max/std::min из <rhs/...> конфликтуют с макросами min/max windows.h
@@ -176,6 +178,90 @@ static void test_parallel_sort()
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Подмножество с прежним разбиением на отрезки (parallel_for_seg_groups / parallel_reduce_seg_groups):
+// свёртка по выбранным индексам побитово равна parallel_reduce по полному диапазону с нейтральным элементом
+// у невыбранных; обход -- каждый выбранный ровно один раз, в своём отрезке, по возрастанию. concat_segments --
+// порядок как у последовательного цикла.
+// ---------------------------------------------------------------------------
+static void test_seg_groups()
+{
+    std::mt19937 rng(77u);
+    std::uniform_real_distribution<double> val(-1.0, 1.0);
+    std::uniform_real_distribution<double> mag(-30.0, 30.0);
+    bool ok_sum = true, ok_max = true, ok_cnt = true, ok_for = true, ok_cat = true;
+    for (int nt : {1, 3, 8})
+    {
+        rhs::CpuExecutor exec(nt);
+        const std::size_t S = exec.det_segments();
+        for (std::size_t n : {std::size_t(0), std::size_t(1), std::size_t(5), std::size_t(63), std::size_t(64),
+                              std::size_t(65), std::size_t(1000), std::size_t(12345)})
+        {
+            for (double frac : {0.0, 0.01, 0.3, 1.0})
+            {
+                std::vector<double> x(n);
+                for (auto& v : x) v = val(rng) * std::pow(10.0, mag(rng) / 3.0); // разные порядки величин и знаки
+                std::vector<std::size_t> sel;
+                std::vector<std::uint16_t> seg;
+                for (std::size_t s = 0; s < S; ++s)
+                    for (std::size_t i = n * s / S; i < n * (s + 1) / S; ++i)
+                        if (std::uniform_real_distribution<double>(0.0, 1.0)(rng) < frac)
+                        {
+                            sel.push_back(i);
+                            seg.push_back(static_cast<std::uint16_t>(s));
+                        }
+                std::vector<char> is_sel(n, 0);
+                for (std::size_t i : sel) is_sel[i] = 1;
+                const auto plus = [](double a, double b) { return a + b; };
+                const double full = exec.parallel_reduce(
+                    n, 0.0, [&](std::size_t i) { return is_sel[i] ? x[i] : 0.0; }, plus);
+                const double sub = exec.parallel_reduce_seg_groups(
+                    sel.size(), [&](std::size_t j) { return seg[j]; }, 0.0, [&](std::size_t j) { return x[sel[j]]; },
+                    plus);
+                ok_sum = ok_sum && (std::memcmp(&full, &sub, sizeof(double)) == 0);
+                const auto mx = [](double a, double b) { return std::max(a, b); };
+                const double fm = exec.parallel_reduce(
+                    n, 0.0, [&](std::size_t i) { return is_sel[i] ? std::fabs(x[i]) : 0.0; }, mx);
+                const double sm = exec.parallel_reduce_seg_groups(
+                    sel.size(), [&](std::size_t j) { return seg[j]; }, 0.0,
+                    [&](std::size_t j) { return std::fabs(x[sel[j]]); }, mx);
+                ok_max = ok_max && (fm == sm);
+                const std::size_t c = exec.parallel_reduce_seg_groups(
+                    sel.size(), [&](std::size_t j) { return seg[j]; }, std::size_t(0),
+                    [&](std::size_t) { return std::size_t(1); }, [](std::size_t a, std::size_t b) { return a + b; });
+                ok_cnt = ok_cnt && (c == sel.size());
+                // обход: отрезок верный, каждый j один раз, внутри отрезка -- по возрастанию
+                std::vector<std::vector<std::size_t>> seen(S);
+                exec.parallel_for_seg_groups(sel.size(), [&](std::size_t j) { return seg[j]; },
+                                             [&](std::size_t s, std::size_t j) { seen[s].push_back(j); });
+                std::size_t tot = 0;
+                for (std::size_t s = 0; s < S; ++s)
+                {
+                    tot += seen[s].size();
+                    for (std::size_t q = 0; q < seen[s].size(); ++q)
+                        ok_for = ok_for && seg[seen[s][q]] == s && (q == 0 || seen[s][q] > seen[s][q - 1]);
+                }
+                ok_for = ok_for && tot == sel.size();
+                // concat_segments: порядок последовательного цикла
+                std::vector<rhs::CpuExecutor::SegPart<std::size_t>> parts;
+                exec.prepare_segment_parts(parts);
+                exec.parallel_for_segments(n, [&](std::size_t s, std::size_t i) {
+                    if (is_sel[i]) parts[s].v.push_back(i);
+                });
+                std::vector<std::size_t> cat(7, 999); // непустой out: прежнее содержимое перезаписывается
+                exec.concat_segments(parts, cat);
+                ok_cat = ok_cat && (cat == sel);
+            }
+        }
+    }
+    check(ok_sum, "parallel_reduce_seg_groups: сумма по подмножеству побитово = parallel_reduce с нулями");
+    check(ok_max, "parallel_reduce_seg_groups: max по подмножеству = parallel_reduce с нулями");
+    check(ok_cnt, "parallel_reduce_seg_groups: счётчик");
+    check(ok_for, "parallel_for_seg_groups: каждый элемент один раз, в своём отрезке, по возрастанию");
+    check(ok_cat, "concat_segments: порядок последовательного цикла");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -187,6 +273,7 @@ int main()
     test_parallel_reduce();
     test_parallel_scan();
     test_parallel_sort();
+    test_seg_groups();
 
     if (failures == 0)
         std::printf("test_executor: ПРОЙДЕН\n");

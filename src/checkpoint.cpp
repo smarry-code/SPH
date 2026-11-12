@@ -32,7 +32,10 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 #endif
 
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
-constexpr std::uint32_t kFormatVersion = 1;
+// Версия 2: в CONF добавлены поля проекции скорости контакта (в конце списка), в конце файла
+// блок PROJ (таблица тёплого старта). Версия 3: после PROJ блок USER (непрозрачное состояние
+// вызывающего, Payload::user_state). Читаются все три (v1: новых полей, PROJ и USER нет; v2: нет USER).
+constexpr std::uint32_t kFormatVersion = 3;
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -64,6 +67,8 @@ constexpr std::uint32_t kTagClmp = make_tag('C', 'L', 'M', 'P');
 constexpr std::uint32_t kTagLoop = make_tag('L', 'O', 'O', 'P');
 constexpr std::uint32_t kTagHist = make_tag('H', 'I', 'S', 'T');
 constexpr std::uint32_t kTagEnrg = make_tag('E', 'N', 'R', 'G');
+constexpr std::uint32_t kTagProj = make_tag('P', 'R', 'O', 'J');
+constexpr std::uint32_t kTagUser = make_tag('U', 'S', 'E', 'R');
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error("чекпоинт: " + msg); }
 
@@ -265,8 +270,9 @@ std::string text(const std::vector<std::vector<double>>& v)
 // Перечень полей SimulationConfig: f(имя, поле, свободно_ли_менять). Порядок
 // фиксирован версией формата (меняя его или состав полей, поднять kFormatVersion).
 // Поля checkpoint_* / restart_file -- настройки запуска, не сериализуются.
+// ver -- версия формата: поля, добавленные в версии 2, при ver < 2 не перечисляются.
 template <class C, class F>
-void visit_cfg(C& c, F&& f)
+void visit_cfg(C& c, F&& f, std::uint32_t ver = kFormatVersion)
 {
     f("pa_sph", c.pa_sph, false);
     f("nnps", c.nnps, false);
@@ -328,6 +334,14 @@ void visit_cfg(C& c, F&& f)
     f("contact_stats_summary", c.contact_stats_summary, true);
     f("contact_hold_n", c.contact_hold_n, true);
 #endif
+    // Версия 2: проекция скорости нормальной силы контакта (менять при рестарте нельзя).
+    if (ver >= 2)
+    {
+        f("fiber_fiber_contact_predictor", c.fiber_fiber_contact_predictor, false);
+        f("fiber_solid_contact_predictor", c.fiber_solid_contact_predictor, false);
+        f("fiber_contact_projection_iters", c.fiber_contact_projection_iters, false);
+        f("fiber_contact_projection_warm", c.fiber_contact_projection_warm, false);
+    }
 }
 
 struct CfgField
@@ -358,13 +372,15 @@ void write_cfg(Writer& w, const SimulationConfig& c)
     visit_cfg(c, [&w](const char*, const auto& v, bool) { put(w, v); });
 }
 
-SimulationConfig read_cfg(Reader& r)
+// base -- настройки нового запуска: поля, которых нет в файле старой версии, берутся из них
+// (в сравнении настроек различий не дают).
+SimulationConfig read_cfg(Reader& r, std::uint32_t ver, const SimulationConfig& base)
 {
-    SimulationConfig c;
+    SimulationConfig c = base;
     std::uint32_t cnt = 0;
-    visit_cfg(c, [&cnt](const char*, auto&, bool) { ++cnt; });
+    visit_cfg(c, [&cnt](const char*, auto&, bool) { ++cnt; }, ver);
     if (r.u32() != cnt) fail("число полей SimulationConfig не совпадает (другой состав настроек)");
-    visit_cfg(c, [&r](const char*, auto& v, bool) { get(r, v); });
+    visit_cfg(c, [&r](const char*, auto& v, bool) { get(r, v); }, ver);
     return c;
 }
 
@@ -532,6 +548,27 @@ void write_energy(Writer& w, const Payload& p)
     w.end_block(b);
 }
 
+void write_proj(Writer& w, const Payload& p)
+{
+    const size_t b = w.begin_block(kTagProj);
+    w.f64(p.proj_h_prev);
+    w.u64(p.proj_warm.size());
+    for (const auto& e : p.proj_warm)
+    {
+        w.i32(e.key.kind);
+        for (int i = 0; i < 4; ++i) w.i64(e.key.k[i]);
+        w.f64(e.P);
+    }
+    w.end_block(b);
+}
+
+void write_user(Writer& w, const Payload& p)
+{
+    const size_t b = w.begin_block(kTagUser);
+    w.str(p.user_state);
+    w.end_block(b);
+}
+
 // Проверка длины вектора истории: 0 (нет истории) или n.
 void check_hist_len(const std::vector<double>& v, size_t n, const char* name)
 {
@@ -583,6 +620,8 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     write_loop(w, payload.loop);
     write_hist(w, payload.hist);
     write_energy(w, payload);
+    write_proj(w, payload);
+    write_user(w, payload);
     w.u32(crc32(w.buf().data(), w.buf().size()));
 
     const std::string tmp = temp_path(path);
@@ -634,8 +673,8 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     Reader hr(data.data() + 8, kHeader - 8);
     const std::uint32_t ver = hr.u32(), fdim = hr.u32(), flags = hr.u32(), dsz = hr.u32();
-    if (ver != kFormatVersion)
-        fail("версия формата " + std::to_string(ver) + " не поддерживается (ожидается " +
+    if (ver < 1 || ver > kFormatVersion)
+        fail("версия формата " + std::to_string(ver) + " не поддерживается (поддерживаются 1.." +
              std::to_string(kFormatVersion) + ")");
     if (fdim != dim)
         fail("SPH_DIM чекпоинта (" + std::to_string(fdim) + ") не равен SPH_DIM сборки (" + std::to_string(dim) + ")");
@@ -653,7 +692,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     // --- разбор в промежуточные объекты; модель меняется только после проверок ---
     Reader rc = top.block(kTagConf, "CONF");
-    const SimulationConfig saved = read_cfg(rc);
+    const SimulationConfig saved = read_cfg(rc, ver, cfg);
     rc.expect_end("CONF");
 
     Reader rp = top.block(kTagPart, "PART");
@@ -799,6 +838,25 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     pl.energy.e_mech0 = re.f64();
     pl.energy.have_e0 = re.boolean();
     re.expect_end("ENRG");
+    if (ver >= 2)
+    {
+        Reader rj = top.block(kTagProj, "PROJ");
+        pl.proj_h_prev = rj.f64();
+        pl.proj_warm.resize(rj.count(4 + 4 * 8 + 8));
+        for (auto& e : pl.proj_warm)
+        {
+            e.key.kind = rj.i32();
+            for (int i = 0; i < 4; ++i) e.key.k[i] = static_cast<long long>(rj.i64());
+            e.P = rj.f64();
+        }
+        rj.expect_end("PROJ");
+    }
+    if (ver >= 3)
+    {
+        Reader ru = top.block(kTagUser, "USER");
+        pl.user_state = ru.str();
+        ru.expect_end("USER");
+    }
     top.expect_end("файл");
 
     // --- сравнение настроек ---

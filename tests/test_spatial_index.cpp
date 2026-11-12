@@ -266,6 +266,275 @@ static void test_reuse_out()
     }
 }
 
+
+// -----------------------------------------------------------------------
+// Порядок пар после отсечения ячеек (for_each_near_cell) -- побитово прежний: эталон -- копия прежнего обхода
+// (все (2*reach+1)^Dim ячеек вокруг ячейки точки, ось 0 быстрее всех, без отсечения). Вектор пар сравнивается
+// целиком, с порядком. Облака: случайные, решётка с шагом, кратным ячейке (расстояния ровно = radius), точки
+// вне сетки для поиска чужого типа; radius = h, меньше и больше h (reach 1..3).
+// -----------------------------------------------------------------------
+template <std::size_t Dim>
+struct RefGrid
+{
+    double h = 1.0;
+    std::array<double, Dim> origin{};
+    std::array<int, Dim> nc{};
+    std::vector<std::size_t> offset, sorted;
+    const Cloud<Dim>* c = nullptr;
+
+    std::array<int, Dim> cell_of(const std::array<double, Dim>& p) const
+    {
+        std::array<int, Dim> r{};
+        for (std::size_t d = 0; d < Dim; ++d)
+            r[d] = std::clamp(static_cast<int>(std::floor((p[d] - origin[d]) / h)), 0, nc[d] - 1);
+        return r;
+    }
+    std::size_t lin(const std::array<int, Dim>& q) const
+    {
+        std::size_t l = 0;
+        for (std::size_t k = Dim; k-- > 0;) l = l * static_cast<std::size_t>(nc[k]) + static_cast<std::size_t>(q[k]);
+        return l;
+    }
+    void build(const Cloud<Dim>& cloud, double cell)
+    {
+        c = &cloud;
+        h = cell;
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            double lo = cloud.coord[d][0], hi = lo;
+            for (std::size_t i = 1; i < cloud.n; ++i)
+            {
+                lo = std::min(lo, cloud.coord[d][i]);
+                hi = std::max(hi, cloud.coord[d][i]);
+            }
+            origin[d] = lo;
+            nc[d] = std::max(static_cast<int>(std::ceil((hi - lo) / h)) + 1, 1);
+        }
+        std::size_t total = 1;
+        for (std::size_t d = 0; d < Dim; ++d) total *= static_cast<std::size_t>(nc[d]);
+        std::vector<std::size_t> cnt(total, 0), cell_i(cloud.n);
+        for (std::size_t i = 0; i < cloud.n; ++i)
+        {
+            std::array<double, Dim> p{};
+            for (std::size_t d = 0; d < Dim; ++d) p[d] = cloud.coord[d][i];
+            cell_i[i] = lin(cell_of(p));
+            ++cnt[cell_i[i]];
+        }
+        offset.assign(total + 1, 0);
+        for (std::size_t q = 0; q < total; ++q) offset[q + 1] = offset[q] + cnt[q];
+        std::vector<std::size_t> cur(offset.begin(), offset.end() - 1);
+        sorted.resize(cloud.n);
+        for (std::size_t i = 0; i < cloud.n; ++i) sorted[cur[cell_i[i]]++] = i;
+    }
+    template <class F>
+    void neighbors(const std::array<int, Dim>& center, int reach, F&& f) const
+    {
+        const std::size_t span = static_cast<std::size_t>(2 * reach + 1);
+        std::size_t combos = 1;
+        for (std::size_t d = 0; d < Dim; ++d) combos *= span;
+        for (std::size_t k = 0; k < combos; ++k)
+        {
+            std::size_t kk = k;
+            std::array<int, Dim> q{};
+            bool ok = true;
+            for (std::size_t d = 0; d < Dim; ++d)
+            {
+                const int v = center[d] + static_cast<int>(kk % span) - reach;
+                kk /= span;
+                if (v < 0 || v >= nc[d])
+                {
+                    ok = false;
+                    break;
+                }
+                q[d] = v;
+            }
+            if (ok) f(lin(q));
+        }
+    }
+    PairVec same(double radius) const
+    {
+        PairVec out;
+        const double r2 = radius * radius;
+        const int reach = static_cast<int>(std::floor(radius / h)) + 1;
+        std::size_t total = offset.size() - 1;
+        for (std::size_t q = 0; q < total; ++q)
+        {
+            if (offset[q] == offset[q + 1]) continue;
+            std::array<int, Dim> center{};
+            std::size_t l = q;
+            for (std::size_t d = 0; d < Dim; ++d)
+            {
+                center[d] = static_cast<int>(l % static_cast<std::size_t>(nc[d]));
+                l /= static_cast<std::size_t>(nc[d]);
+            }
+            for (std::size_t pi = offset[q]; pi < offset[q + 1]; ++pi)
+            {
+                const std::size_t i = sorted[pi];
+                neighbors(center, reach, [&](std::size_t nb) {
+                    for (std::size_t pj = offset[nb]; pj < offset[nb + 1]; ++pj)
+                    {
+                        const std::size_t j = sorted[pj];
+                        if (j <= i) continue;
+                        double d2 = 0.0;
+                        for (std::size_t d = 0; d < Dim; ++d)
+                        {
+                            const double dd = c->coord[d][i] - c->coord[d][j];
+                            d2 += dd * dd;
+                        }
+                        if (d2 <= r2) out.emplace_back(i, j);
+                    }
+                });
+            }
+        }
+        return out;
+    }
+    PairVec cross(const Cloud<Dim>& other, double radius) const
+    {
+        PairVec out;
+        const double r2 = radius * radius;
+        const int reach = static_cast<int>(std::floor(radius / h)) + 1;
+        for (std::size_t a = 0; a < other.n; ++a)
+        {
+            std::array<double, Dim> p{};
+            for (std::size_t d = 0; d < Dim; ++d) p[d] = other.coord[d][a];
+            neighbors(cell_of(p), reach, [&](std::size_t nb) {
+                for (std::size_t pb = offset[nb]; pb < offset[nb + 1]; ++pb)
+                {
+                    const std::size_t b = sorted[pb];
+                    double d2 = 0.0;
+                    for (std::size_t d = 0; d < Dim; ++d)
+                    {
+                        const double dd = p[d] - c->coord[d][b];
+                        d2 += dd * dd;
+                    }
+                    if (d2 <= r2) out.emplace_back(a, b);
+                }
+            });
+        }
+        return out;
+    }
+};
+
+template <std::size_t Dim>
+static Cloud<Dim> lattice_cloud(int m, double step, double shift)
+{
+    Cloud<Dim> c;
+    std::size_t n = 1;
+    for (std::size_t d = 0; d < Dim; ++d) n *= static_cast<std::size_t>(m);
+    c.n = n;
+    for (std::size_t d = 0; d < Dim; ++d) c.coord[d].resize(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        std::size_t l = i;
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            c.coord[d][i] = shift + step * static_cast<double>(l % static_cast<std::size_t>(m));
+            l /= static_cast<std::size_t>(m);
+        }
+    }
+    return c;
+}
+
+template <std::size_t Dim>
+static void test_pruned_order()
+{
+    std::mt19937 rng(20261112u);
+    rhs::CpuExecutor exec1(1), exec8(8);
+    const auto all = [](index_t, index_t) { return true; };
+    std::vector<Cloud<Dim>> clouds;
+    clouds.push_back(random_cloud<Dim>(Dim == 3 ? 600 : 400, 1.0, rng));
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 7 : 15, 0.25, 0.1));     // расстояния ровно 0.25, 0.5 ...
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 6 : 12, 0.3, -0.731));   // шаг не кратен ячейке
+    const double cells[] = {0.25, 0.5, 0.3};
+    const double radii_k[] = {1.0, 0.7, 1.6, 2.5};
+    bool ok_same = true, ok_cross = true, ok_par = true;
+    for (const auto& cl : clouds)
+    {
+        for (double cell : cells)
+        {
+            for (double rk : radii_k)
+            {
+                const double radius = rk * cell;
+                rhs::SpatialIndex<Dim> idx;
+                idx.build(cl.ptrs(), cl.n, cell);
+                RefGrid<Dim> ref;
+                ref.build(cl, cell);
+                const PairVec expect = ref.same(radius);
+                ok_same = ok_same && (idx.find_pairs(radius, all) == expect);
+                PairVec par;
+                idx.find_pairs_parallel(exec8, radius, all, par);
+                PairVec par1;
+                idx.find_pairs_parallel(exec1, radius, all, par1);
+                // parallel: отрезки ячеек склеиваются по порядку -- тот же вектор, что у последовательного.
+                ok_par = ok_par && (par == expect) && (par1 == expect);
+
+                // чужой тип: точки облака b внутри и далеко вне сетки, на границах ячеек
+                Cloud<Dim> other = random_cloud<Dim>(300, 3.0, rng);
+                for (std::size_t i = 0; i < 40 && i < other.n; ++i)
+                    for (std::size_t d = 0; d < Dim; ++d) other.coord[d][i] = cl.coord[d][i % cl.n] + (i % 3) * cell;
+                const PairVec expect_x = ref.cross(other, radius);
+                ok_cross = ok_cross && (idx.find_pairs_cross(other.ptrs(), other.n, radius, all) == expect_x);
+                PairVec px, px1;
+                idx.find_pairs_cross_parallel(exec8, other.ptrs(), other.n, radius, all, px);
+                idx.find_pairs_cross_parallel(exec1, other.ptrs(), other.n, radius, all, px1);
+                ok_par = ok_par && (px == expect_x) && (px1 == expect_x);
+            }
+        }
+    }
+    check(ok_same, "find_pairs: пары и их ПОРЯДОК совпадают с прежним обходом всех соседних ячеек");
+    check(ok_cross, "find_pairs_cross: пары и порядок совпадают с прежним обходом (точки вне сетки)");
+    check(ok_par, "parallel-варианты на 1 и 8 потоках: тот же вектор пар, что у прежнего обхода");
+}
+
+// build(exec, ...) должен давать то же внутреннее состояние, что последовательный build(): сравниваем
+// через публичный API -- find_pairs/find_pairs_cross (порядок пар определяется offset_/sorted_idx_/ncell_/
+// origin_) побитово по вектору, при 1/2/7/8 потоках.
+template <std::size_t Dim>
+static void test_parallel_build()
+{
+    std::mt19937 rng(777u + static_cast<unsigned>(Dim));
+    const auto all = [](index_t, index_t) { return true; };
+    std::vector<Cloud<Dim>> clouds;
+    clouds.push_back(random_cloud<Dim>(0, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(1, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(5000, 2.0, rng));
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 8 : 20, 0.25, 0.1));
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 6 : 12, 0.3, -0.731));
+    Cloud<Dim> same_cell = random_cloud<Dim>(300, 0.01, rng); // все точки в одной ячейке при большой cell
+    clouds.push_back(same_cell);
+    const double cells[] = {0.05, 0.25, 0.5, 0.0005, 100.0}; // 0.0005: nc >> n (облако в одной ячейке); 100: nc = 1 << n
+    const int threads[] = {1, 2, 7, 8};
+    bool ok = true;
+    for (const auto& cl : clouds)
+    {
+        for (double cell : cells)
+        {
+            if (cell == 0.0005 && cl.n != 300 && cl.n > 1) continue; // мелкая ячейка -- только для плотного облака
+            SpatialIndex<Dim> ref;
+            ref.build(cl.ptrs(), cl.n, cell);
+            Cloud<Dim> other = random_cloud<Dim>(120, 1.5, rng);
+            for (double rk : {1.0, 2.5})
+            {
+                const double radius = rk * cell;
+                const PairVec expect = ref.find_pairs(radius, all);
+                const PairVec expect_x = ref.find_pairs_cross(other.ptrs(), other.n, radius, all);
+                for (int nt : threads)
+                {
+                    CpuExecutor exec(nt);
+                    SpatialIndex<Dim> idx;
+                    // сначала сборка другого облака -- проверяем переиспользование буферов
+                    idx.build(exec, other.ptrs(), other.n, 0.7);
+                    idx.build(exec, cl.ptrs(), cl.n, cell);
+                    ok = ok && (idx.find_pairs(radius, all) == expect);
+                    ok = ok && (idx.find_pairs_cross(other.ptrs(), other.n, radius, all) == expect_x);
+                }
+            }
+        }
+    }
+    check(ok, "build(exec): тот же индекс (порядок пар find_pairs/cross), что у последовательного build, на 1/2/7/8 потоках");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -279,6 +548,10 @@ int main()
     test_cross_type<3>();
     test_reuse_out<2>();
     test_reuse_out<3>();
+    test_pruned_order<2>();
+    test_pruned_order<3>();
+    test_parallel_build<2>();
+    test_parallel_build<3>();
 
     if (failures == 0)
         std::printf("test_spatial_index: ПРОЙДЕН\n");

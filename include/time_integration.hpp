@@ -11,6 +11,11 @@
 #include "run_guard.hpp"
 #include "fiber/model.hpp"
 
+namespace checkpoint
+{
+struct UserState;
+}
+
 // Вычисление шага по времени из условия Куранта.
 double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal);
 
@@ -38,5 +43,8 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
 // fb/topology/materials (пустые по умолчанию у старой сигнатуры -> вся
 // Fiber-физика no-op). Эквивалентность прежней сигнатуры при пустых нитях
 // проверяет tests/test_fiber_time_integration_equivalence.cpp.
+// user_state (необязательно): состояние вызывающего в блоке USER чекпоинта (include/checkpoint.hpp,
+// checkpoint::UserState): save -- при каждой записи чекпоинта, restore -- после чтения cfg.restart_file.
+// nullptr -- блок пуст, поведение прежнее.
 void time_integration(const SimulationConfig& cfg, fiber::Model& model, size_t ntotal, double& dt, double& time,
-                      double delta_x, RunGuard* guard = nullptr);
+                      double delta_x, RunGuard* guard = nullptr, const checkpoint::UserState* user_state = nullptr);
