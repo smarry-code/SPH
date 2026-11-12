@@ -64,6 +64,7 @@ def main():
     imp = tuple(map(int, a.imp.split("-")))
     runs = sorted(d for d in os.listdir(a.root) if os.path.isfile(os.path.join(a.root, d, "wall_samples.txt")))
     res = {}
+    print("# окна по точкам выборки раз в 10 с: погрешность границ окна ±10 с")
     print(f"{'прогон':10s} {'шагов':>6s} {'wall,с':>8s} {'с/шаг':>8s} {'до конт.':>9s} {'удар':>9s}  окна perf (доли)")
     for r in runs:
         d = os.path.join(a.root, r)

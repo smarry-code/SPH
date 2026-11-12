@@ -45,7 +45,7 @@ def flush():
 for line in sys.stdin:
     if not line.strip():
         flush(); tid, frames = None, []; continue
-    if not line.startswith((" ", "\t")) or re.match(r"^\s*\d+\s*$", line):
+    if not line[0].isspace():  # заголовок образца (tid [время]...) -- без ведущих пробелов; кадры -- с пробелами
         flush(); tid, frames = line.split()[0], []; continue
     m = re.match(r"^\s+[0-9a-f]+\s+(.*?)\s+\((.*)\)\s*$", line)
     if m:
@@ -55,6 +55,9 @@ for line in sys.stdin:
         if m:
             frames.append((m.group(1), ""))
 flush()
+if nmain == 0:
+    print(f"образцов всего {nall}, образцов главного потока (tid {main_tid}) нет -- нечего разбирать")
+    sys.exit(0)
 print(f"образцов всего {nall}, главного потока {nmain}")
 for k, v in tot.most_common():
     print(f"{k}: {v} образцов = {100 * v / nmain:.2f} % главного потока")

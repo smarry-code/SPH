@@ -77,6 +77,13 @@ def samples(path):
     p.wait()
 
 
+MEMFN = re.compile(r"^(__GI_|__)?(mem(cpy|move|set|cmp)|str\w*|wmem\w*)")  # суффиксы ifunc (_evex_/_avx2_/_sse2_...) -- \w*
+
+
+def is_libc(dso):
+    return dso.startswith("libc.") or dso.startswith("libc-")
+
+
 def classify(fr, binary="guo2019_shot"):
     """Регион -- код проекта, вызванный из libgomp (GOMP_parallel у главного потока, gomp_thread_start у рабочих).
     Имя вынесенной функции берётся из кадра проекта сразу над libgomp: при inline-развёртке perf печатает имя
@@ -91,16 +98,19 @@ def classify(fr, binary="guo2019_shot"):
     wait = "libgomp" in top[1]
     if omp is not None:
         return ("par_wait" if wait else "par_work"), omp, top
-    if not wait:
-        # Листовая функция библиотеки без frame pointer (memmove/memset libc): при --call-graph fp кадр её
-        # вызывающего (вынесенной функции региона) теряется, и над libgomp оказывается кадр libc, а не проекта.
-        # Кадр libgomp в стеке при этом есть только внутри параллельного региона (GOMP_parallel у главного
-        # потока, gomp_thread_start у рабочих) -- это работа региона. Имя региона -- первый кадр проекта ниже
-        # libgomp (у главного потока это parallel_for<...>, вызвавший GOMP_parallel), иначе "? (<функция libc>)".
+    if not wait and is_libc(top[1]):
+        # Листовая функция libc без frame pointer: при --call-graph fp кадр её вызывающего (вынесенной функции
+        # региона) теряется, и над libgomp оказывается кадр libc, а не проекта. Это работа региона ТОЛЬКО для
+        # memory/string-процедур (memmove/memset/strlen...); любой другой листовой вызов libc над libgomp
+        # (futex, sched_yield, clock_nanosleep, syscall) -- ожидание внутри libgomp, а не работа.
+        # Имя региона -- первый кадр проекта ниже libgomp (у главного потока это parallel_for<...>,
+        # вызвавший GOMP_parallel), иначе "? (<функция libc>)".
         for i in range(1, len(fr)):
             if "libgomp" in fr[i][1]:
-                below = next((s for s, d in fr[i + 1:] if d == binary), None)
-                return "par_work", below or f"? ({top[0]})", top
+                if MEMFN.match(top[0]):
+                    below = next((s for s, d in fr[i + 1:] if d == binary), None)
+                    return "par_work", below or f"? ({top[0]})", top
+                return "idle_wait", None, top
     return ("idle_wait" if wait else "serial"), None, top
 
 
@@ -120,13 +130,44 @@ def short(sym, n=110):
     return sym if len(sym) <= n else sym[:n] + "…"
 
 
+def _selftest():
+    """Синтетические стеки (верхний кадр первым): классификация без perf."""
+    B, G, C = "guo2019_shot", "libgomp.so.1", "libc.so.6"
+    cases = [
+        ("главный поток: memmove в регионе", [("__memmove_evex_unaligned_erms", C), ("rhs::parallel_for<X>", B),
+                                              ("GOMP_parallel", G), ("rhs::parallel_for<X>", B), ("main", B)], "par_work"),
+        ("рабочий поток: memmove в регионе", [("__memset_avx2_unaligned_erms", C), ("gomp_thread_start", G),
+                                              ("start_thread", C)], "par_work"),
+        ("рабочий поток: syscall над libgomp (ожидание)", [("syscall", C), ("gomp_barrier_wait_end", G),
+                                                           ("gomp_thread_start", G), ("start_thread", C)], "idle_wait"),
+        ("последовательный memmove (нет libgomp)", [("__memmove_avx_unaligned", C), ("step()", B), ("main", B)], "serial"),
+        ("код проекта над libgomp", [("foo()", B), ("foo() [clone ._omp_fn.0]", B), ("GOMP_parallel", G), ("main", B)],
+         "par_work"),
+        ("ожидание libgomp внутри региона", [("gomp_team_barrier_wait_end", G), ("foo._omp_fn.0", B),
+                                             ("GOMP_parallel", G)], "par_wait"),
+    ]
+    bad = 0
+    for name, fr, want in cases:
+        got = classify(fr, B)[0]
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'ОШИБКА'} {name}: {got} (ожидалось {want})")
+    print("selftest:", "пройден" if not bad else f"ошибок {bad}")
+    raise SystemExit(1 if bad else 0)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("perf_data")
+    ap.add_argument("perf_data", nargs="?")
+    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--win", action="append", default=[])
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--binary", default="guo2019_shot")
     a = ap.parse_args()
+    if a.selftest:
+        _selftest()
+    if not a.perf_data:
+        ap.error("нужен perf_data (или --selftest)")
     wins = []
     for w in a.win or ["all:0-1"]:
         name, rng = w.split(":")
@@ -201,7 +242,7 @@ def main():
                   f"par_wait={100 * mt['par_wait'] / mtot:.1f}% idle_wait={100 * mt['idle_wait'] / mtot:.1f}%")
         eff = cls["par_work"] + cls["serial"]
         print(f"полезная работа (par_work+serial) {100 * eff / n:.1f}% от {nt} x время; "
-              f"оценка последовательной доли по главному потоку f_s = {mt['serial'] / max(mtot, 1):.3f}")
+              f"доля последовательных сэмплов главного потока (не f_s по Амдалу) = {mt['serial'] / max(mtot, 1):.3f}")
         print("по потокам: tid  par_work par_wait idle_wait serial")
         for tid in sorted(per_tid):
             c = per_tid[tid]

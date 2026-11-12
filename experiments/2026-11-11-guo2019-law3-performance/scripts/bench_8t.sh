@@ -18,13 +18,17 @@ NEW=${1:?исходники NEW}; BASE=${2:?исходники BASE}; FIB=${3:?f
 mkdir -p "$R" && R=$(cd "$R" && pwd)
 [ "$R" != "/" ] && [ "$R" != "$HOME" ] || { echo "каталог результатов $R недопустим" >&2; exit 2; }
 log() { echo "$(date "+%F %T") $*" >> "$R/driver.log"; }
+FAILS=0  # число ошибок (сборка, rc прогона, отсутствующие файлы сравнений); set -e не используется: цикл прогонов продолжается
 
 # --- сборки ---------------------------------------------------------------------------------------
 build() { # src dir flags...
   local src=$1 dir=$2; shift 2
   cmake -S "$src" -B "$src/$dir" -DCMAKE_BUILD_TYPE=Release "$@" > "$R/cmake_$(basename "$src")_$dir.log" 2>&1 &&
     cmake --build "$src/$dir" -j8 --target guo2019_shot > "$R/build_$(basename "$src")_$dir.log" 2>&1
-  log "сборка $src/$dir rc=$?"
+  local rc=$?
+  log "сборка $src/$dir rc=$rc"
+  # устаревший бинарник использовать нельзя
+  [ "$rc" = 0 ] || { log "ОШИБКА сборки $src/$dir (rc=$rc) -- стоп"; exit 1; }
 }
 build "$NEW" build
 build "$NEW" build-prof "-DCMAKE_CXX_FLAGS=-g -fno-omit-frame-pointer"
@@ -62,8 +66,15 @@ run() {
       taskset -c "$cpus" "$bin" $COMMON ${V[$v]} --threads="$nt" --t-max="$tmax" --out="$d/out" > "$d/stdout.log" 2>&1 &
   fi
   local pid=$!
-  sampler "$d/out/1T_base_v79.0_r0/monitor.csv" $pid "$d/wall_samples.txt" &
+  echo "$s" > "$d/start.txt"  # момент старта (как в prof_compute.sh)
+  local mon=$d/out/1T_base_v79.0_r0/monitor.csv
+  sampler "$mon" $pid "$d/wall_samples.txt" &
+  local spid=$!
   wait $pid; local rc=$?
+  # сэмплер мог спать в sleep: останавливаем его и его sleep, затем добавляем конечную точку
+  pkill -P "$spid" 2>/dev/null; kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
+  [ -f "$mon" ] && echo "$(date +%s.%N) $(tail -1 "$mon" | cut -d, -f1,2)" >> "$d/wall_samples.txt"
+  [ "$rc" = 0 ] || { log "  ОШИБКА: rc=$rc"; FAILS=$((FAILS + 1)); }
   log "  rc=$rc wall=$(echo "$(date +%s.%N) - $s" | bc) $(grep -o 'шагов=[0-9]*, wall=[0-9.]* с ([0-9.]* с/шаг)' "$d/stdout.log" | head -1)"
 }
 
@@ -88,17 +99,20 @@ for name in $ALL; do
 done
 # детерминизм: monitor.csv на 1 и 8 потоках
 for v in H P; do
+  want "$v.t1" && want "$v.t8" || continue  # сравнение только если оба прогона заказаны
   a=$R/$v.t1/out/1T_base_v79.0_r0/monitor.csv; b=$R/$v.t8/out/1T_base_v79.0_r0/monitor.csv
-  [ -f "$a" ] && [ -f "$b" ] || continue
+  [ -f "$a" ] && [ -f "$b" ] || { log "ОШИБКА: нет файла $a или $b (детерминизм $v)"; FAILS=$((FAILS + 1)); continue; }
   cmp -s "$a" "$b" && r=СОВПАДАЕТ || r=ОТЛИЧАЕТСЯ; log "детерминизм $v monitor.csv 1 против 8 потоков: $r"
 done
 # побитовая регрессия против прежнего прогона (OLD_RES)
 if [ -n "${OLD_RES:-}" ]; then
   for name in $RUNS; do
+    [ "${name%%.*}" = Pb ] && [ "$BASE" = - ] && continue
     a=$OLD_RES/$name/out/1T_base_v79.0_r0/monitor.csv; b=$R/$name/out/1T_base_v79.0_r0/monitor.csv
-    [ -f "$a" ] && [ -f "$b" ] || continue
+    [ -f "$a" ] && [ -f "$b" ] || { log "ОШИБКА: нет файла $a или $b (регрессия $name)"; FAILS=$((FAILS + 1)); continue; }
     cmp -s "$a" "$b" && r=СОВПАДАЕТ || r="ОТЛИЧАЕТСЯ ($(cmp "$a" "$b" | grep -o "line [0-9]*"))"
     log "регрессия $name monitor.csv против $OLD_RES: $r"
   done
 fi
-log "DONE"
+log "DONE (ошибок: $FAILS)"
+[ "$FAILS" = 0 ] || exit 1

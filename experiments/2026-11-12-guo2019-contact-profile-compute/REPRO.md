@@ -36,9 +36,13 @@ cd ~/SPH_c3cnt && git apply 01-prof-counts.patch   # или patch -p1 < 01-prof-
 ```bash
 # ткань -- копия ~/late/twaron_s25_dmg0.00415.fib с 8t; эталон 8t -- monitor.csv H.t1 и P.t1 из ~/c3opt_bench/res
 REF8T=~/c3prof/ref8t bash scripts/prof_compute.sh ~/SPH_c3opt ~/SPH_c3cnt ~/c3prof/twaron_s25_dmg0.00415.fib ~/c3prof/res
-bash scripts/analyze.sh ~/c3prof/res <каталог с bench_tables.py, perf_threads.py, counts_summary.py> ~/c3prof/an
-# вызывающие функций libc в dwarf-профиле, главный поток (tid -- из perf_threads / первой строки perf script)
-perf script -i ~/c3prof/res/P.dwarf2/perf.data -F tid,ip,sym,dso | python3 scripts/libc_callers.py <tid> > results/P.dwarf2.libc_callers.txt
+# bench_tables.py и perf_threads.py берутся из ../2026-11-11-guo2019-law3-performance/scripts (или из $COMMON_SCRIPTS);
+# counts_summary.py и libc_callers.py -- из каталога analyze.sh. Вызывающие libc в dwarf-профиле (главный tid --
+# поток с наибольшим числом образцов) analyze.sh выполняет сам: <вывод>/P.dwarf2.libc_callers.txt
+bash scripts/analyze.sh ~/c3prof/res ~/c3prof/an
+# то же вручную:
+T=$(perf script -i ~/c3prof/res/P.dwarf2/perf.data -F tid | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+perf script -i ~/c3prof/res/P.dwarf2/perf.data -F tid,ip,sym,dso | python3 scripts/libc_callers.py "$T" > results/P.dwarf2.libc_callers.txt
 # повторный разбор профиля P.prof8 с 8t (отчёт 2026-11-11) исправленным perf_threads.py
 python3 ../2026-11-11-guo2019-law3-performance/scripts/perf_threads.py P.prof8/perf.data --win pre:0.01-0.25 --win imp:0.35-1.0 --top 30 > results/P.prof8_8t.threads.txt
 ```

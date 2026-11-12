@@ -40,6 +40,7 @@ sampler() { while kill -0 "$2" 2>/dev/null; do
 # секунды от старта прогона до шага $2 по wall_samples.txt прогона $1 (линейная интерполяция)
 time_to_step() {
   awk -v st="$2" -v t0="$(cat "$1/start.txt")" '{ split($2, a, ","); s = a[1] + 0; t = $1 + 0;
+    if (NR == 1 && s >= st) { print t - t0; exit }  # первый же сэмпл уже за целевым шагом
     if (s >= st && ps < st && s > ps) { print t0 == "" ? 0 : (pt + (t - pt) * (st - ps) / (s - ps)) - t0; exit }
     pt = t; ps = s }' "$1/wall_samples.txt"
 }
@@ -79,7 +80,10 @@ for name in $ALL; do
     prof1) [ "$v" = H ] && tm=2.5e-5 || tm=4e-5; run "$name" "$v" 1 "$tm" fp:999 ;;
     prof2) run "$name" "$v" 2 4e-5 fp:499 ;;
     dwarf2)
-      dsec=$(time_to_step "$R/P.t2" 1700 2>/dev/null); [ -n "$dsec" ] || dsec=60
+      [ -s "$R/P.t2/wall_samples.txt" ] && [ -f "$R/P.t2/start.txt" ] ||
+        { log "ОШИБКА: нет P.t2 для задержки dwarf2"; continue; }
+      dsec=$(time_to_step "$R/P.t2" 1700 2>/dev/null)
+      [ -n "$dsec" ] || { log "ОШИБКА: нет P.t2 для задержки dwarf2 (шаг 1700 не достигнут)"; continue; }
       dms=$(printf "%.0f" "$(echo "$dsec * 1000" | bc)")
       log "  задержка записи dwarf2: $dms мс (шаг 1700 по P.t2)"
       run "$name" "$v" 2 4e-5 "dwarf:100:$dms" ;;

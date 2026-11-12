@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # Разбор результатов prof_compute.sh: таблицы времени, профили по потокам и окнам, вызывающие memmove/memset
 # (dwarf), сводка счётчиков. Всё строго последовательно, после окончания прогонов.
-# Запуск: bash analyze.sh <каталог результатов> <каталог скриптов> <каталог вывода>
+# Запуск: bash analyze.sh <каталог результатов> <каталог вывода>
+#   bench_tables.py и perf_threads.py берутся из $COMMON_SCRIPTS (по умолчанию
+#   ../../2026-11-11-guo2019-law3-performance/scripts относительно этого скрипта), counts_summary.py и
+#   libc_callers.py -- из каталога самого analyze.sh.
+#   Совместимость: с тремя аргументами <результаты> <каталог общих скриптов> <вывод> второй -- COMMON.
 set -u
-R=${1:?результаты}; S=${2:?скрипты}; O=${3:?вывод}; mkdir -p "$O"
+HERE=$(cd "$(dirname "$0")" && pwd)
+COMMON=${COMMON_SCRIPTS:-$HERE/../../2026-11-11-guo2019-law3-performance/scripts}
+if [ $# -ge 3 ]; then R=${1:?результаты}; COMMON=${2:?скрипты}; O=${3:?вывод}; else R=${1:?результаты}; O=${2:?вывод}; fi
+S=$COMMON
+[ -f "$S/bench_tables.py" ] && [ -f "$S/perf_threads.py" ] || { echo "нет bench_tables.py/perf_threads.py в $S" >&2; exit 2; }
+mkdir -p "$O"
 log() { echo "$(date "+%F %T") $*" >> "$O/analyze.log"; }
 log "старт"
 python3 "$S/bench_tables.py" "$R" > "$O/bench_tables.txt" 2>&1
@@ -33,8 +42,16 @@ if [ -f "$R/P.dwarf2/perf.data" ]; then
   perf report -i "$P" --no-children --stdio --sort tid,sym -g none --percent-limit 0.3 > "$O/P.dwarf2.by_tid.txt" 2>/dev/null
   python3 "$S/perf_threads.py" "$P" --top 45 > "$O/P.dwarf2.threads.txt" 2>&1
   log "perf_threads dwarf rc=$?"
+  # главный поток -- с наибольшим числом образцов
+  mtid=$(perf script -i "$P" -F tid 2>/dev/null | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+  if [ -n "$mtid" ]; then
+    perf script -i "$P" -F tid,ip,sym,dso 2>/dev/null | python3 "$HERE/libc_callers.py" "$mtid" > "$O/P.dwarf2.libc_callers.txt" 2>&1
+    log "libc_callers (tid $mtid) rc=$?"
+  else
+    log "ОШИБКА: не определён главный tid dwarf-профиля"
+  fi
 fi
-python3 "$S/counts_summary.py" "$R"/P.cnt/counts.csv "$R"/H.cnt/counts.csv > "$O/counts_summary.txt" 2>&1
+python3 "$HERE/counts_summary.py" "$R"/P.cnt/counts.csv "$R"/H.cnt/counts.csv > "$O/counts_summary.txt" 2>&1
 log "счётчики rc=$?"
 cp "$R/driver.log" "$O/driver.log"
 log "DONE"
