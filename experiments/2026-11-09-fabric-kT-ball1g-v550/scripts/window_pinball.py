@@ -197,6 +197,18 @@ def fix_monitor_steps(header, rows):
     return n
 
 
+def _pad_to(header, h_part, rows, path):
+    """Строки части монитора под заголовок итогового monitor.csv. Часть, записанная прежней сборкой без колонок
+    модулей реакций зажимов (добавлены в конец строки 2026-11-11), дополняется значениями nan; любое другое
+    расхождение заголовков -- ошибка (склейка по номерам колонок дала бы неверный монитор)."""
+    if h_part is None or h_part == header:
+        return rows
+    if len(h_part) < len(header) and header[:len(h_part)] == h_part:
+        tail = ["nan"] * (len(header) - len(h_part))
+        return [r + tail for r in rows]
+    raise RuntimeError("%s: заголовок монитора не совпадает с итоговым и не является его началом" % path)
+
+
 def _write_csv(path, header, rows):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="") as f:
@@ -229,7 +241,7 @@ def splice_shot(sdir):
             continue
         k = max(k, len(parts))
         header, last = _read_csv(m)
-        rows = splice_rows(header, [_read_csv(q)[1] for q in parts] + [last], "t")
+        rows = splice_rows(header, [_pad_to(header, *_read_csv(q), q) for q in parts] + [last], "t")
         gaps = splice_rows.gaps
         fix_monitor_steps(header, rows)
         _write_csv(m, header, rows)

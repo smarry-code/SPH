@@ -554,10 +554,11 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         if (has_clamps)
         {
             interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, solver.solid_rhs.dvx,
-                                                 &solver.solid_rhs.av, clamp_ws, clamp_solid_force);
+                                                 &solver.solid_rhs.av, clamp_ws, clamp_solid_force,
+                                                 &clamp_ws.acc_solid, /*acc_add=*/false);
             interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
                                                  static_cast<std::vector<std::vector<double>>*>(nullptr), clamp_ws,
-                                                 clamp_fiber_force);
+                                                 clamp_fiber_force, &clamp_ws.acc_fiber, /*acc_add=*/false);
 #ifdef SPH_ENERGY_LOG
             // Ускорение контакта в зажатых компонентах тоже обнуляется -- иначе
             // в канале контакта появилась бы работа неподвижной опоры.
@@ -649,10 +650,12 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             {
                 interactions::apply_clamp_projection(fiber_exec, clamp_ws.solid, sys.mass, solver.solid_rhs.dvx,
                                                      static_cast<std::vector<std::vector<double>>*>(nullptr),
-                                                     clamp_ws, clamp_solid_force);
+                                                     clamp_ws, clamp_solid_force, &clamp_ws.acc_solid,
+                                                     /*acc_add=*/true);
                 interactions::apply_clamp_projection(fiber_exec, clamp_ws.fiber, fb.mass, solver.fiber_rhs.dv,
                                                      static_cast<std::vector<std::vector<double>>*>(nullptr),
-                                                     clamp_ws, clamp_fiber_force);
+                                                     clamp_ws, clamp_fiber_force, &clamp_ws.acc_fiber,
+                                                     /*acc_add=*/true);
             }
 #ifdef SPH_ENERGY_LOG
             if (elog)
@@ -676,6 +679,11 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 clamp_report->solid_force[d] = clamp_solid_force[d];
                 clamp_report->fiber_force[d] = clamp_fiber_force[d];
             }
+            // Сумма модулей и максимум полной реакции частиц ([1] + [3]); диагностика, на счёт не влияет.
+            interactions::clamp_abs_summary(fiber_exec, clamp_ws.acc_solid, clamp_ws.solid.size(), clamp_ws,
+                                            clamp_report->solid_force_abs, clamp_report->solid_force_max);
+            interactions::clamp_abs_summary(fiber_exec, clamp_ws.acc_fiber, clamp_ws.fiber.size(), clamp_ws,
+                                            clamp_report->fiber_force_abs, clamp_report->fiber_force_max);
         }
 
 #ifdef SPH_ENERGY_LOG

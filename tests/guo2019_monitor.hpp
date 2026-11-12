@@ -258,6 +258,9 @@ public:
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",n_broken_h_p%d", k);
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",w_f_p%d", k);
                 }
+                // Модули реакций зажимов (решение владельца 2026-11-11), в конце строки -- номера прежних
+                // колонок не сдвигаются: |sum F| векторной суммы, sum |F_k| и max |F_k| по зажатым частицам.
+                std::fprintf(csv_, ",Fs_norm,Fs_abs_sum,Fs_abs_max,Ff_norm,Ff_abs_sum,Ff_abs_max");
                 std::fprintf(csv_, "\n");
             }
         }
@@ -315,6 +318,12 @@ public:
             r.Fs[d] = m_.clamp_report.solid_force[d];
             r.Ff[d] = m_.clamp_report.fiber_force[d];
         }
+        r.Fs_norm = std::sqrt(r.Fs[0] * r.Fs[0] + r.Fs[1] * r.Fs[1] + r.Fs[2] * r.Fs[2]);
+        r.Ff_norm = std::sqrt(r.Ff[0] * r.Ff[0] + r.Ff[1] * r.Ff[1] + r.Ff[2] * r.Ff[2]);
+        r.Fs_abs_sum = m_.clamp_report.solid_force_abs;
+        r.Fs_abs_max = m_.clamp_report.solid_force_max;
+        r.Ff_abs_sum = m_.clamp_report.fiber_force_abs;
+        r.Ff_abs_max = m_.clamp_report.fiber_force_max;
         if (std::fabs(r.Fs[2]) > std::fabs(st_.F_s_z_max))
         {
             st_.F_s_z_max = r.Fs[2];
@@ -611,6 +620,8 @@ private:
         double t = 0.0, dt = 0.0, z_c = 0.0, v_z = 0.0;
         double KE_s = 0.0, KE_p = 0.0, KE_f = 0.0, U_b = 0.0, U_int = 0.0, E_tot = 0.0;
         double Fs[3] = {}, Ff[3] = {};
+        double Fs_norm = 0.0, Fs_abs_sum = 0.0, Fs_abs_max = 0.0; // модули реакции пластины, Н
+        double Ff_norm = 0.0, Ff_abs_sum = 0.0, Ff_abs_max = 0.0; // модули реакции ткани, Н
         std::size_t n_bonds = 0, n_broken_v = 0, n_broken_h = 0;
         double w_f = 0.0, w_p = 0.0;
         std::vector<std::size_t> pv, ph; // по слоям (только при n_plies >= 2)
@@ -1037,15 +1048,15 @@ private:
         std::fprintf(csv_,
                      "%zu,%.12e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%zu,%zu,%zu,%.9e,%.9e%s",
                      r.step, r.t, r.dt, r.z_c, r.v_z, r.KE_s, r.KE_p, r.KE_f, r.U_b, r.U_int, r.E_tot, r.Fs[0], r.Fs[1],
-                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p,
-                     nply_ >= 2 ? "" : "\n");
+                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p, "");
         if (nply_ >= 2)
         {
             for (std::size_t k = 0; k < r.pv.size(); ++k) std::fprintf(csv_, ",%zu", r.pv[k]);
             for (std::size_t k = 0; k < r.ph.size(); ++k) std::fprintf(csv_, ",%zu", r.ph[k]);
             for (std::size_t k = 0; k < r.wp.size(); ++k) std::fprintf(csv_, ",%.9e", r.wp[k]);
-            std::fprintf(csv_, "\n");
         }
+        std::fprintf(csv_, ",%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n", r.Fs_norm, r.Fs_abs_sum, r.Fs_abs_max, r.Ff_norm,
+                     r.Ff_abs_sum, r.Ff_abs_max);
     }
 
     const GuoScene& sc_;
