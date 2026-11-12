@@ -30,6 +30,9 @@ def region_key(sym):
             seen.append(o)
     if seen:
         return " > ".join(seen)
+    m = re.search(r"parallel_\w+<([A-Za-z_][\w:]*)", sym)  # parallel_for<rhs::CpuExecutor::concat_segments<...
+    if m:
+        return m.group(1).split("::")[-1] + " [libc]"
     m = re.search(r"parallel_\w+", sym)
     return (m.group(0) if m else sym[:60]) + " [?]"
 
@@ -88,6 +91,16 @@ def classify(fr, binary="guo2019_shot"):
     wait = "libgomp" in top[1]
     if omp is not None:
         return ("par_wait" if wait else "par_work"), omp, top
+    if not wait:
+        # Листовая функция библиотеки без frame pointer (memmove/memset libc): при --call-graph fp кадр её
+        # вызывающего (вынесенной функции региона) теряется, и над libgomp оказывается кадр libc, а не проекта.
+        # Кадр libgomp в стеке при этом есть только внутри параллельного региона (GOMP_parallel у главного
+        # потока, gomp_thread_start у рабочих) -- это работа региона. Имя региона -- первый кадр проекта ниже
+        # libgomp (у главного потока это parallel_for<...>, вызвавший GOMP_parallel), иначе "? (<функция libc>)".
+        for i in range(1, len(fr)):
+            if "libgomp" in fr[i][1]:
+                below = next((s for s, d in fr[i + 1:] if d == binary), None)
+                return "par_work", below or f"? ({top[0]})", top
     return ("idle_wait" if wait else "serial"), None, top
 
 

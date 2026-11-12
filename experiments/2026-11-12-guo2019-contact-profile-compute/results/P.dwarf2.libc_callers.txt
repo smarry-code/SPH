@@ -1,0 +1,22 @@
+образцов всего 37096, главного потока 18671
+__memmove: 530 образцов = 2.84 % главного потока
+__memset: 140 образцов = 0.75 % главного потока
+_int_free_chunk: 1 образцов = 0.01 % главного потока
+__strchrnul_ifunc@plt: 1 образцов = 0.01 % главного потока
+
+вызывающие (доля образцов главного потока):
+   2.58 %  __memmove  регион rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive operator < parallel_for < GOMP_parallel
+   0.31 %  __memset   регион rhs::reduce_segments_into<fiber::FiberDelta                     operator < parallel_for < GOMP_parallel
+   0.27 %  __memset   регион rhs::reduce_segments_into<interactions::NormalDelta             operator < parallel_for < GOMP_parallel
+   0.19 %  __memmove  вне региона                                                            build < build_fiber_contact_search < run_time_integration
+   0.09 %  __memset   регион rhs::reduce_segments_into<interactions::SolidDelta              operator < parallel_for < GOMP_parallel
+   0.05 %  __memmove  вне региона                                                            operator < parallel_for < concat_segments
+   0.04 %  __memset   вне региона                                                            compute_friction_counts < run_time_integration < time_integration
+   0.03 %  __memset   регион rhs::reduce_segments_into<interactions::FiberCountDelta         operator < parallel_for < GOMP_parallel
+   0.01 %  __memmove  вне региона                                                            build < build_solid_sph_search < single_step
+   0.01 %  __memset   вне региона                                                            reduce_segments_into < reduce_contributions_into < operator
+   0.01 %  _int_free_chunk вне региона                                                            deallocate < ~_Vector_base < ~vector
+   0.01 %  __memset   вне региона                                                            compute_solid_derived < single_step < run_time_integration
+   0.01 %  __memmove  вне региона                                                            build < build_fiber_solid_contact_search < compute_fiber_solid_contact
+   0.01 %  __strchrnul_ifunc@plt вне региона                                                            [unknown] < ostreambuf_iterator < operator
+   0.01 %  __memmove  регион rhs::CpuExecutor::concat_segments<interactions::FiberNormalContact operator < parallel_for < GOMP_parallel
