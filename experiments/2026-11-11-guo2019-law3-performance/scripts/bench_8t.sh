@@ -102,7 +102,7 @@ for v in H P; do
   want "$v.t1" && want "$v.t8" || continue  # сравнение только если оба прогона заказаны
   a=$R/$v.t1/out/1T_base_v79.0_r0/monitor.csv; b=$R/$v.t8/out/1T_base_v79.0_r0/monitor.csv
   [ -f "$a" ] && [ -f "$b" ] || { log "ОШИБКА: нет файла $a или $b (детерминизм $v)"; FAILS=$((FAILS + 1)); continue; }
-  cmp -s "$a" "$b" && r=СОВПАДАЕТ || r=ОТЛИЧАЕТСЯ; log "детерминизм $v monitor.csv 1 против 8 потоков: $r"
+  cmp -s "$a" "$b" && r=СОВПАДАЕТ || { r=ОТЛИЧАЕТСЯ; FAILS=$((FAILS + 1)); }; log "детерминизм $v monitor.csv 1 против 8 потоков: $r"
 done
 # побитовая регрессия против прежнего прогона (OLD_RES)
 if [ -n "${OLD_RES:-}" ]; then
@@ -110,7 +110,7 @@ if [ -n "${OLD_RES:-}" ]; then
     [ "${name%%.*}" = Pb ] && [ "$BASE" = - ] && continue
     a=$OLD_RES/$name/out/1T_base_v79.0_r0/monitor.csv; b=$R/$name/out/1T_base_v79.0_r0/monitor.csv
     [ -f "$a" ] && [ -f "$b" ] || { log "ОШИБКА: нет файла $a или $b (регрессия $name)"; FAILS=$((FAILS + 1)); continue; }
-    cmp -s "$a" "$b" && r=СОВПАДАЕТ || r="ОТЛИЧАЕТСЯ ($(cmp "$a" "$b" | grep -o "line [0-9]*"))"
+    cmp -s "$a" "$b" && r=СОВПАДАЕТ || { r="ОТЛИЧАЕТСЯ ($(cmp "$a" "$b" | grep -o "line [0-9]*"))"; FAILS=$((FAILS + 1)); }
     log "регрессия $name monitor.csv против $OLD_RES: $r"
   done
 fi
