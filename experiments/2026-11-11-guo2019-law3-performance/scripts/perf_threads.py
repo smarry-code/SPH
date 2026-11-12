@@ -163,6 +163,9 @@ def main():
     ap.add_argument("--win", action="append", default=[])
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--binary", default="guo2019_shot")
+    ap.add_argument("--freq", type=float, default=None,
+                    help="частота perf record -F; с ней доли считаются от ёмкости потоки x F x длительность окна")
+    ap.add_argument("--threads", type=int, default=None, help="число потоков OpenMP (по умолчанию -- число tid в окне)")
     a = ap.parse_args()
     if a.selftest:
         _selftest()
@@ -241,8 +244,17 @@ def main():
             print(f"главный поток: serial={100 * mt['serial'] / mtot:.1f}% par_work={100 * mt['par_work'] / mtot:.1f}% "
                   f"par_wait={100 * mt['par_wait'] / mtot:.1f}% idle_wait={100 * mt['idle_wait'] / mtot:.1f}%")
         eff = cls["par_work"] + cls["serial"]
-        print(f"полезная работа (par_work+serial) {100 * eff / n:.1f}% от {nt} x время; "
+        # perf пишет сэмплы только потоку на CPU: спящий в futex поток сэмплов не даёт,
+        # поэтому доли от n -- доли потреблённого CPU-времени, а не от потоки x время.
+        print(f"полезная работа (par_work+serial) {100 * eff / n:.1f}% потреблённого CPU-времени окна; "
               f"доля последовательных сэмплов главного потока (не f_s по Амдалу) = {mt['serial'] / max(mtot, 1):.3f}")
+        if a.freq:
+            nth = a.threads or nt
+            dur = w["a1"] - w["a0"]
+            cap = nth * a.freq * dur
+            print(f"ёмкость {nth} x {a.freq:g} Гц x {dur:.1f} с = {cap:.0f} сэмплов: на CPU {100 * n / cap:.1f}%, "
+                  f"полезная работа {100 * eff / cap:.1f}%, вне CPU (сон) ~{100 * max(cap - n, 0) / cap:.1f}%; "
+                  f"главный поток на CPU {100 * mtot / (a.freq * dur):.1f}%, из них serial {100 * mt['serial'] / (a.freq * dur):.1f}% окна")
         print("по потокам: tid  par_work par_wait idle_wait serial")
         for tid in sorted(per_tid):
             c = per_tid[tid]
