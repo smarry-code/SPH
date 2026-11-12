@@ -486,6 +486,55 @@ static void test_pruned_order()
     check(ok_par, "parallel-варианты на 1 и 8 потоках: тот же вектор пар, что у прежнего обхода");
 }
 
+// build(exec, ...) должен давать то же внутреннее состояние, что последовательный build(): сравниваем
+// через публичный API -- find_pairs/find_pairs_cross (порядок пар определяется offset_/sorted_idx_/ncell_/
+// origin_) побитово по вектору, при 1/2/7/8 потоках.
+template <std::size_t Dim>
+static void test_parallel_build()
+{
+    std::mt19937 rng(777u + static_cast<unsigned>(Dim));
+    const auto all = [](index_t, index_t) { return true; };
+    std::vector<Cloud<Dim>> clouds;
+    clouds.push_back(random_cloud<Dim>(0, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(1, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng));
+    clouds.push_back(random_cloud<Dim>(5000, 2.0, rng));
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 8 : 20, 0.25, 0.1));
+    clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 6 : 12, 0.3, -0.731));
+    Cloud<Dim> same_cell = random_cloud<Dim>(300, 0.01, rng); // все точки в одной ячейке при большой cell
+    clouds.push_back(same_cell);
+    const double cells[] = {0.05, 0.25, 0.5, 0.0005, 100.0}; // 0.0005: nc >> n (облако в одной ячейке); 100: nc = 1 << n
+    const int threads[] = {1, 2, 7, 8};
+    bool ok = true;
+    for (const auto& cl : clouds)
+    {
+        for (double cell : cells)
+        {
+            if (cell == 0.0005 && cl.n != 300 && cl.n > 1) continue; // мелкая ячейка -- только для плотного облака
+            SpatialIndex<Dim> ref;
+            ref.build(cl.ptrs(), cl.n, cell);
+            Cloud<Dim> other = random_cloud<Dim>(120, 1.5, rng);
+            for (double rk : {1.0, 2.5})
+            {
+                const double radius = rk * cell;
+                const PairVec expect = ref.find_pairs(radius, all);
+                const PairVec expect_x = ref.find_pairs_cross(other.ptrs(), other.n, radius, all);
+                for (int nt : threads)
+                {
+                    CpuExecutor exec(nt);
+                    SpatialIndex<Dim> idx;
+                    // сначала сборка другого облака -- проверяем переиспользование буферов
+                    idx.build(exec, other.ptrs(), other.n, 0.7);
+                    idx.build(exec, cl.ptrs(), cl.n, cell);
+                    ok = ok && (idx.find_pairs(radius, all) == expect);
+                    ok = ok && (idx.find_pairs_cross(other.ptrs(), other.n, radius, all) == expect_x);
+                }
+            }
+        }
+    }
+    check(ok, "build(exec): тот же индекс (порядок пар find_pairs/cross), что у последовательного build, на 1/2/7/8 потоках");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -501,6 +550,8 @@ int main()
     test_reuse_out<3>();
     test_pruned_order<2>();
     test_pruned_order<3>();
+    test_parallel_build<2>();
+    test_parallel_build<3>();
 
     if (failures == 0)
         std::printf("test_spatial_index: ПРОЙДЕН\n");

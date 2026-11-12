@@ -864,17 +864,22 @@ private:
 // сумма -- детерминированно). Два вида заполняются НЕЗАВИСИМО (_ff / _fs): если
 // проекция включена только для одного вида, слоты трения другого вида (их
 // заполняет ядро нормальной силы) не трогаются.
+// active_out (необязательный): список записанных слотов по возрастанию prim с номером отрезка seg
+// нормального слота (режим списка слотов трения, см. FrictionActiveRef); очищается при любом вызове,
+// включая пустой normal. Это тот же вектор, который ядро контакта сбросит в начале следующего шага.
 // ----------------------------------------------------------------------
 inline bool fill_friction_slots_from_normal_ff(const rhs::CpuExecutor& exec, double h,
                                                 const std::vector<FiberNormalContact>& ff_normal,
-                                                std::vector<FiberFrictionContact>& ff_friction)
+                                                std::vector<FiberFrictionContact>& ff_friction,
+                                                std::vector<FrictionActiveRef>* active_out = nullptr)
 {
     const std::size_t m = ff_normal.size();
+    if (active_out) active_out->clear();
     if (m == 0) return false;
     std::size_t need = 0;
     for (const FiberNormalContact& c : ff_normal) need = std::max(need, c.prim + 1);
     if (ff_friction.size() < need) ff_friction.resize(need);
-    return exec.parallel_reduce(
+    const bool any = exec.parallel_reduce(
                m, std::size_t(0),
                [&](std::size_t j) -> std::size_t {
                    const FiberNormalContact& c = ff_normal[j];
@@ -894,18 +899,24 @@ inline bool fill_friction_slots_from_normal_ff(const rhs::CpuExecutor& exec, dou
                    return 1u;
                },
                [](std::size_t a, std::size_t b) { return a + b; }) > 0;
+    if (active_out)
+        for (const FiberNormalContact& c : ff_normal) // нормальные слоты -- по возрастанию prim, seg не убывает
+            if (c.active && c.P > 0.0 && c.mu > 0.0) active_out->push_back(FrictionActiveRef{c.prim, c.seg});
+    return any;
 }
 
 inline bool fill_friction_slots_from_normal_fs(const rhs::CpuExecutor& exec, double h,
                                                 const std::vector<FiberSolidNormalContact>& fs_normal,
-                                                std::vector<FiberSolidFrictionContact>& fs_friction)
+                                                std::vector<FiberSolidFrictionContact>& fs_friction,
+                                                std::vector<FrictionActiveRef>* active_out = nullptr)
 {
     const std::size_t m = fs_normal.size();
+    if (active_out) active_out->clear();
     if (m == 0) return false;
     std::size_t need = 0;
     for (const FiberSolidNormalContact& c : fs_normal) need = std::max(need, c.prim + 1);
     if (fs_friction.size() < need) fs_friction.resize(need);
-    return exec.parallel_reduce(
+    const bool any = exec.parallel_reduce(
                m, std::size_t(0),
                [&](std::size_t j) -> std::size_t {
                    const FiberSolidNormalContact& c = fs_normal[j];
@@ -923,6 +934,10 @@ inline bool fill_friction_slots_from_normal_fs(const rhs::CpuExecutor& exec, dou
                    return 1u;
                },
                [](std::size_t a, std::size_t b) { return a + b; }) > 0;
+    if (active_out)
+        for (const FiberSolidNormalContact& c : fs_normal) // по возрастанию prim, seg не убывает
+            if (c.active && c.P > 0.0 && c.mu > 0.0) active_out->push_back(FrictionActiveRef{c.prim, c.seg});
+    return any;
 }
 
 // Оба вида сразу.

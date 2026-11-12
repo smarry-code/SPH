@@ -11,6 +11,7 @@
 // возможны счётчик аварий, статус шага, адаптивное уменьшение dt (полная
 // схема — отдельная задача Приоритета 1).
 #include "particle_system.hpp"
+#include "rhs/cpu_executor.hpp"
 #include <cmath>
 #include <iostream>
 #include <string>
@@ -40,5 +41,23 @@ struct Diagnostics
             bad("hsml", sys.hsml[i]);
         }
         return ok;
+    }
+
+    // То же с исполнителем: параллельная проверка "есть ли не конечное значение" (булево ИЛИ -- точно при любом
+    // порядке); сообщения печатает прежний последовательный проход, только если нарушение найдено.
+    static bool validate(const rhs::CpuExecutor& exec, const ParticleSystem& sys, size_t ntotal,
+                         const std::string& stage)
+    {
+        const int any_bad = exec.parallel_reduce(
+            ntotal, 0,
+            [&](size_t i) {
+                return (!std::isfinite(sys.p[i]) || !std::isfinite(sys.rho[i]) || !std::isfinite(sys.c[i]) ||
+                        !std::isfinite(sys.u[i]) || !std::isfinite(sys.hsml[i]))
+                           ? 1
+                           : 0;
+            },
+            [](int a, int b) { return a | b; });
+        if (!any_bad) return true;
+        return validate(sys, ntotal, stage);
     }
 };

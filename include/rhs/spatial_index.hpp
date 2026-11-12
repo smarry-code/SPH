@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -106,6 +107,95 @@ public:
         }
     }
 
+    // Параллельная сборка: то же внутреннее состояние (coord_, origin_, ncell_, eps_box_, count_, offset_,
+    // sorted_idx_), что у последовательного build(), побитово и при любом числе потоков. Частицы внутри ячейки
+    // остаются в строго возрастающем порядке индекса: сегменты счётчиков -- смежные диапазоны индексов по
+    // возрастанию, курсор сегмента s в ячейке c = offset_[c] + число частиц ячейки c в сегментах s' < s.
+    // Границы bbox -- min/max с той же затравкой coord[0], что у последовательного build (точно при любой раздаче).
+    void build(const CpuExecutor& exec, Coords coords, std::size_t n, double cell_size)
+    {
+        if (n == 0)
+        {
+            build(coords, n, cell_size);
+            return;
+        }
+        n_ = n;
+        cell_size_ = (cell_size > 0.0) ? cell_size : 1.0;
+
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            coord_[d].resize(n_);
+            const double* src = coords[d];
+            double* dst = coord_[d].data();
+            exec.parallel_for(n_, [&](std::size_t i) { dst[i] = src[i]; });
+        }
+
+        std::array<double, Dim> lo{}, hi{};
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            const double* c = coord_[d].data();
+            // Затравка -- coord[0], как у последовательного build: parallel_reduce сворачивает combine(acc, x),
+            // std::min/max идемпотентны, поэтому результат совпадает и при NaN в координатах.
+            lo[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
+                                         [](double a, double b) { return std::min(a, b); });
+            hi[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
+                                         [](double a, double b) { return std::max(a, b); });
+            origin_[d] = lo[d];
+            int nc_d = static_cast<int>(std::ceil((hi[d] - lo[d]) / cell_size_)) + 1;
+            ncell_[d] = std::max(nc_d, 1);
+        }
+        double scale = 0.0;
+        for (std::size_t d = 0; d < Dim; ++d)
+            scale = std::max(scale, std::fabs(origin_[d]) + static_cast<double>(ncell_[d]) * cell_size_);
+        eps_box_ = 1e-9 * cell_size_ + 1e-12 * scale;
+
+        const std::size_t nc = total_cells();
+        count_.assign(nc, 0);
+        offset_.assign(nc + 1, 0);
+        sorted_idx_.resize(n_);
+
+        // Ячейка каждой частицы -- одно вычисление на частицу.
+        cell_idx_.resize(n_);
+        exec.parallel_for(n_, [&](std::size_t i) { cell_idx_[i] = cell_of(i); });
+
+        const std::size_t want = std::max<std::size_t>(1, 4 * n_ / std::max<std::size_t>(nc, 1));
+        const std::size_t S = std::min<std::size_t>({static_cast<std::size_t>(std::max(exec.num_workers(), 1)),
+                                                     CpuExecutor::kDetSegments, want});
+        if (S <= 1)
+        {
+            for (std::size_t i = 0; i < n_; ++i) count_[cell_idx_[i]]++;
+            for (std::size_t c = 0; c < nc; ++c) offset_[c + 1] = offset_[c] + count_[c];
+            cursor_.assign(offset_.begin(), offset_.begin() + static_cast<std::ptrdiff_t>(nc));
+            for (std::size_t i = 0; i < n_; ++i) sorted_idx_[cursor_[cell_idx_[i]]++] = i;
+            return;
+        }
+
+        segcnt_.assign(S * nc, 0);
+        exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
+            std::size_t* row = segcnt_.data() + sg * nc;
+            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            for (std::size_t i = b; i < e; ++i) row[cell_idx_[i]]++;
+        });
+        // Смещения ячеек и стартовые курсоры сегментов (O(S*nc) <= 4n по выбору S).
+        for (std::size_t c = 0; c < nc; ++c)
+        {
+            std::size_t run = offset_[c];
+            for (std::size_t sg = 0; sg < S; ++sg)
+            {
+                const std::size_t cnt = segcnt_[sg * nc + c];
+                segcnt_[sg * nc + c] = run;
+                run += cnt;
+            }
+            count_[c] = run - offset_[c];
+            offset_[c + 1] = run;
+        }
+        exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
+            std::size_t* cur = segcnt_.data() + sg * nc;
+            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            for (std::size_t i = b; i < e; ++i) sorted_idx_[cur[cell_idx_[i]]++] = i;
+        });
+    }
+
     std::size_t size() const { return n_; }
     double cell_size() const { return cell_size_; }
 
@@ -201,6 +291,8 @@ private:
     // вызовами, только растёт (индекс живёт между шагами).
     std::vector<std::size_t> count_;
     std::vector<std::size_t> cursor_;
+    std::vector<std::size_t> cell_idx_; // кэш cell_of(i) параллельной сборки
+    std::vector<std::size_t> segcnt_;   // счётчики/курсоры сегментов параллельной сборки (S*nc)
     // alignas(64): заголовок вектора каждого потока -- в своей кэш-линии (false sharing).
     struct alignas(64) LocalPairs { std::vector<std::pair<index_t, index_t>> v; };
     mutable std::vector<LocalPairs> local_pairs_;
