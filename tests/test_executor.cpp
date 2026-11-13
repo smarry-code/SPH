@@ -304,6 +304,30 @@ static void test_seg_bounds()
     check(ok_all, "seg_of_index == seg из parallel_for_segments (n = 1..3000, все k)");
     check(ok_big, "seg_of_index при n ~ 2^40: k лежит в своём отрезке");
 
+    // n у верхней границы size_t: n*s и 64*k+63 переполнились бы. seg_begin == floor(n*s/S) (эталон 128-битный),
+    // seg_of_index кладёт границы отрезков в свой отрезок.
+    bool ok_huge = true;
+    for (std::size_t n : {std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max() - 12345,
+                          (std::size_t(1) << 63) + 1, (std::size_t(1) << 58) + 3})
+    {
+        for (std::size_t s = 0; s <= S; ++s)
+        {
+#if defined(__SIZEOF_INT128__)
+            const auto ref = static_cast<std::size_t>(static_cast<unsigned __int128>(n) * s / S);
+            if (CpuExecutor::seg_begin(n, s) != ref) ok_huge = false;
+#endif
+            if (s == S && CpuExecutor::seg_begin(n, s) != n) ok_huge = false;
+        }
+        for (std::size_t s = 0; s < S; ++s)
+        {
+            const std::size_t b = CpuExecutor::seg_begin(n, s), e = CpuExecutor::seg_begin(n, s + 1);
+            if (b < e && CpuExecutor::seg_of_index(b, n) != s) ok_huge = false;
+            if (b < e && CpuExecutor::seg_of_index(e - 1, n) != s) ok_huge = false;
+        }
+        if (CpuExecutor::seg_of_index(n - 1, n) != S - 1) ok_huge = false;
+    }
+    check(ok_huge, "seg_begin/seg_of_index при n ~ SIZE_MAX: без переполнения, границы в своих отрезках");
+
     std::mt19937 rng(91u);
     std::uniform_real_distribution<double> val(-1.0, 1.0);
     std::uniform_real_distribution<double> mag(-30.0, 30.0);

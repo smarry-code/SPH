@@ -198,18 +198,21 @@ public:
         // segcnt_ каждого сегмента обнуляется им же перед заполнением.
         count_.resize(nc);
         offset_.resize(nc + 1);
-        segcnt_.resize(S * nc);
+        // Шаг строки segcnt_: nc, округлённое вверх до 8 (64 Б), плюс 8 -- строки разных сегментов не делят
+        // кэш-линию даже при малом nc (без ложного разделения при подсчёте и раскладке).
+        const std::size_t stride = ((nc + 7) & ~std::size_t(7)) + 8;
+        segcnt_.resize(S * stride);
         exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
-            std::size_t* row = segcnt_.data() + sg * nc;
+            std::size_t* row = segcnt_.data() + sg * stride;
             std::fill(row, row + nc, std::size_t(0));
-            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            const std::size_t b = CpuExecutor::seg_begin(n_, sg, S), e = CpuExecutor::seg_begin(n_, sg + 1, S);
             for (std::size_t i = b; i < e; ++i) row[cell_idx_[i]]++;
         });
         // Размеры ячеек, смещения (исключающая префиксная сумма: offset_[0] = 0, offset_[nc] = n_) и стартовые
         // курсоры сегментов (O(S*nc) <= 4n по выбору S). Все величины целые -- результат не зависит от порядка.
         exec.parallel_for(nc, [&](std::size_t c) {
             std::size_t sum = 0;
-            for (std::size_t sg = 0; sg < S; ++sg) sum += segcnt_[sg * nc + c];
+            for (std::size_t sg = 0; sg < S; ++sg) sum += segcnt_[sg * stride + c];
             count_[c] = sum;
         });
         exec.parallel_scan(count_.data(), offset_.data(), nc);
@@ -217,14 +220,14 @@ public:
             std::size_t run = offset_[c];
             for (std::size_t sg = 0; sg < S; ++sg)
             {
-                const std::size_t cnt = segcnt_[sg * nc + c];
-                segcnt_[sg * nc + c] = run;
+                const std::size_t cnt = segcnt_[sg * stride + c];
+                segcnt_[sg * stride + c] = run;
                 run += cnt;
             }
         });
         exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
-            std::size_t* cur = segcnt_.data() + sg * nc;
-            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            std::size_t* cur = segcnt_.data() + sg * stride;
+            const std::size_t b = CpuExecutor::seg_begin(n_, sg, S), e = CpuExecutor::seg_begin(n_, sg + 1, S);
             for (std::size_t i = b; i < e; ++i) sorted_idx_[cur[cell_idx_[i]]++] = i;
         });
     }
@@ -339,7 +342,7 @@ private:
     std::vector<std::size_t> count_;
     std::vector<std::size_t> cursor_;
     std::vector<std::size_t> cell_idx_; // кэш cell_of(i) параллельной сборки
-    std::vector<std::size_t> segcnt_;   // счётчики/курсоры сегментов параллельной сборки (S*nc)
+    std::vector<std::size_t> segcnt_;   // счётчики/курсоры сегментов параллельной сборки (S строк с шагом >= nc+8)
     // alignas(64): заголовок вектора каждого потока -- в своей кэш-линии (false sharing).
     struct alignas(64) LocalPairs { std::vector<std::pair<index_t, index_t>> v; };
     mutable std::vector<LocalPairs> local_pairs_;

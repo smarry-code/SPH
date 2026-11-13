@@ -103,12 +103,19 @@ public:
     static constexpr std::size_t kDetSegments = 64;
     std::size_t det_segments() const { return kDetSegments; }
 
+    // Начало отрезка s из S при разбиении [0, n): floor(n*s/S) без переполнения n*s (s <= S).
+    // n = q*S + r: n*s/S = q*s + r*s/S, q*s <= n, r*s < S*S. Для n*s без переполнения равно прежнему n*s/S.
+    static constexpr std::size_t seg_begin(std::size_t n, std::size_t s, std::size_t S = kDetSegments)
+    {
+        return (n / S) * s + (n % S) * s / S;
+    }
+
     template <class Func>
     void parallel_for_segments(std::size_t n, Func&& f) const
     {
         if (n == 0) return;
         parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
-            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            const std::size_t b = seg_begin(n, s), e = seg_begin(n, s + 1);
             for (std::size_t i = b; i < e; ++i) f(s, i);
         });
     }
@@ -135,7 +142,7 @@ public:
         // Результат (в т. ч. сумма double) одинаков при любом числе потоков и любой раздаче порций.
         std::vector<T> partial(kDetSegments, init);
         parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
-            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            const std::size_t b = seg_begin(n, s), e = seg_begin(n, s + 1);
             T local = init;
             for (std::size_t i = b; i < e; ++i) local = combine(local, map(i));
             partial[s] = local;
@@ -233,9 +240,20 @@ public:
     // s <= floor((64*k+63)/n). Отрезки покрывают [0,n) без пропусков, границы b(s)=floor(n*s/64) не убывают,
     // b(64)=n>k, поэтому наибольший s с b(s)<=k и есть тот, у которого k < b(s+1), т. е. k лежит в отрезке s
     // (пустые отрезки с b(s)=b(s+1) наибольшим s не выбираются). При k<n: 64*k+63 <= 64*n-1, s <= 63.
+    // 64*k+63 считается без переполнения: 128-битно, иначе -- двоичный поиск по seg_begin.
     static constexpr std::size_t seg_of_index(std::size_t k, std::size_t n)
     {
-        return (kDetSegments * k + kDetSegments - 1) / n;
+#if defined(__SIZEOF_INT128__)
+        return static_cast<std::size_t>((static_cast<unsigned __int128>(k) * kDetSegments + (kDetSegments - 1)) / n);
+#else
+        std::size_t lo = 0, hi = kDetSegments - 1; // наибольший s с seg_begin(n, s) <= k
+        while (lo < hi)
+        {
+            const std::size_t mid = (lo + hi + 1) / 2;
+            if (seg_begin(n, mid) <= k) lo = mid; else hi = mid - 1;
+        }
+        return lo;
+#endif
     }
 
     template <class SegOf, class Func>

@@ -431,7 +431,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
         // Границы отрезков разбиения parallel_for_segments(n_full) по j.
         for (std::size_t s = 0; s < S; ++s)
         {
-            const std::size_t b = out.n_full * s / S;
+            const std::size_t b = rhs::CpuExecutor::seg_begin(out.n_full, s, S);
             out.seg_bound[s] =
                 cull ? static_cast<std::size_t>(std::lower_bound(out.prim_k.begin(), out.prim_k.end(), b) -
                                                  out.prim_k.begin())
@@ -476,7 +476,7 @@ struct FiberContactPrimView
     {
         if (culled) return bound;
         for (std::size_t s = 0; s <= rhs::CpuExecutor::kDetSegments; ++s)
-            local[s] = m * s / rhs::CpuExecutor::kDetSegments;
+            local[s] = rhs::CpuExecutor::seg_begin(m, s);
         return local;
     }
 };
