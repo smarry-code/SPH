@@ -964,6 +964,23 @@ endif()
 add_test(NAME plain_weave_quilt_test COMMAND test_plain_weave_quilt)
 set_tests_properties(plain_weave_quilt_test PROPERTIES LABELS "3d" TIMEOUT 120)
 
+# --- Ткань «случайная раскройка» (include/fiber/plain_weave_random_cut.hpp).
+add_executable(test_plain_weave_random_cut tests/test_plain_weave_random_cut.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_plain_weave_random_cut PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_plain_weave_random_cut PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_random_cut PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_plain_weave_random_cut PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_plain_weave_random_cut PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_random_cut PRIVATE -fopenmp)
+    target_link_options(test_plain_weave_random_cut PRIVATE -fopenmp)
+endif()
+add_test(NAME plain_weave_random_cut_test COMMAND test_plain_weave_random_cut)
+set_tests_properties(plain_weave_random_cut_test PROPERTIES LABELS "3d" TIMEOUT 120)
+
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
 #     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый

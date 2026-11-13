@@ -53,6 +53,25 @@ _run(2 --preset=test --patch=4x4 --out=${_dir}/c2.fib)
 _run(2 --preset=test --patch=4 --tile=2x2 --out=${_dir}/c3.fib)
 _run(2 --preset=test --allow-odd-patch --out=${_dir}/c4.fib)
 
+# Случайная раскройка: файлы .fib, .layout.txt и .cut.json.
+_run(0 --preset=twaron_ct717 --random-cut=9 --size=0.05x0.05 --seed=3 --out=${_dir}/rc.fib)
+foreach(f rc.fib rc.fib.layout.txt rc.fib.cut.json)
+    if(NOT EXISTS "${_dir}/${f}")
+        set(_fail "${_fail}\nне создан файл ${f}")
+    endif()
+endforeach()
+# Конфликты --random-cut с --nx/--patch/--tile -- ошибка использования (2).
+_run(2 --preset=twaron_ct717 --random-cut=9 --nx=10 --out=${_dir}/rc_e1.fib)
+_run(2 --preset=twaron_ct717 --random-cut=4 --patch=4x4 --tile=2x2 --out=${_dir}/rc_e2.fib)
+# Многослойный пакет: две раскройки по два слоя.
+_run(0 --preset=twaron_ct717 --random-cut=4 --size=0.02x0.02 --layers=4 --layers-per-cut=2 --out=${_dir}/rc4.fib)
+_run(2 --preset=twaron_ct717 --random-cut=4 --layers=4 --layers-per-cut=5 --out=${_dir}/rc_e3.fib)
+# Ключи раскройки без --random-cut и некорректный --size -- ошибка использования (2).
+_run(2 --preset=test --layers=2 --out=${_dir}/rc_e4.fib)
+_run(2 --preset=twaron_ct717 --random-cut=4 --size=abc --out=${_dir}/rc_e5.fib)
+# gap < d без --allow-penetration -- ошибка построения (1).
+_run(1 --preset=twaron_ct717 --random-cut=4 --size=0.02x0.02 --gap=1e-4 --out=${_dir}/rc_e6.fib)
+
 file(REMOVE_RECURSE "${_dir}")
 if(NOT "${_fail}" STREQUAL "")
     message(FATAL_ERROR "plain_weave_gen CLI:${_fail}")
