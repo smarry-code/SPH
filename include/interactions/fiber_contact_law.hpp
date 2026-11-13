@@ -205,6 +205,48 @@ inline std::vector<double>& compute_fiber_bead_dt_ref(const rhs::CpuExecutor& ex
     return out;
 }
 
+// ----------------------------------------------------------------------
+// FiberDtRefCache -- кэш опорных пределов шага нитей: bond_dt_limit
+// (compute_fiber_bond_dt_limit) и bead_dt_ref (compute_fiber_bead_dt_ref).
+// Обе функции зависят ТОЛЬКО от topology.bonds[*].{i,j,l0}, state.material_id,
+// state.mass и materials (не от x, v, состояния связи, повреждения, dt), поэтому
+// пересчёт нужен лишь при смене топологии (topology.version растёт в
+// apply_fiber_break_events), размеров или числа материалов. Значения считаются
+// теми же функциями -- побитово равны прямому вызову. Масса/материалы бусин и l0
+// связей в ходе расчёта не меняются; при их ручной правке вызывать invalidate().
+// ----------------------------------------------------------------------
+struct FiberDtRefCache
+{
+    bool valid = false;
+    unsigned long long version = 0;
+    std::size_t nbonds = 0, n = 0, nmat = 0;
+    bool have_bead = false;
+    std::vector<double> bead_dt_ref;
+    double bond_dt_limit = std::numeric_limits<double>::max();
+
+    void ensure(const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
+                const std::vector<fiber::FiberMaterial>& materials, bool need_bead)
+    {
+        const bool same_key = valid && version == topology.version && nbonds == topology.bonds.size() &&
+                              n == state.size() && nmat == materials.size();
+        if (same_key && (!need_bead || have_bead)) return;
+        bond_dt_limit = compute_fiber_bond_dt_limit(exec, state, topology, materials);
+        have_bead = false;
+        if (need_bead)
+        {
+            compute_fiber_bead_dt_ref(exec, state, topology, materials, bead_dt_ref);
+            have_bead = true;
+        }
+        version = topology.version;
+        nbonds = topology.bonds.size();
+        n = state.size();
+        nmat = materials.size();
+        valid = true;
+    }
+
+    void invalidate() { valid = false; }
+};
+
 // dt_ref стороны нити: точка на сегменте (k0, k1) или бусина k0 (k1 = -1).
 inline double fiber_side_dt_ref(const std::vector<double>& bead_dt_ref, std::size_t k0, long long k1)
 {

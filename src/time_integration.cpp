@@ -223,7 +223,9 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                                         cfg.fiber_contact_impulse_push_vmax};
     const bool fiber_need_bead_dt_ref = interactions::fiber_contact_law_is_penalty(fiber_solid_law) ||
                                         interactions::fiber_contact_law_is_penalty(fiber_fiber_law);
-    std::vector<double> fiber_bead_dt_ref;
+    // Кэш опорных пределов шага нитей (bond_dt_limit, bead_dt_ref): пересчёт только при смене топологии.
+    // Изначально invalid (в т.ч. после рестарта: топология восстановлена до цикла, кэш локален).
+    interactions::FiberDtRefCache dt_cache;
 
     // Файл мониторинга открывается ОДИН раз (дозапись; до цикла log.txt уже
     // содержит строки main.cpp/input.cpp); std::endl сбрасывает буфер каждый шаг.
@@ -465,17 +467,19 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             interactions::compute_fiber_bond(fiber_exec, fb, topology, materials, fiber_thread_buffers,
                                              fiber_bond_delta, fiber_reduce_scratch);
 #endif
-            if (fiber_need_bead_dt_ref)
-                interactions::compute_fiber_bead_dt_ref(fiber_exec, fb, topology, materials, fiber_bead_dt_ref);
+            dt_cache.ensure(fiber_exec, fb, topology, materials, fiber_need_bead_dt_ref);
 
-            interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search);
+            // L_max (текущая макс. длина связи) -- один раз за шаг для обоих поисков (fb.x, topology не меняются).
+            const double fiber_L_max = interactions::fiber_max_current_bond_length(fiber_exec, fb, topology);
+            interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search,
+                                                     &fiber_L_max);
             // dt здесь ещё шаг ПРОШЛОГО цикла (новый считается после RHS) --
             // тип 3 строит силу по нему, как Solid-Solid.
             interactions::FiberContactStepParams fiber_fiber_params;
             fiber_fiber_params.law = fiber_fiber_law;
             fiber_fiber_params.dt_prev = dt;
             fiber_fiber_params.cfg = &cfg;
-            fiber_fiber_params.bead_dt_ref = &fiber_bead_dt_ref;
+            fiber_fiber_params.bead_dt_ref = &dt_cache.bead_dt_ref;
             fiber_fiber_params.pair_dt_limit = &fiber_contact_search.pair_dt_limit;
             fiber_fiber_params.normal_ff = proj_ff ? &normal_ff : nullptr; // проекция: слоты вместо силы
             fiber_fiber_params.normal_ff_parts = &normal_ff_parts;
@@ -500,7 +504,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                     solver.fiber_rhs.dv[d][i] = fiber_bond_delta[i].dv[d] + fiber_contact_delta[i].dv[d];
                 });
 
-            fiber_dt_limit = interactions::compute_fiber_bond_dt_limit(fiber_exec, fb, topology, materials);
+            fiber_dt_limit = dt_cache.bond_dt_limit;
             const double fiber_contact_dt_limit =
                 (fiber_fiber_law.type == 0)
                     ? fiber_fiber_law0_dt
@@ -523,7 +527,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             fiber_solid_params.law = fiber_solid_law;
             fiber_solid_params.dt_prev = dt;
             fiber_solid_params.cfg = &cfg;
-            fiber_solid_params.bead_dt_ref = &fiber_bead_dt_ref;
+            fiber_solid_params.bead_dt_ref = &dt_cache.bead_dt_ref;
             fiber_solid_params.pair_dt_limit = &fiber_solid_search.pair_dt_limit;
             fiber_solid_params.normal_fs = proj_fs ? &normal_fs : nullptr; // проекция: слоты вместо силы
             fiber_solid_params.normal_fs_parts = &normal_fs_parts;
@@ -537,7 +541,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             has_active_solid_friction_contacts = interactions::compute_fiber_solid_contact(
                 fiber_exec, cfg.mats, sys, ntotal, fb, topology, materials, fiber_solid_fiber_buffers,
                 fiber_solid_solid_buffers, fiber_solid_search, fiber_solid_fiber_delta, fiber_solid_solid_delta,
-                fiber_reduce_scratch, &friction_solid_contacts, fiber_solid_params);
+                fiber_reduce_scratch, &friction_solid_contacts, fiber_solid_params, &fiber_L_max);
 
             for (size_t d = 0; d < dim; ++d)
                 fiber_exec.parallel_for(nfiber,

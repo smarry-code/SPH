@@ -934,7 +934,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                             const ParticleSystem& sys, std::size_t nreal,
                             const std::vector<SolidDelta>& reduced, std::vector<SolidFinal>& out)
 {
-    out.assign(nreal, SolidFinal{});
+    out.resize(nreal); // элементы обнуляются первой строкой тела цикла ниже (покрывает все i < nreal)
 
     // Защита от деления на ноль -- БУКВАЛЬНО как в density.cpp, con_density
     // (осевая поправка к уравнению непрерывности): клампы, удерживавшие
@@ -962,6 +962,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
     }
 
     exec.parallel_for(nreal, [&](std::size_t i) {
+        out[i] = SolidFinal{};
         SolidFinal& f = out[i];
         const SolidDelta& d = reduced[i];
 

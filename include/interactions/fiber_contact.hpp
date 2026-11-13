@@ -220,12 +220,14 @@ struct FiberContactPrimitive
 // ----------------------------------------------------------------------
 inline double fiber_contact_search_radius(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                            const fiber::FiberTopology& topology,
-                                           const std::vector<fiber::FiberMaterial>& materials)
+                                           const std::vector<fiber::FiberMaterial>& materials,
+                                           const double* l_max = nullptr)
 {
     double d_max = 0.0;
     for (const auto& m : materials) d_max = std::max(d_max, m.d);
 
-    const double L_max = fiber_max_current_bond_length(exec, state, topology);
+    // l_max != nullptr -- L_max уже посчитан вызывающей стороной на этом шаге (то же значение).
+    const double L_max = l_max ? *l_max : fiber_max_current_bond_length(exec, state, topology);
 
     return d_max + 2.0 * L_max;
 }
@@ -259,7 +261,7 @@ struct FiberContactSearchResult
 inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                         const fiber::FiberTopology& topology,
                                         const std::vector<fiber::FiberMaterial>& materials,
-                                        FiberContactSearchResult& out)
+                                        FiberContactSearchResult& out, const double* l_max = nullptr)
 {
     // primitives очищается только на ранних выходах: при построении он перезаписывается целиком
     // (concat_segments), resize инициализирует лишь прирост.
@@ -284,7 +286,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
     }
     else
     {
-        const double radius = fiber_contact_search_radius(exec, state, topology, materials);
+        const double radius = fiber_contact_search_radius(exec, state, topology, materials, l_max);
 
         std::array<const double*, dim> coords{};
         for (std::size_t d = 0; d < dim; ++d) coords[d] = state.x[d].data();
@@ -847,7 +849,7 @@ inline bool compute_fiber_contact_contributions(
     friction_contacts.resize(n);
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
-    if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
+    if (pair_dt) pair_dt->resize(n); // слот k инициализируется в начале тела цикла (покрывает все k)
     // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
     // primitive: каждый отрезок пишет свои слоты в local[seg] (по возрастанию k), затем отрезки склеиваются
     // по порядку. prim и seg слота -- индекс primitive и номер отрезка (см. FiberNormalContact).
@@ -885,6 +887,7 @@ inline bool compute_fiber_contact_contributions(
         for (std::size_t s = 0; s < rhs::CpuExecutor::kDetSegments; ++s) dt_seg_min[s] = kInfDt;
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+        if (pair_dt) (*pair_dt)[k] = std::numeric_limits<double>::max();
         if (!fric_list) friction_contacts[k] = FiberFrictionContact{};
         const FiberContactPrimitive& prim = primitives[k];
         if (fiber_contact_surely_apart(state, materials, prim)) return;

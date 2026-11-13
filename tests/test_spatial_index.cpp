@@ -503,6 +503,22 @@ static void test_parallel_build()
     clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 6 : 12, 0.3, -0.731));
     Cloud<Dim> same_cell = random_cloud<Dim>(300, 0.01, rng); // все точки в одной ячейке при большой cell
     clouds.push_back(same_cell);
+    // Огромное смещение (+-1e15: шаг double ~0.1-0.2, min/max/floor на грани точности) и вырожденная ось.
+    for (double shift : {1e15, -1e15})
+    {
+        Cloud<Dim> far = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
+        for (std::size_t d = 0; d < Dim; ++d)
+            for (std::size_t i = 0; i < far.n; ++i) far.coord[d][i] += shift;
+        clouds.push_back(far);
+    }
+    {
+        Cloud<Dim> flat = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
+        for (std::size_t i = 0; i < flat.n; ++i) flat.coord[0][i] = 0.37; // все x одинаковы: hi == lo по оси 0
+        clouds.push_back(flat);
+        Cloud<Dim> flat_far = flat;
+        for (std::size_t i = 0; i < flat_far.n; ++i) flat_far.coord[0][i] = 1e15;
+        clouds.push_back(flat_far);
+    }
     const double cells[] = {0.05, 0.25, 0.5, 0.0005, 100.0}; // 0.0005: nc >> n (облако в одной ячейке); 100: nc = 1 << n
     const int threads[] = {1, 2, 7, 8};
     bool ok = true;

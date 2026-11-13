@@ -122,24 +122,48 @@ public:
         n_ = n;
         cell_size_ = (cell_size > 0.0) ? cell_size : 1.0;
 
+        std::array<double*, Dim> dst{};
         for (std::size_t d = 0; d < Dim; ++d)
         {
             coord_[d].resize(n_);
-            const double* src = coords[d];
-            double* dst = coord_[d].data();
-            exec.parallel_for(n_, [&](std::size_t i) { dst[i] = src[i]; });
+            dst[d] = coord_[d].data();
         }
+        exec.parallel_for(n_, [&](std::size_t i) {
+            for (std::size_t d = 0; d < Dim; ++d) dst[d][i] = coords[d][i];
+        });
+
+        // Один проход вместо 2*Dim: компоненты Box независимы, combine покомпонентно тот же, что был у
+        // отдельных parallel_reduce (min/max(a, b), тот же порядок аргументов и вызовов), результат побитово
+        // прежний. Затравка -- coord[0], как у последовательного build: std::min/max идемпотентны, поэтому
+        // результат совпадает и при NaN в координатах.
+        struct Box
+        {
+            double lo[Dim], hi[Dim];
+        };
+        Box init;
+        for (std::size_t d = 0; d < Dim; ++d) init.lo[d] = init.hi[d] = coord_[d][0];
+        const Box box = exec.parallel_reduce(
+            n_, init,
+            [&](std::size_t i) {
+                Box r;
+                for (std::size_t d = 0; d < Dim; ++d) r.lo[d] = r.hi[d] = dst[d][i];
+                return r;
+            },
+            [](const Box& a, const Box& b) {
+                Box r;
+                for (std::size_t d = 0; d < Dim; ++d)
+                {
+                    r.lo[d] = std::min(a.lo[d], b.lo[d]);
+                    r.hi[d] = std::max(a.hi[d], b.hi[d]);
+                }
+                return r;
+            });
 
         std::array<double, Dim> lo{}, hi{};
         for (std::size_t d = 0; d < Dim; ++d)
         {
-            const double* c = coord_[d].data();
-            // Затравка -- coord[0], как у последовательного build: parallel_reduce сворачивает combine(acc, x),
-            // std::min/max идемпотентны, поэтому результат совпадает и при NaN в координатах.
-            lo[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
-                                         [](double a, double b) { return std::min(a, b); });
-            hi[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
-                                         [](double a, double b) { return std::max(a, b); });
+            lo[d] = box.lo[d];
+            hi[d] = box.hi[d];
             origin_[d] = lo[d];
             int nc_d = static_cast<int>(std::ceil((hi[d] - lo[d]) / cell_size_)) + 1;
             ncell_[d] = std::max(nc_d, 1);
@@ -150,8 +174,6 @@ public:
         eps_box_ = 1e-9 * cell_size_ + 1e-12 * scale;
 
         const std::size_t nc = total_cells();
-        count_.assign(nc, 0);
-        offset_.assign(nc + 1, 0);
         sorted_idx_.resize(n_);
 
         // Ячейка каждой частицы -- одно вычисление на частицу.
@@ -163,6 +185,8 @@ public:
                                                      CpuExecutor::kDetSegments, want});
         if (S <= 1)
         {
+            count_.assign(nc, 0);
+            offset_.assign(nc + 1, 0);
             for (std::size_t i = 0; i < n_; ++i) count_[cell_idx_[i]]++;
             for (std::size_t c = 0; c < nc; ++c) offset_[c + 1] = offset_[c] + count_[c];
             cursor_.assign(offset_.begin(), offset_.begin() + static_cast<std::ptrdiff_t>(nc));
@@ -170,15 +194,26 @@ public:
             return;
         }
 
-        segcnt_.assign(S * nc, 0);
+        // Полная перезапись без предварительного обнуления: count_/offset_ пишутся целиком ниже, строка
+        // segcnt_ каждого сегмента обнуляется им же перед заполнением.
+        count_.resize(nc);
+        offset_.resize(nc + 1);
+        segcnt_.resize(S * nc);
         exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
             std::size_t* row = segcnt_.data() + sg * nc;
+            std::fill(row, row + nc, std::size_t(0));
             const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
             for (std::size_t i = b; i < e; ++i) row[cell_idx_[i]]++;
         });
-        // Смещения ячеек и стартовые курсоры сегментов (O(S*nc) <= 4n по выбору S).
-        for (std::size_t c = 0; c < nc; ++c)
-        {
+        // Размеры ячеек, смещения (исключающая префиксная сумма: offset_[0] = 0, offset_[nc] = n_) и стартовые
+        // курсоры сегментов (O(S*nc) <= 4n по выбору S). Все величины целые -- результат не зависит от порядка.
+        exec.parallel_for(nc, [&](std::size_t c) {
+            std::size_t sum = 0;
+            for (std::size_t sg = 0; sg < S; ++sg) sum += segcnt_[sg * nc + c];
+            count_[c] = sum;
+        });
+        exec.parallel_scan(count_.data(), offset_.data(), nc);
+        exec.parallel_for(nc, [&](std::size_t c) {
             std::size_t run = offset_[c];
             for (std::size_t sg = 0; sg < S; ++sg)
             {
@@ -186,9 +221,7 @@ public:
                 segcnt_[sg * nc + c] = run;
                 run += cnt;
             }
-            count_[c] = run - offset_[c];
-            offset_[c + 1] = run;
-        }
+        });
         exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
             std::size_t* cur = segcnt_.data() + sg * nc;
             const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
