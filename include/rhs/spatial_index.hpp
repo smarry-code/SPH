@@ -282,6 +282,20 @@ public:
         });
     }
 
+    // Тот же обход пар, что в find_pairs_parallel, но без вектора пар: f(seg, i, j) вызывается сразу при
+    // нахождении. Ячейки режутся на kDetSegments отрезков тем же parallel_for_segments(total_cells()), что в
+    // parallel_merge, отрезок обрабатывает один поток, ячейки по возрастанию, внутри ячейки порядок
+    // visit_same_type_cell. Значит глобальный порядок (seg по возрастанию, затем порядок обхода) совпадает
+    // с порядком вектора пар find_pairs_parallel; seg -- отрезок ЯЧЕЕК (не индекса пары).
+    template <class Accept, class Func>
+    void for_each_pair_segmented(const CpuExecutor& exec, double radius, const Accept& accept, Func&& f) const
+    {
+        const std::size_t nc = total_cells();
+        exec.parallel_for_segments(nc, [&](std::size_t seg, std::size_t c) {
+            visit_same_type_cell(c, radius, accept, [&](std::size_t i, std::size_t j) { f(seg, i, j); });
+        });
+    }
+
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_parallel(
         const CpuExecutor& exec, double radius,
@@ -512,9 +526,10 @@ private:
         visit(visit, Dim - 1, 0.0, 0);
     }
 
-    template <class Accept>
-    void collect_same_type_cell(std::size_t cell_lin, double radius, const Accept& accept,
-                                 std::vector<std::pair<index_t, index_t>>& out) const
+    // Посетитель пар одной ячейки: emit(i, j) вызывается в том же порядке, в каком collect_same_type_cell
+    // дописывал пары (i<j, dist2 <= r2, accept) -- collect_same_type_cell ниже лишь обёртка над ним.
+    template <class Accept, class Emit>
+    void visit_same_type_cell(std::size_t cell_lin, double radius, const Accept& accept, Emit&& emit) const
     {
         const double r2 = radius * radius;
         auto [b, e] = cell_range(cell_lin);
@@ -532,10 +547,17 @@ private:
                 {
                     const std::size_t j = sorted_idx_[pj];
                     if (j <= i) continue; // канонический порядок i<j, без дублей
-                    if (dist2(i, j) <= r2 && accept(i, j)) out.emplace_back(i, j);
+                    if (dist2(i, j) <= r2 && accept(i, j)) emit(i, j);
                 }
             });
         }
+    }
+
+    template <class Accept>
+    void collect_same_type_cell(std::size_t cell_lin, double radius, const Accept& accept,
+                                 std::vector<std::pair<index_t, index_t>>& out) const
+    {
+        visit_same_type_cell(cell_lin, radius, accept, [&](std::size_t i, std::size_t j) { out.emplace_back(i, j); });
     }
 
     template <class Accept>

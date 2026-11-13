@@ -471,8 +471,15 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 
             // L_max (текущая макс. длина связи) -- один раз за шаг для обоих поисков (fb.x, topology не меняются).
             const double fiber_L_max = interactions::fiber_max_current_bond_length(fiber_exec, fb, topology);
+            // Режим отсечки: в primitives остаются только пары, не прошедшие fiber_contact_surely_apart; ядро
+            // и предел шага работают по виду (индекс k полного списка -- в prim_k), результат побитово тот же.
+            interactions::FiberContactBuildOptions fiber_build_opt;
+            fiber_build_opt.cull_apart = true;
+            fiber_build_opt.l_max = &fiber_L_max;
             interactions::build_fiber_contact_search(fiber_exec, fb, topology, materials, fiber_contact_search,
-                                                     &fiber_L_max);
+                                                     fiber_build_opt);
+            const interactions::FiberContactPrimView fiber_pview =
+                interactions::fiber_contact_view(fiber_contact_search);
             // dt здесь ещё шаг ПРОШЛОГО цикла (новый считается после RHS) --
             // тип 3 строит силу по нему, как Solid-Solid.
             interactions::FiberContactStepParams fiber_fiber_params;
@@ -493,7 +500,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             }
             // Только нормальная сила; заполняет слоты трения friction_contacts.
             has_active_friction_contacts = interactions::compute_fiber_contact_contributions(
-                fiber_exec, fb, materials, fiber_contact_search.primitives, fiber_contact_thread_buffers,
+                fiber_exec, fb, materials, fiber_pview, fiber_contact_thread_buffers,
                 friction_contacts, fiber_fiber_params);
             rhs::reduce_contributions_into(fiber_exec, fiber_contact_thread_buffers, fb.size(), fiber_contact_delta,
                                            fiber_reduce_scratch);
@@ -508,8 +515,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
             const double fiber_contact_dt_limit =
                 (fiber_fiber_law.type == 0)
                     ? fiber_fiber_law0_dt
-                    : interactions::compute_fiber_contact_dt_limit(fiber_exec, fb, materials,
-                                                                   fiber_contact_search.primitives,
+                    : interactions::compute_fiber_contact_dt_limit(fiber_exec, fb, materials, fiber_pview,
                                                                    fiber_fiber_params);
             if (fiber_contact_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_contact_dt_limit;
 
@@ -575,8 +581,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                     p.law0_dt_min_out = nullptr;
                     p.fric_active = nullptr;
                     p.fric_active_parts = nullptr;
-                    interactions::compute_fiber_contact_contributions(fiber_exec, fb, materials,
-                                                                      fiber_contact_search.primitives,
+                    interactions::compute_fiber_contact_contributions(fiber_exec, fb, materials, fiber_pview,
                                                                       elog_damp_ff_buffers, elog_damp_ff_slots, p);
                     rhs::reduce_contributions_into(fiber_exec, elog_damp_ff_buffers, fb.size(), elog_damp_ff_delta,
                                                    fiber_reduce_scratch);
@@ -773,7 +778,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                                    solid_friction_count, fiber_friction_count_delta,
                                                    solid_friction_count_delta, fiber_reduce_scratch,
                                                    fric_list_mode ? &fric_ff_active : nullptr,
-                                                   fric_list_mode ? &fric_fs_active : nullptr);
+                                                   fric_list_mode ? &fric_fs_active : nullptr,
+                                                   fric_list_mode ? nullptr : fiber_contact_search.seg_bound);
             // [2] Бесконечная масса полностью зажатых в mass splitting: c = 0.
             if (has_clamps)
                 interactions::apply_clamp_friction_counts(fiber_exec, clamp_ws, fiber_friction_bead_count,
@@ -782,7 +788,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                 fiber_exec, fb, fupd, solver.fiber_rhs.dv, friction_contacts, sys, supd, solver.solid_rhs.dvx,
                 friction_solid_contacts, fiber_friction_bead_count, solid_friction_count, /*solid_kinematic=*/false,
                 fiber_friction_thread_buffers, solid_friction_thread_buffers,
-                fric_list_mode ? &fric_ff_active : nullptr, fric_list_mode ? &fric_fs_active : nullptr);
+                fric_list_mode ? &fric_ff_active : nullptr, fric_list_mode ? &fric_fs_active : nullptr,
+                fric_list_mode ? nullptr : fiber_contact_search.seg_bound);
             rhs::reduce_contributions_into(fiber_exec, fiber_friction_thread_buffers, nfiber, friction_delta,
                                            fiber_reduce_scratch);
             for (size_t d = 0; d < dim; ++d)

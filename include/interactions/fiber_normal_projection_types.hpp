@@ -100,10 +100,12 @@ struct FiberNormalContact
     NormalPairKey key;
     double P = 0.0;
     bool warm = false; // P^(0) взят из таблицы тёплого старта
-    // Место в исходном массиве примитивов. Слоты хранятся СЖАТО (только активные, по возрастанию prim):
-    // seg -- номер отрезка kDetSegments, в котором стоял примитив при обходе ядра (parallel_for_segments по
-    // всем примитивам). Стадия пишет вклады в буфер seg и сворачивает суммы по отрезкам seg -- порядок
-    // суммирования тот же, что при обходе всех примитивов (rhs::CpuExecutor::parallel_for_seg_groups).
+    // Место в плотных массивах вида (слоты трения, pair_dt_limit): индекс j в списке primitive ядра. В режиме
+    // отсечки поиска (FiberContactBuildOptions::cull_apart) это индекс среди выживших, а seg -- отрезок
+    // ПОЛНОГО индекса k. Слоты хранятся СЖАТО (только активные, по возрастанию prim):
+    // seg -- номер отрезка kDetSegments, в котором стоял primitive при обходе ядра (parallel_for_segments по
+    // всем primitive). Стадия пишет вклады в буфер seg и сворачивает суммы по отрезкам seg -- порядок
+    // суммирования тот же, что при обходе всех primitive (rhs::CpuExecutor::parallel_for_seg_groups).
     std::size_t prim = 0;
     std::uint16_t seg = 0;
 };
