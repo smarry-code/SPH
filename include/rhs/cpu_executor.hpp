@@ -146,6 +146,89 @@ public:
     }
 
     // ------------------------------------------------------------------
+    // Обход и свёртка ПОДМНОЖЕСТВА исходного диапазона с прежним разбиением на отрезки.
+    // Элементы j = 0..m-1 -- выбранные индексы исходного диапазона по возрастанию; seg_of(j) -- номер отрезка
+    // kDetSegments, которому исходный индекс принадлежал в parallel_for_segments / parallel_reduce по ПОЛНОМУ
+    // диапазону (не убывает по j). Отрезок s обрабатывает один поток, свои j по возрастанию:
+    //   parallel_for_seg_groups(m, seg_of, f)  -- f(s, j): вклады в буфер s ложатся в том же порядке, что и
+    //                                             при обходе полного диапазона с пропуском невыбранных;
+    //   parallel_reduce_seg_groups(...)        -- partial[s] сворачивает свои j, затем отрезки по порядку.
+    // Если невыбранные индексы при полном обходе давали нейтральный элемент combine (0.0 в сумме, начатой
+    // с +0.0; max с 0 для неотрицательных; целые счётчики), результат побитово тот же.
+    // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Сбор результатов по отрезкам: parts[s] заполняет отрезок s parallel_for_segments (по возрастанию i),
+    // concat_segments склеивает их по порядку отрезков -- тот же порядок, что у последовательного цикла.
+    // Смещения -- префиксная сумма, копирование -- параллельно по отрезкам; out не очищается (resize
+    // инициализирует только прирост).
+    // ------------------------------------------------------------------
+    template <class T>
+    struct alignas(64) SegPart // заголовок вектора каждого отрезка -- в своей кэш-линии (false sharing)
+    {
+        std::vector<T> v;
+    };
+
+    template <class T>
+    void prepare_segment_parts(std::vector<SegPart<T>>& parts) const
+    {
+        if (parts.size() < kDetSegments) parts.resize(kDetSegments);
+        for (auto& p : parts) p.v.clear();
+    }
+
+    template <class T>
+    void concat_segments(const std::vector<SegPart<T>>& parts, std::vector<T>& out) const
+    {
+        const std::size_t np = parts.size();
+        std::vector<std::size_t> off(np + 1, 0);
+        for (std::size_t s = 0; s < np; ++s) off[s + 1] = off[s] + parts[s].v.size();
+        out.resize(off[np]);
+        parallel_for(np, std::size_t(1), [&](std::size_t s) {
+            std::copy(parts[s].v.begin(), parts[s].v.end(), out.begin() + static_cast<std::ptrdiff_t>(off[s]));
+        });
+    }
+
+    template <class SegOf>
+    void seg_group_bounds(std::size_t m, SegOf&& seg_of, std::size_t* bound) const
+    {
+        // bound[s] .. bound[s+1] -- j отрезка s; один проход, seg_of(j) не убывает.
+        std::size_t j = 0;
+        for (std::size_t s = 0; s < kDetSegments; ++s)
+        {
+            bound[s] = j;
+            while (j < m && static_cast<std::size_t>(seg_of(j)) <= s) ++j;
+        }
+        bound[kDetSegments] = m;
+    }
+
+    template <class SegOf, class Func>
+    void parallel_for_seg_groups(std::size_t m, SegOf&& seg_of, Func&& f) const
+    {
+        if (m == 0) return;
+        std::size_t bound[kDetSegments + 1];
+        seg_group_bounds(m, seg_of, bound);
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            for (std::size_t j = bound[s]; j < bound[s + 1]; ++j) f(s, j);
+        });
+    }
+
+    template <class T, class SegOf, class MapFunc, class CombineFunc>
+    T parallel_reduce_seg_groups(std::size_t m, SegOf&& seg_of, T init, MapFunc&& map, CombineFunc&& combine) const
+    {
+        if (m == 0) return init;
+        std::size_t bound[kDetSegments + 1];
+        seg_group_bounds(m, seg_of, bound);
+        std::vector<T> partial(kDetSegments, init);
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            T local = init;
+            for (std::size_t j = bound[s]; j < bound[s + 1]; ++j) local = combine(local, map(j));
+            partial[s] = local;
+        });
+        T result = init;
+        for (auto& p : partial) result = combine(result, p);
+        return result;
+    }
+
+    // ------------------------------------------------------------------
     // parallel_scan(in, out, n) — исключающая префиксная сумма:
     // out[0] = 0 (T{}), out[i+1] = out[i] + in[i], out[n] = полная сумма.
     // `out` должен иметь размер n+1. Двухпроходная блочная схема (локальные

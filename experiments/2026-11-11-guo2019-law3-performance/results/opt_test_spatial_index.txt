@@ -1,0 +1,2 @@
+=== test_spatial_index: SpatialIndex<Dim> (fiber/PLAN.md, этап Ф1) ===
+test_spatial_index: ПРОЙДЕН

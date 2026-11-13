@@ -125,7 +125,7 @@ struct GuoScene
     SimulationConfig cfg;
     fiber::Model model;
     fiber::PlainWeave W;            // ткань; при пакете -- слой 1 (лицевой); пусто, если has_fabric == false
-    int n_plies = 0;                // число слоёв ткани (fabric_plies(config))
+    int n_plies = 0;                // число слоёв ткани (fabric_plies(config, plies))
     std::vector<fiber::PlainWeave> plies; // слои, слой 1 первым
     std::vector<double> ply_cz;     // c_z слоёв
     double ply_pitch = 0.0;         // Delta_ply = 2A + d + kEpsPly
@@ -134,6 +134,7 @@ struct GuoScene
     std::filesystem::path fib_path, layout_path;
     std::size_t n_stitch = 0;       // число связей-стежков (0 -- без стёжки)
     std::vector<std::pair<std::size_t, std::size_t>> stitch_pairs; // пары глобальных бусин стежков
+    std::vector<std::array<double, 3>> stitch_r0; // начальные векторы пар x_j - x_i (по .fib, t = 0; не из чекпоинта)
 
     // --- диапазоны индексов Solid -----------------------------------------
     std::size_t ntotal = 0;
@@ -385,19 +386,27 @@ inline void write_fabric_stack_layout(std::ostream& os, const std::vector<fiber:
 // ===========================================================================
 inline GuoScene build_guo_scene(Config config, Level level, double V0, const std::filesystem::path& workdir,
                                 double mu = kMuDefault, bool body_isolation = true, int plate_nz_override = 0,
-                                const StitchSpec& stitch = StitchSpec{})
+                                int plies = 0, double ball_d_override = 0.0, double ball_m_override = 0.0,
+                                double ball_dx_override = 0.0, const StitchSpec& stitch = StitchSpec{})
 {
+    // plies -- число слоёв для Config::TK; ball_*_override > 0 заменяют D_s, m_s, dx_s шара уровня
+    // (решение владельца 2026-11-09); плотность по-прежнему выводится из массы: m_s / (n_ball dx_s^3).
+    if (config == Config::TK && (plies < 1 || plies > kMaxPlies))
+        throw std::runtime_error("guo2019: для конфигурации kT число слоёв должно быть от 1 до " + std::to_string(kMaxPlies));
     GuoScene sc;
     sc.config = config;
     sc.level = level;
     sc.spec = level_spec(level);
     if (plate_nz_override > 0) sc.spec.n_z = plate_nz_override; // только для сравнения стоимости
+    if (ball_d_override > 0.0) sc.spec.D_s = ball_d_override;
+    if (ball_m_override > 0.0) sc.spec.m_s = ball_m_override;
+    if (ball_dx_override > 0.0) sc.spec.dx_s = ball_dx_override;
     sc.V0 = V0;
     sc.mu = mu;
     sc.body_isolation = body_isolation;
     sc.has_fabric = config_has_fabric(config);
     sc.has_plate = config_has_plate(config);
-    sc.n_plies = fabric_plies(config);
+    sc.n_plies = fabric_plies(config, plies);
     const LevelSpec& L = sc.spec;
     const double plate_t = L.t;
     sc.plate_t = plate_t;
@@ -501,6 +510,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             break;
         case Config::T2:
         case Config::T4:
+        case Config::TK:
             // Пакет без пластины: z_b = c_z,N - A - d/2 = -(N (2A + d) + (N - 1) eps_ply)
             sc.z_b = -(static_cast<double>(sc.n_plies) * (2.0 * A + d) + static_cast<double>(sc.n_plies - 1) * kEpsPly);
             break;
@@ -640,6 +650,14 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
                 write_fabric_stack_layout(f, sc.plies);
         }
         fiber::load_fiber_file(sc.fib_path.string(), sc.model); // заполняет model.clamps.fiber_mask из CLAMP_BOX
+        sc.stitch_r0.clear();
+        sc.stitch_r0.reserve(sc.stitch_pairs.size());
+        for (const auto& pr : sc.stitch_pairs)
+        {
+            const auto& x = sc.model.fiber.x;
+            sc.stitch_r0.push_back({x[0][pr.second] - x[0][pr.first], x[1][pr.second] - x[1][pr.first],
+                                    x[2][pr.second] - x[2][pr.first]});
+        }
 
         std::size_t first = 0;
         int oid = 0; // глобальный object_id: (k - 1)(nx + ny) + локальный id
@@ -727,7 +745,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             if (b.mat >= 0) continue; // стежок
             if (!inside(b.i) || !inside(b.j)) continue;
-            std::size_t kply = 0; // слой связи по бусине b.i (слоёв не больше 4)
+            std::size_t kply = 0; // слой связи по бусине b.i (число слоёв произвольное)
             while (kply + 1 < sc.ply_layout.size() && b.i >= sc.ply_layout[kply].bead_end) ++kply;
             const auto& mat = sc.model.materials[static_cast<std::size_t>(fb.material_id[b.i])];
             const double dm = mat.rho * pi * mat.d * mat.d / 4.0 * b.l0;
@@ -985,7 +1003,7 @@ inline void print_scene_summary(std::FILE* f, const GuoScene& sc)
     };
     const LevelSpec& L = sc.spec;
     std::fprintf(f, "Сцена Guo 2019: конфигурация %s, уровень %s, V0 = %.3f м/с, mu = %.3f, изоляция тел = %d\n",
-                 config_name(sc.config), level_name(sc.level), sc.V0, sc.mu, sc.body_isolation ? 1 : 0);
+                 config_name_str(sc.config, sc.n_plies).c_str(), level_name(sc.level), sc.V0, sc.mu, sc.body_isolation ? 1 : 0);
     std::fprintf(f, "Частицы и нити (факт против формулы):\n");
     cmp("частиц шара", sc.n_ball, sc.expected.n_ball);
     cmp("частиц пластины", sc.n_plate, sc.expected.n_plate);

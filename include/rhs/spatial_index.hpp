@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -83,6 +84,12 @@ public:
             int nc_d = static_cast<int>(std::ceil((hi[d] - lo[d]) / cell_size_)) + 1;
             ncell_[d] = std::max(nc_d, 1);
         }
+        // Запас для отсечения ячеек в for_each_near_cell: много больше ошибок округления при отнесении точки к
+        // ячейке (floor((x - origin)/h)) и при вычислении границ ячейки origin + c*h.
+        double scale = 0.0;
+        for (std::size_t d = 0; d < Dim; ++d)
+            scale = std::max(scale, std::fabs(origin_[d]) + static_cast<double>(ncell_[d]) * cell_size_);
+        eps_box_ = 1e-9 * cell_size_ + 1e-12 * scale;
 
         const std::size_t nc = total_cells();
         count_.assign(nc, 0);
@@ -98,6 +105,95 @@ public:
             const std::size_t c = cell_of(i);
             sorted_idx_[cursor_[c]++] = i;
         }
+    }
+
+    // Параллельная сборка: то же внутреннее состояние (coord_, origin_, ncell_, eps_box_, count_, offset_,
+    // sorted_idx_), что у последовательного build(), побитово и при любом числе потоков. Частицы внутри ячейки
+    // остаются в строго возрастающем порядке индекса: сегменты счётчиков -- смежные диапазоны индексов по
+    // возрастанию, курсор сегмента s в ячейке c = offset_[c] + число частиц ячейки c в сегментах s' < s.
+    // Границы bbox -- min/max с той же затравкой coord[0], что у последовательного build (точно при любой раздаче).
+    void build(const CpuExecutor& exec, Coords coords, std::size_t n, double cell_size)
+    {
+        if (n == 0)
+        {
+            build(coords, n, cell_size);
+            return;
+        }
+        n_ = n;
+        cell_size_ = (cell_size > 0.0) ? cell_size : 1.0;
+
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            coord_[d].resize(n_);
+            const double* src = coords[d];
+            double* dst = coord_[d].data();
+            exec.parallel_for(n_, [&](std::size_t i) { dst[i] = src[i]; });
+        }
+
+        std::array<double, Dim> lo{}, hi{};
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            const double* c = coord_[d].data();
+            // Затравка -- coord[0], как у последовательного build: parallel_reduce сворачивает combine(acc, x),
+            // std::min/max идемпотентны, поэтому результат совпадает и при NaN в координатах.
+            lo[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
+                                         [](double a, double b) { return std::min(a, b); });
+            hi[d] = exec.parallel_reduce(n_, c[0], [&](std::size_t i) { return c[i]; },
+                                         [](double a, double b) { return std::max(a, b); });
+            origin_[d] = lo[d];
+            int nc_d = static_cast<int>(std::ceil((hi[d] - lo[d]) / cell_size_)) + 1;
+            ncell_[d] = std::max(nc_d, 1);
+        }
+        double scale = 0.0;
+        for (std::size_t d = 0; d < Dim; ++d)
+            scale = std::max(scale, std::fabs(origin_[d]) + static_cast<double>(ncell_[d]) * cell_size_);
+        eps_box_ = 1e-9 * cell_size_ + 1e-12 * scale;
+
+        const std::size_t nc = total_cells();
+        count_.assign(nc, 0);
+        offset_.assign(nc + 1, 0);
+        sorted_idx_.resize(n_);
+
+        // Ячейка каждой частицы -- одно вычисление на частицу.
+        cell_idx_.resize(n_);
+        exec.parallel_for(n_, [&](std::size_t i) { cell_idx_[i] = cell_of(i); });
+
+        const std::size_t want = std::max<std::size_t>(1, 4 * n_ / std::max<std::size_t>(nc, 1));
+        const std::size_t S = std::min<std::size_t>({static_cast<std::size_t>(std::max(exec.num_workers(), 1)),
+                                                     CpuExecutor::kDetSegments, want});
+        if (S <= 1)
+        {
+            for (std::size_t i = 0; i < n_; ++i) count_[cell_idx_[i]]++;
+            for (std::size_t c = 0; c < nc; ++c) offset_[c + 1] = offset_[c] + count_[c];
+            cursor_.assign(offset_.begin(), offset_.begin() + static_cast<std::ptrdiff_t>(nc));
+            for (std::size_t i = 0; i < n_; ++i) sorted_idx_[cursor_[cell_idx_[i]]++] = i;
+            return;
+        }
+
+        segcnt_.assign(S * nc, 0);
+        exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
+            std::size_t* row = segcnt_.data() + sg * nc;
+            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            for (std::size_t i = b; i < e; ++i) row[cell_idx_[i]]++;
+        });
+        // Смещения ячеек и стартовые курсоры сегментов (O(S*nc) <= 4n по выбору S).
+        for (std::size_t c = 0; c < nc; ++c)
+        {
+            std::size_t run = offset_[c];
+            for (std::size_t sg = 0; sg < S; ++sg)
+            {
+                const std::size_t cnt = segcnt_[sg * nc + c];
+                segcnt_[sg * nc + c] = run;
+                run += cnt;
+            }
+            count_[c] = run - offset_[c];
+            offset_[c + 1] = run;
+        }
+        exec.parallel_for(S, std::size_t(1), [&](std::size_t sg) {
+            std::size_t* cur = segcnt_.data() + sg * nc;
+            const std::size_t b = n_ * sg / S, e = n_ * (sg + 1) / S;
+            for (std::size_t i = b; i < e; ++i) sorted_idx_[cur[cell_idx_[i]]++] = i;
+        });
     }
 
     std::size_t size() const { return n_; }
@@ -190,13 +286,17 @@ private:
     std::array<int, Dim> ncell_{};
     std::vector<std::size_t> offset_;
     std::vector<std::size_t> sorted_idx_;
+    double eps_box_ = 0.0; // запас зазора до ячейки в for_each_near_cell (задаёт build)
     // Рабочая память build() и параллельных запросов: переиспользуется между
     // вызовами, только растёт (индекс живёт между шагами).
     std::vector<std::size_t> count_;
     std::vector<std::size_t> cursor_;
+    std::vector<std::size_t> cell_idx_; // кэш cell_of(i) параллельной сборки
+    std::vector<std::size_t> segcnt_;   // счётчики/курсоры сегментов параллельной сборки (S*nc)
     // alignas(64): заголовок вектора каждого потока -- в своей кэш-линии (false sharing).
     struct alignas(64) LocalPairs { std::vector<std::pair<index_t, index_t>> v; };
     mutable std::vector<LocalPairs> local_pairs_;
+    mutable std::vector<std::size_t> merge_offset_;
 
     std::size_t total_cells() const
     {
@@ -312,6 +412,73 @@ private:
         }
     }
 
+    // То же, что for_each_neighbor_cell, но для конкретной точки p: ячейки, до габарита которых от p дальше
+    // radius (r2 = radius^2), и пустые ячейки пропускаются. Порядок оставшихся ячеек -- тот же (ось 0 меняется
+    // быстрее всех, смещения по возрастанию), поэтому пары, найденные по нему, совпадают с прежними по составу и
+    // порядку: выброшенные ячейки пар с |x - p|^2 <= r2 не содержат. Зазор до ячейки берётся с запасом eps_box_
+    // (округление при отнесении точки к ячейке и при вычислении границ), порог -- с запасом 1e-12 r2.
+    // Без деления и остатка; точка вне сетки (поиск чужого типа) отсекается по истинной координате, а не по
+    // прижатой к краю ячейке center.
+    template <class F>
+    void for_each_near_cell(const std::array<double, Dim>& p, const std::array<int, Dim>& center, int reach, double r2,
+                            F&& f) const
+    {
+        constexpr int kMaxSpan = 16;
+        if (2 * reach + 1 > kMaxSpan)
+        {
+            for_each_neighbor_cell(center, reach, [&](std::size_t lin) {
+                if (offset_[lin] != offset_[lin + 1]) f(lin);
+            });
+            return;
+        }
+        const double r2_cut = r2 * (1.0 + 1e-12);
+        std::array<int, Dim> cnt{};
+        std::array<std::array<std::size_t, kMaxSpan>, Dim> step{};
+        std::array<std::array<double, kMaxSpan>, Dim> g2{};
+        std::size_t stride = 1;
+        for (std::size_t d = 0; d < Dim; ++d)
+        {
+            for (int off = -reach; off <= reach; ++off)
+            {
+                const int c = center[d] + off;
+                if (c < 0 || c >= ncell_[d]) continue;
+                const double lo = origin_[d] + static_cast<double>(c) * cell_size_;
+                const double hi = lo + cell_size_;
+                double gap = 0.0;
+                if (p[d] < lo)
+                    gap = lo - p[d];
+                else if (p[d] > hi)
+                    gap = p[d] - hi;
+                gap = std::max(0.0, gap - eps_box_);
+                const double gg = gap * gap;
+                if (gg > r2_cut) continue;
+                step[d][static_cast<std::size_t>(cnt[d])] = stride * static_cast<std::size_t>(c);
+                g2[d][static_cast<std::size_t>(cnt[d])] = gg;
+                ++cnt[d];
+            }
+            if (cnt[d] == 0) return;
+            stride *= static_cast<std::size_t>(ncell_[d]);
+        }
+        // Обход: старшая ось -- внешний цикл, ось 0 -- внутренний (как k % span в for_each_neighbor_cell).
+        auto visit = [&](auto&& self, std::size_t d, double s, std::size_t base) -> void {
+            for (int i = 0; i < cnt[d]; ++i)
+            {
+                const double s2 = s + g2[d][static_cast<std::size_t>(i)];
+                if (s2 > r2_cut) continue;
+                const std::size_t lin = base + step[d][static_cast<std::size_t>(i)];
+                if (d == 0)
+                {
+                    if (offset_[lin] != offset_[lin + 1]) f(lin);
+                }
+                else
+                {
+                    self(self, d - 1, s2, lin);
+                }
+            }
+        };
+        visit(visit, Dim - 1, 0.0, 0);
+    }
+
     template <class Accept>
     void collect_same_type_cell(std::size_t cell_lin, double radius, const Accept& accept,
                                  std::vector<std::pair<index_t, index_t>>& out) const
@@ -324,7 +491,9 @@ private:
         for (std::size_t pi = b; pi < e; ++pi)
         {
             const std::size_t i = sorted_idx_[pi];
-            for_each_neighbor_cell(center, reach, [&](std::size_t nb_lin) {
+            std::array<double, Dim> p{};
+            for (std::size_t d = 0; d < Dim; ++d) p[d] = coord_[d][i];
+            for_each_near_cell(p, center, reach, r2, [&](std::size_t nb_lin) {
                 auto [nb, ne] = cell_range(nb_lin);
                 for (std::size_t pj = nb; pj < ne; ++pj)
                 {
@@ -346,7 +515,7 @@ private:
         const std::array<int, Dim> cell = cell_of_point(p);
         const int reach = neighbor_reach(radius);
 
-        for_each_neighbor_cell(cell, reach, [&](std::size_t nb_lin) {
+        for_each_near_cell(p, cell, reach, r2, [&](std::size_t nb_lin) {
             auto [nb, ne] = cell_range(nb_lin);
             for (std::size_t pb = nb; pb < ne; ++pb)
             {
@@ -373,11 +542,16 @@ private:
         if (local_pairs_.size() < nw) local_pairs_.resize(nw);
         for (auto& lp : local_pairs_) lp.v.clear();
         exec.parallel_for_segments(range_n, [&](std::size_t seg, std::size_t idx) { body(idx, local_pairs_[seg].v); });
-        std::size_t total = 0;
-        for (auto& lp : local_pairs_) total += lp.v.size();
-        out.clear();
-        out.reserve(total);
-        for (auto& lp : local_pairs_) out.insert(out.end(), lp.v.begin(), lp.v.end());
+        // Склейка: смещения отрезков -- префиксная сумма, копирование -- параллельно по отрезкам. out не
+        // очищается: resize инициализирует только прирост, остальное перезаписывается копированием.
+        merge_offset_.resize(nw + 1);
+        merge_offset_[0] = 0;
+        for (std::size_t s = 0; s < nw; ++s) merge_offset_[s + 1] = merge_offset_[s] + local_pairs_[s].v.size();
+        out.resize(merge_offset_[nw]);
+        exec.parallel_for(nw, std::size_t(1), [&](std::size_t s) {
+            std::copy(local_pairs_[s].v.begin(), local_pairs_[s].v.end(),
+                      out.begin() + static_cast<std::ptrdiff_t>(merge_offset_[s]));
+        });
     }
 };
 

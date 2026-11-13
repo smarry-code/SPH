@@ -41,6 +41,7 @@
 // ClampList -- SoA плоских массивов.
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -91,6 +92,12 @@ struct ClampReport
     double fiber_force[dim] = {};
     std::size_t solid_clamped = 0, fiber_clamped = 0;
     double solid_max_h = 0.0; // max hsml среди зажатых Solid (печать при старте)
+    // Диагностика шага (решение владельца 2026-11-11): по полной реакции R_k = [1] + [3] каждой
+    // зажатой частицы -- сумма модулей sum_k |R_k| и max_k |R_k|, Н. Векторная сумма solid_force /
+    // fiber_force гасит вклады противоположных концов нити, сумма модулей -- нет. Пишется ядром
+    // каждый шаг (как force), в чекпоинт НЕ входит: формат чекпоинта прежний.
+    double solid_force_abs = 0.0, fiber_force_abs = 0.0;
+    double solid_force_max = 0.0, fiber_force_max = 0.0;
 };
 
 // Рабочая память стадии: списки + буфер для детерминированной суммы.
@@ -100,6 +107,10 @@ struct ClampWorkspace
     ClampList solid, fiber;
     std::vector<double> item_force[dim];    // размер >= max(solid.size(), fiber.size())
     std::vector<double> block_partial[dim]; // размер >= ceil(n / kClampReduceBlock)
+    // Полная реакция шага по элементам списка ([1] пишет, [3] прибавляет): размер solid.size() /
+    // fiber.size(); item_abs -- |R_k| для суммы модулей (размер >= max из двух).
+    std::vector<double> acc_solid[dim], acc_fiber[dim];
+    std::vector<double> item_abs;
 };
 
 // ----------------------------------------------------------------------------
@@ -237,10 +248,13 @@ inline void validate_clamps(const ClampSet& clamps, const ParticleSystem& sys, s
 // или std::vector<double>[dim] (Fiber dv) -- достаточно operator[][].
 // av == nullptr -- XSPH не трогать. force_out += -sum m a (добавляется).
 // ws.item_force[d] должен быть размерен заранее (prepare_clamp_workspace).
+// acc != nullptr -- полная реакция по элементам: acc[d][k] = f (acc_add = false, точка [1]) или
+// acc[d][k] += f (acc_add = true, точка [3]); размер acc[d] >= list.size() (prepare_clamp_workspace).
 template <class DvArr, class AvArr>
 void apply_clamp_projection(const rhs::CpuExecutor& exec, const ClampList& list,
                             const std::vector<double>& mass, DvArr& dv, AvArr* av,
-                            ClampWorkspace& ws, double (&force_out)[dim])
+                            ClampWorkspace& ws, double (&force_out)[dim],
+                            std::vector<double> (*acc)[dim] = nullptr, bool acc_add = false)
 {
     const std::size_t n = list.size();
     if (n == 0) return;
@@ -248,6 +262,10 @@ void apply_clamp_projection(const rhs::CpuExecutor& exec, const ClampList& list,
     const std::uint8_t* msk = list.mask.data();
     double* items[dim];
     for (std::size_t d = 0; d < dim; ++d) items[d] = ws.item_force[d].data();
+    double* accp[dim] = {};
+    if (acc != nullptr)
+        for (std::size_t d = 0; d < dim; ++d) accp[d] = (*acc)[d].data();
+    const bool use_acc = acc != nullptr;
 
     auto item_fn = [&, idx, msk](std::size_t k)
     {
@@ -262,6 +280,8 @@ void apply_clamp_projection(const rhs::CpuExecutor& exec, const ClampList& list,
         double f[dim];
         clamp_project_item(msk[k], mass[i], dvp, (av != nullptr) ? avp : nullptr, f);
         for (std::size_t d = 0; d < dim; ++d) items[d][k] = f[d];
+        if (use_acc)
+            for (std::size_t d = 0; d < dim; ++d) accp[d][k] = acc_add ? accp[d][k] + f[d] : f[d];
     };
 
     if (n < kClampSerialThreshold)
@@ -271,6 +291,33 @@ void apply_clamp_projection(const rhs::CpuExecutor& exec, const ClampList& list,
 
     for (std::size_t d = 0; d < dim; ++d)
         force_out[d] += clamp_fixed_block_sum(exec, ws.item_force[d], n, ws.block_partial[d]);
+}
+
+// Сумма модулей и максимум полной реакции по элементам списка (acc после [1] и [3]).
+// Сумма -- той же фиксированной двухуровневой схемой, что и force (побитово одинакова при любом
+// числе потоков); максимум от порядка не зависит.
+inline void clamp_abs_summary(const rhs::CpuExecutor& exec, const std::vector<double> (&acc)[dim],
+                              std::size_t n, ClampWorkspace& ws, double& sum_abs, double& max_abs)
+{
+    sum_abs = 0.0;
+    max_abs = 0.0;
+    if (n == 0) return;
+    if (ws.item_abs.size() < n) ws.item_abs.resize(n, 0.0);
+    double* out = ws.item_abs.data();
+    const double* a[dim];
+    for (std::size_t d = 0; d < dim; ++d) a[d] = acc[d].data();
+    auto fn = [out, &a](std::size_t k)
+    {
+        double s = 0.0;
+        for (std::size_t d = 0; d < dim; ++d) s += a[d][k] * a[d][k];
+        out[k] = std::sqrt(s);
+    };
+    if (n < kClampSerialThreshold)
+        for (std::size_t k = 0; k < n; ++k) fn(k);
+    else
+        exec.parallel_for(n, fn);
+    sum_abs = clamp_fixed_block_sum(exec, ws.item_abs, n, ws.block_partial[0]);
+    for (std::size_t k = 0; k < n; ++k) max_abs = std::max(max_abs, out[k]);
 }
 
 // c_k = 0, c_s = 0 для полностью закреплённых (списки full).
@@ -322,7 +369,10 @@ inline void prepare_clamp_workspace(const ClampSet& clamps, std::size_t ntotal, 
     {
         if (ws.item_force[d].size() < nmax) ws.item_force[d].resize(nmax, 0.0);
         if (ws.block_partial[d].size() < nblocks) ws.block_partial[d].resize(nblocks, 0.0);
+        if (ws.acc_solid[d].size() < ws.solid.size()) ws.acc_solid[d].resize(ws.solid.size(), 0.0);
+        if (ws.acc_fiber[d].size() < ws.fiber.size()) ws.acc_fiber[d].resize(ws.fiber.size(), 0.0);
     }
+    if (ws.item_abs.size() < nmax) ws.item_abs.resize(nmax, 0.0);
 }
 
 // Заполнение счётчиков и solid_max_h отчёта (реакцию пишет шаг).

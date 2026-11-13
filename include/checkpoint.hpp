@@ -9,11 +9,15 @@
 //
 // Формат: little-endian, magic "SPHCKPT\0", версия формата, SPH_DIM, флаги
 // сборки, sizeof(double), блоки с тегом и длиной, в конце CRC32 всего файла.
+// Версии формата: 1 (без проекции контакта), 2 (+ поля конфига проекции и блок PROJ),
+// 3 (+ блок USER: непрозрачное состояние вызывающего, например монитора выстрела); читаются все три.
 #pragma once
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 #include "fiber/model.hpp"
+#include "interactions/fiber_normal_projection_types.hpp"
 #include "param.hpp"
 #include "simulation_config.hpp"
 
@@ -66,6 +70,22 @@ struct Payload
     SolverHistory hist;
     EnergyState energy;
     bool has_energy = false;
+    // Тёплый старт проекции скорости нормального контакта (формат v2; в v1 пусто).
+    std::vector<interactions::NormalWarmEntry> proj_warm;
+    double proj_h_prev = 0.0;
+    // Состояние вызывающего (блок USER, формат v3; в v1/v2 пусто): байты, которые отдал UserState::save.
+    std::string user_state;
+};
+
+// Внешнее состояние, которое вызывающий хранит в чекпоинте вместе с расчётом (например, накопленные
+// максимумы монитора выстрела). time_integration зовёт save при каждой записи чекпоинта (после
+// наблюдателя шага, т.е. состояние на тот же шаг) и restore после чтения -- до первого шага цикла.
+struct UserState
+{
+    std::function<std::string()> save;
+    // blob пуст -- в чекпоинте блока нет (формат v1/v2) или save не задавался; guard_steps -- шагов
+    // сторожа на момент чекпоинта (для сверки со счётчиком вызывающего).
+    std::function<void(const std::string& blob, std::size_t guard_steps)> restore;
 };
 
 // Атомарная запись: временный файл + rename; существующий файл перед этим

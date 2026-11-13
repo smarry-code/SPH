@@ -252,6 +252,8 @@ struct FiberContactSearchResult
     // Предел шага на primitive (законы 1-3, FiberContactStepParams::pair_dt_limit):
     // заполняет ядро, минимум берёт compute_fiber_contact_dt_limit.
     std::vector<double> pair_dt_limit;
+    // Векторы отрезков при построении primitive (rhs::CpuExecutor::concat_segments).
+    std::vector<rhs::CpuExecutor::SegPart<FiberContactPrimitive>> prim_parts;
 };
 
 inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -259,10 +261,15 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
                                         const std::vector<fiber::FiberMaterial>& materials,
                                         FiberContactSearchResult& out)
 {
-    out.primitives.clear();
+    // primitives очищается только на ранних выходах: при построении он перезаписывается целиком
+    // (concat_segments), resize инициализирует лишь прирост.
     out.pair_count = 0;
     const std::size_t n = state.size();
-    if (n == 0) return;
+    if (n == 0)
+    {
+        out.primitives.clear();
+        return;
+    }
 
     if constexpr (dim != 3)
     {
@@ -272,6 +279,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
         // невозможно. Заглушка нужна только для компиляции заголовка во ВСЕХ
         // SPH_DIM-вариантах пайплайна (см. include/interactions/fiber_bond.hpp,
         // include/fiber/fiber_system.hpp -- тот же паттерн).
+        out.primitives.clear();
         return;
     }
     else
@@ -280,7 +288,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
 
         std::array<const double*, dim> coords{};
         for (std::size_t d = 0; d < dim; ++d) coords[d] = state.x[d].data();
-        out.index.build(coords, n, radius > 0.0 ? radius : 1.0);
+        out.index.build(exec, coords, n, radius > 0.0 ? radius : 1.0);
 
         auto accept = [&](rhs::index_t a, rhs::index_t b) -> bool {
             return state.object_id[a] != state.object_id[b];
@@ -289,9 +297,11 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
         out.index.find_pairs_parallel(exec, radius, accept, out.pairs);
         out.pair_count = out.pairs.size();
 
-        out.primitives.reserve(out.pairs.size());
-        for (const auto& pr : out.pairs)
-        {
+        // Пары -> primitive: параллельно по фиксированным отрезкам пар, каждый отрезок -- в свой вектор по
+        // возрастанию пары, затем склейка по порядку отрезков: тот же порядок, что у последовательного цикла.
+        exec.prepare_segment_parts(out.prim_parts);
+        exec.parallel_for_segments(out.pairs.size(), [&](std::size_t seg, std::size_t ip) {
+            const auto& pr = out.pairs[ip];
             const rhs::index_t k_a = pr.first;
             const rhs::index_t k_b = pr.second;
 
@@ -305,7 +315,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             }
             else if (a_prev != -1)
             {
-                continue; // k_a -- последняя бусина своей нити: пара отбрасывается целиком
+                return; // k_a -- последняя бусина своей нити: пара отбрасывается целиком
             }
             // иначе: k_a -- изолированная бусина, точечный сегмент (a1 остаётся -1)
 
@@ -319,7 +329,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             }
             else if (b_prev != -1)
             {
-                continue;
+                return;
             }
 
             FiberContactPrimitive prim;
@@ -332,8 +342,9 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
             prim.b_prev = b_prev;
             prim.b_has_next_segment = (b1 != -1) && (topology.next[static_cast<std::size_t>(b1)] != -1);
 
-            out.primitives.push_back(prim);
-        }
+            out.prim_parts[seg].v.push_back(prim);
+        });
+        exec.concat_segments(out.prim_parts, out.primitives);
     }
 }
 
@@ -463,6 +474,66 @@ struct FiberContactGeometry
     bool rejected_by_ownership = false; // отклонён правилом владения (§3) -- точку "видит" сосед
     bool degenerate = false;            // D~0 при совпадающих/параллельных (или неопределённых) осях -- контакт не сформирован (§4)
 };
+
+// ----------------------------------------------------------------------
+// fiber_contact_surely_apart -- дешёвый КОНСЕРВАТИВНЫЙ отсев primitive: true, только если контакт
+// заведомо невозможен (тогда compute_fiber_contact_geometry вернула бы contact == false).
+// Расстояние между отрезками >= |m_a - m_b| - (L_a + L_b)/2 (m -- середины, L -- длины; точечный
+// сегмент: a1 == -1, L = 0), а контакт требует D < d_eff = 0.5*(d_a + d_b) -- те же материалы по
+// якорным бусинам a0/b0, что в геометрии. Радиус R = d_eff + (L_a + L_b)/2 берётся с запасом
+// 1e-8*(d_eff + L_a + L_b) на snapping s,t (kFiberContactSnapEta) и округление. Некорректный индекс
+// материала -> false (решает полная геометрия). NaN в координатах -> сравнение ложно -> false.
+// ----------------------------------------------------------------------
+inline bool fiber_contact_surely_apart(const fiber::FiberState& state,
+                                        const std::vector<fiber::FiberMaterial>& materials,
+                                        const FiberContactPrimitive& prim)
+{
+    if constexpr (dim != 3)
+    {
+        (void)state;
+        (void)materials;
+        (void)prim;
+        return false;
+    }
+    else
+    {
+        const long long ma_id = static_cast<long long>(state.material_id[prim.a0]);
+        const long long mb_id = static_cast<long long>(state.material_id[prim.b0]);
+        const long long nmat = static_cast<long long>(materials.size());
+        if (ma_id < 0 || ma_id >= nmat || mb_id < 0 || mb_id >= nmat) return false;
+        const double d_eff = 0.5 * materials[static_cast<std::size_t>(ma_id)].d +
+                             0.5 * materials[static_cast<std::size_t>(mb_id)].d;
+
+        double xa0[3], xa1[3], xb0[3], xb1[3];
+        for (std::size_t d = 0; d < 3; ++d)
+        {
+            xa0[d] = state.x[d][prim.a0];
+            xa1[d] = (prim.a1 == -1) ? xa0[d] : state.x[d][static_cast<rhs::index_t>(prim.a1)];
+            xb0[d] = state.x[d][prim.b0];
+            xb1[d] = (prim.b1 == -1) ? xb0[d] : state.x[d][static_cast<rhs::index_t>(prim.b1)];
+        }
+        double la2 = 0.0, lb2 = 0.0, dm2 = 0.0;
+        double xabs = 0.0; // max |x| по четырём точкам: масштаб абсолютной ошибки округления
+        for (std::size_t d = 0; d < 3; ++d)
+        {
+            xabs = std::max({xabs, std::fabs(xa0[d]), std::fabs(xa1[d]), std::fabs(xb0[d]), std::fabs(xb1[d])});
+            const double ea = xa1[d] - xa0[d];
+            const double eb = xb1[d] - xb0[d];
+            la2 += ea * ea;
+            lb2 += eb * eb;
+            const double dm = 0.5 * (xa0[d] + xa1[d]) - 0.5 * (xb0[d] + xb1[d]);
+            dm2 += dm * dm;
+        }
+        const double la = std::sqrt(la2);
+        const double lb = std::sqrt(lb2);
+        double R = d_eff + 0.5 * (la + lb);
+        // Запас: относительный -- на snapping s,t и округление в масштабе отрезков; абсолютный -- на округление
+        // середин, разностей и расстояния в геометрии при больших координатах (ошибка ~ ulp(max|x|), не зависит
+        // от длин: при |x| ~ 2^52 и длинах ~ 1 без него отсев ложен). 64*eps*max|x| покрывает обе стороны оценки.
+        R += 1.0e-8 * (d_eff + la + lb) + 64.0 * std::numeric_limits<double>::epsilon() * xabs;
+        return std::isfinite(R) && dm2 > R * R;
+    }
+}
 
 inline FiberContactGeometry compute_fiber_contact_geometry(const fiber::FiberState& state,
                                                              const std::vector<fiber::FiberMaterial>& materials,
@@ -757,6 +828,10 @@ inline void fiber_fiber_check_params(const FiberContactStepParams& params, const
 // бы один активный слот (contact && mu>0); флаг считается отдельным
 // parallel_reduce по слотам (целочисленная сумма -- детерминированно).
 // ----------------------------------------------------------------------
+// Определена ниже (предел шага одного primitive); ядро вызывает её для закона 0 (law0_dt_min_out).
+inline double fiber_contact_pair_dt_limit(const fiber::FiberState& state, const FiberContactPrimitive& prim,
+                                          const FiberContactGeometry& geom);
+
 inline bool compute_fiber_contact_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const std::vector<fiber::FiberMaterial>& materials,
     const std::vector<FiberContactPrimitive>& primitives,
@@ -773,16 +848,77 @@ inline bool compute_fiber_contact_contributions(
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
     if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
-    if (n == 0) return false;
+    // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
+    // primitive: каждый отрезок пишет свои слоты в local[seg] (по возрастанию k), затем отрезки склеиваются
+    // по порядку. prim и seg слота -- индекс primitive и номер отрезка (см. FiberNormalContact).
+    std::vector<FiberNormalContact>* const normal = penalty ? params.normal_ff : nullptr;
+    if (n == 0)
+    {
+        if (normal) normal->clear();
+        if (params.fric_active) params.fric_active->clear();
+        if (!penalty && params.law0_dt_min_out) *params.law0_dt_min_out = std::numeric_limits<double>::max();
+        return false;
+    }
+    std::vector<rhs::CpuExecutor::SegPart<FiberNormalContact>> parts_tmp;
+    auto& normal_local = params.normal_ff_parts ? *params.normal_ff_parts : parts_tmp;
+    if (normal) exec.prepare_segment_parts(normal_local);
+
+    // Режим списка слотов трения: сброс только слотов прошлого вызова (вместо сброса каждого k в цикле).
+    std::vector<FrictionActiveRef>* const fric_list = params.fric_active;
+    std::vector<rhs::CpuExecutor::SegPart<FrictionActiveRef>> fric_parts_tmp;
+    auto& fric_local = params.fric_active_parts ? *params.fric_active_parts : fric_parts_tmp;
+    if (fric_list)
+    {
+        exec.parallel_for(fric_list->size(), [&](std::size_t j) {
+            const std::size_t kk = (*fric_list)[j].k;
+            if (kk < n) friction_contacts[kk] = FiberFrictionContact{};
+        });
+        exec.prepare_segment_parts(fric_local);
+    }
+
+    // Предел шага закона 0: свёртка min по отрезкам, как в parallel_reduce compute_fiber_contact_dt_limit
+    // (неконтактные элементы дают max() -- нейтральный элемент, поэтому достаточно принятых контактов).
+    const double kInfDt = std::numeric_limits<double>::max();
+    double dt_seg_min[rhs::CpuExecutor::kDetSegments];
+    double* const law0_dt_out = (!penalty) ? params.law0_dt_min_out : nullptr;
+    if (law0_dt_out)
+        for (std::size_t s = 0; s < rhs::CpuExecutor::kDetSegments; ++s) dt_seg_min[s] = kInfDt;
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
-        friction_contacts[k] = FiberFrictionContact{};
+        if (!fric_list) friction_contacts[k] = FiberFrictionContact{};
         const FiberContactPrimitive& prim = primitives[k];
+        if (fiber_contact_surely_apart(state, materials, prim)) return;
         const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
         if (!geom.contact) return;
 
+        // --- Режим проекции: только нормальный слот, силы и слота трения нет ---
+        if (normal)
+        {
+            if (!(geom.delta > 0.0)) return;
+            FiberNormalContact slot;
+            slot.active = true;
+            slot.prim = k;
+            slot.seg = static_cast<std::uint16_t>(seg);
+            slot.a0 = prim.a0;
+            slot.a1 = prim.a1;
+            slot.b0 = prim.b0;
+            slot.b1 = prim.b1;
+            slot.s = geom.s;
+            slot.t = geom.t;
+            for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
+            slot.delta = geom.delta;
+            slot.mu = fiber_friction_coefficient(materials[static_cast<std::size_t>(state.material_id[prim.a0])],
+                                                 materials[static_cast<std::size_t>(state.material_id[prim.b0])]);
+            slot.key = make_ff_pair_key(prim.a0, prim.a1, prim.b0, prim.b1);
+            normal_local[seg].v.push_back(slot);
+            if (pair_dt) (*pair_dt)[k] = contact::kNoLimit;
+            return;
+        }
+
         // --- Нормальная сила: тип 0 -- Герц из геометрии, 1-3 -- закон ---------
         double F = geom.F;
+        if (law0_dt_out)
+            dt_seg_min[seg] = std::min(dt_seg_min[seg], fiber_contact_pair_dt_limit(state, prim, geom));
         if (penalty)
         {
             const contact::Result res = fiber_fiber_contact_penalty(state, materials, prim, geom, params);
@@ -807,6 +943,7 @@ inline bool compute_fiber_contact_contributions(
             for (std::size_t d = 0; d < dim; ++d) slot.n[d] = geom.n[d];
             slot.N = F;
             slot.mu = mu;
+            if (fric_list) fric_local[seg].v.push_back(FrictionActiveRef{k, static_cast<std::uint16_t>(seg)});
         }
 
         rhs::ContributionWriter<fiber::FiberDelta> writer(thread_buffers[seg],
@@ -850,6 +987,21 @@ inline bool compute_fiber_contact_contributions(
             writer.emit(b1, d, static_cast<std::uint64_t>(k), 3);
         }
     });
+
+    if (normal) exec.concat_segments(normal_local, *normal);
+
+    if (law0_dt_out)
+    {
+        double res = kInfDt; // init свёртки parallel_reduce, затем отрезки по порядку
+        for (std::size_t s = 0; s < rhs::CpuExecutor::kDetSegments; ++s) res = std::min(res, dt_seg_min[s]);
+        *law0_dt_out = res;
+    }
+
+    if (fric_list)
+    {
+        exec.concat_segments(fric_local, *fric_list);
+        return !fric_list->empty();
+    }
 
     const std::size_t active_count = exec.parallel_reduce(
         n, std::size_t{0}, [&](std::size_t k) -> std::size_t { return friction_contacts[k].active ? 1u : 0u; },
@@ -949,6 +1101,7 @@ inline double compute_fiber_contact_dt_limit(const rhs::CpuExecutor& exec, const
         n, kInf,
         [&](std::size_t k) -> double {
             const FiberContactPrimitive& prim = primitives[k];
+            if (fiber_contact_surely_apart(state, materials, prim)) return kInf;
             const FiberContactGeometry geom = compute_fiber_contact_geometry(state, materials, prim);
             return fiber_contact_pair_dt_limit(state, prim, geom);
         },

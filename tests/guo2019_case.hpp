@@ -37,8 +37,12 @@ enum class Config
     T1_A, // ткань спереди, Al сзади, имя "1T_A" (в статье 1T/A)
     A_T1, // Al спереди, ткань сзади, имя "A_1T" (в статье A/1T)
     T2,   // два слоя ткани без пластины, имя "2T"
-    T4    // четыре слоя ткани без пластины, имя "4T"
+    T4,   // четыре слоя ткани без пластины, имя "4T"
+    TK    // k слоёв ткани без пластины, k = 3, 5..kMaxPlies (1, 2, 4 -- это T1, T2, T4); имя "<k>T"; k хранится отдельно
 };
+
+// Предел числа слоёв ткани для Config::TK (решение владельца 2026-11-09).
+inline constexpr int kMaxPlies = 64;
 
 inline const char* config_name(Config c)
 {
@@ -50,25 +54,55 @@ inline const char* config_name(Config c)
     case Config::A_T1: return "A_1T";
     case Config::T2: return "2T";
     case Config::T4: return "4T";
+    case Config::TK: return "kT"; // число слоёв неизвестно: используйте config_name_str(c, plies)
     }
     return "?";
 }
 
-// true -- имя распознано (A, 1T, 1T_A, A_1T, 2T, 4T; также допускаются 1T/A и A/1T).
-inline bool parse_config(const std::string& s, Config& out)
+// Имя с учётом числа слоёв (для TK -- "<plies>T"; для остальных конфигураций plies игнорируется).
+inline std::string config_name_str(Config c, int plies)
 {
+    return c == Config::TK ? std::to_string(plies) + "T" : std::string(config_name(c));
+}
+
+// true -- имя распознано (A, 1T, 1T_A, A_1T; также допускаются 1T/A и A/1T; "<k>T", k = 1..kMaxPlies).
+// plies -- число слоёв ткани для "<k>T" (0 для остальных имён). "1T", "2T", "4T" дают T1, T2, T4 (как раньше),
+// прочие k -- Config::TK. Причина отказа по диапазону k -- в err.
+inline bool parse_config(const std::string& s, Config& out, int& plies, std::string* err = nullptr)
+{
+    plies = 0;
+    if (s.size() >= 2 && s.back() == 'T' && s[0] >= '1' && s[0] <= '9' &&
+        s.find_first_not_of("0123456789") == s.size() - 1)
+    {
+        const std::string digits = s.substr(0, s.size() - 1);
+        const int k = digits.size() > 4 ? kMaxPlies + 1 : std::stoi(digits);
+        if (k > kMaxPlies)
+        {
+            if (err) *err = "число слоёв ткани должно быть от 1 до " + std::to_string(kMaxPlies) + ": " + s;
+            return false;
+        }
+        plies = k;
+        out = k == 1 ? Config::T1 : k == 2 ? Config::T2 : k == 4 ? Config::T4 : Config::TK;
+        return true;
+    }
     if (s == "A") out = Config::A;
     else if (s == "1T") out = Config::T1;
     else if (s == "1T_A" || s == "1T/A") out = Config::T1_A;
     else if (s == "A_1T" || s == "A/1T") out = Config::A_T1;
-    else if (s == "2T") out = Config::T2;
-    else if (s == "4T") out = Config::T4;
     else return false;
     return true;
 }
 
+// Прежний интерфейс: только именованные конфигурации (TK без числа слоёв смысла не имеет, поэтому не принимается).
+inline bool parse_config(const std::string& s, Config& out)
+{
+    int plies = 0;
+    return parse_config(s, out, plies) && out != Config::TK;
+}
+
 // Число слоёв ткани в мишени: 0 у A, 1 у 1T, 1T_A, A_1T, 2 у 2T, 4 у 4T.
-inline int fabric_plies(Config c)
+// Для Config::TK число слоёв берётся из plies (иначе plies игнорируется).
+inline int fabric_plies(Config c, int plies = 0)
 {
     switch (c)
     {
@@ -78,12 +112,16 @@ inline int fabric_plies(Config c)
     case Config::A_T1: return 1;
     case Config::T2: return 2;
     case Config::T4: return 4;
+    case Config::TK: return plies;
     }
     return 0;
 }
 
-inline bool config_has_fabric(Config c) { return fabric_plies(c) > 0; }
-inline bool config_has_plate(Config c) { return c != Config::T1 && c != Config::T2 && c != Config::T4; }
+inline bool config_has_fabric(Config c) { return c == Config::TK || fabric_plies(c) > 0; }
+inline bool config_has_plate(Config c)
+{
+    return c != Config::T1 && c != Config::T2 && c != Config::T4 && c != Config::TK;
+}
 
 enum class Level
 {
@@ -353,6 +391,7 @@ inline double default_t_max(Config c)
     case Config::A_T1: return 800.0e-6; // 800 мкс
     case Config::T2: return 800.0e-6;   // 800 мкс, оценка (2T 4T §3: V_BL в 1.9 раза выше, чем у 1T)
     case Config::T4: return 600.0e-6;   // 600 мкс, оценка (в Fig. 9 4T при 269 м/с прорван примерно к 200 мкс)
+    case Config::TK: return 600.0e-6;   // 600 мкс, оценка (решение владельца 2026-11-09; по аналогии с 4T)
     }
     return 800.0e-6;
 }
@@ -405,6 +444,7 @@ inline std::vector<PaperShot> paper_shots(Config c)
     case Config::T4:
         return {{247.4, false, 0}, {252.4, false, 0}, {257.7, false, 0}, {264.5, false, 0},
                 {265.8, true, 83.0}, {267.2, true, 27.7}, {268.7, true, 86.2}};
+    case Config::TK: return {}; // в статье нет
     }
     return {};
 }
@@ -425,6 +465,7 @@ inline PaperVBL paper_vbl(Config c)
     case Config::A_T1: return {148.0, 3.0, 3.0};
     case Config::T2: return {147.0, 3.0, 3.0};
     case Config::T4: return {258.0, 8.0, 5.0};
+    case Config::TK: return {0, 0, 0}; // в статье нет
     }
     return {0, 0, 0};
 }

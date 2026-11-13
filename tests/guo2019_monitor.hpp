@@ -33,12 +33,23 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
+#include <fstream>
+#include <stdexcept>
+#include <type_traits>
 #include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <io.h> // _commit
+#else
+#include <unistd.h> // fsync
+#endif
 
 namespace guo2019
 {
@@ -83,6 +94,9 @@ struct MonitorOptions
     bool stop_on_outcome = true; // останавливать расчёт при определённом исходе или t >= t_max
     RunGuard* guard = nullptr;   // для request_stop
     double wp_radius = 0.0;      // круг для w_p; <= 0 -- sc.spec.wp_radius (30 мм, ТЗ Guo 2019 §6.1; scaled 7.5 мм)
+    // Продолжение из чекпоинта: monitor.csv не перезаписывается в конструкторе; restore_state() оставляет в нём
+    // строки до шага чекпоинта и дописывает дальше (без restore_state -- файл заводится заново на первом шаге).
+    bool restart = false;
 };
 
 // Все накопленные величины (читаются после finalize()).
@@ -169,6 +183,19 @@ struct MonitorStats
 
     // Собственная стоимость монитора
     double monitor_wall_s = 0.0;
+
+    // Проекция скорости нормального контакта (fiber_*_contact_predictor = 1): максимумы за ВЕСЬ
+    // прогон по шагам (из fiber::Model::proj_stats). При выключенной проекции не заполняются.
+    double proj_resid_max = 0.0, proj_resid_rel_max = 0.0;
+    double proj_resid_load_max = 0.0; // max по шагам resid_load: недостающий импульс в долях полной нагрузки
+    double W_proj_pos_max = 0.0;      // max(0, max W_stage): положительная работа стадии (теоретически 0)
+    std::size_t proj_slots_max = 0;   // max (n_slots_ff + n_slots_fs) за шаг
+    // GUOMON03: остаток после трения и энергетическая безопасность тёплого старта.
+    double proj_resid_post_max = 0.0;      // max по шагам resid_post (остаток по итоговым скоростям, после трения)
+    double proj_resid_load_post_max = 0.0; // max по шагам resid_load_post
+    double W_warm_pos_max = 0.0;           // max(0, max W_warm): положительная работа тёплого старта до масштабирования
+    double proj_warm_scale_min = 1.0;      // min множителя тёплого старта (1 -- ни разу не уменьшался)
+    std::size_t proj_warm_scaled_steps = 0; // число шагов с warm_scale < 1
 };
 
 namespace mon_detail
@@ -181,13 +208,94 @@ inline double since(clock::time_point t0)
     return std::chrono::duration<double>(clock::now() - t0).count();
 }
 
+template <class T>
+struct is_std_vector : std::false_type
+{
+};
+template <class T, class A>
+struct is_std_vector<std::vector<T, A>> : std::true_type
+{
+};
+
+// Побайтовая (де)сериализация состояния монитора для блока USER чекпоинта: тривиально копируемые
+// значения -- как есть, std::string и std::vector -- длина u64 и элементы.
+struct StateOut
+{
+    std::string b;
+    template <class T>
+    void operator()(T& v)
+    {
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            std::uint64_t n = v.size();
+            (*this)(n);
+            b.append(v);
+        }
+        else if constexpr (is_std_vector<T>::value)
+        {
+            std::uint64_t n = v.size();
+            (*this)(n);
+            for (auto& e : v) (*this)(e);
+        }
+        else
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "состояние монитора: неподдерживаемый тип");
+            b.append(reinterpret_cast<const char*>(&v), sizeof(T));
+        }
+    }
+};
+
+struct StateIn
+{
+    const std::string& b;
+    std::size_t pos = 0;
+    void take(void* dst, std::size_t n)
+    {
+        if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+        std::memcpy(dst, b.data() + pos, n);
+        pos += n;
+    }
+    template <class T>
+    void operator()(T& v)
+    {
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            std::uint64_t n = 0;
+            (*this)(n);
+            if (n > b.size() - pos) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+            v.assign(b.data() + pos, static_cast<std::size_t>(n));
+            pos += static_cast<std::size_t>(n);
+        }
+        else if constexpr (is_std_vector<T>::value)
+        {
+            std::uint64_t n = 0;
+            (*this)(n);
+            // Каждый элемент занимает в блоке не меньше min_elem_bytes байт (тривиальный тип -- sizeof,
+            // вложенный вектор/строка -- 8 байт длины), поэтому n сверяется с числом ЭЛЕМЕНТОВ, которые могут
+            // поместиться в остаток: повреждённая длина не вызывает огромного выделения памяти до ошибки.
+            using E = typename T::value_type;
+            constexpr std::size_t min_elem_bytes =
+                (is_std_vector<E>::value || std::is_same_v<E, std::string>) ? sizeof(std::uint64_t) : sizeof(E);
+            if (n > (b.size() - pos) / min_elem_bytes) throw std::runtime_error("состояние монитора в чекпоинте обрезано");
+            v.resize(static_cast<std::size_t>(n));
+            for (auto& e : v) (*this)(e);
+        }
+        else
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "состояние монитора: неподдерживаемый тип");
+            take(&v, sizeof(T));
+        }
+    }
+};
+
 } // namespace mon_detail
 
 class GuoShotMonitor
 {
 public:
     GuoShotMonitor(const GuoScene& sc, const MonitorOptions& opt)
-        : sc_(sc), m_(sc.model), opt_(opt), nt_(sc.ntotal), nb_(sc.model.fiber.size())
+        : sc_(sc), m_(sc.model), opt_(opt), nt_(sc.ntotal), nb_(sc.model.fiber.size()),
+          proj_on_(sc.cfg.fiber_fiber_contact_predictor == 1 || sc.cfg.fiber_solid_contact_predictor == 1)
     {
         if (!(opt_.wp_radius > 0.0)) opt_.wp_radius = sc.spec.wp_radius;
         const ParticleSystem& s = m_.solid;
@@ -226,16 +334,14 @@ public:
             for (const auto& b : m_.topology.bonds)
                 if (b.mat >= 0) ++ns;
             st_.n_bonds_0 = m_.topology.bonds.size() - ns;
-            st_.n_stitch_0 = ns;
-            n_stitch_ = ns;
-            if (ns > 0)
+            // Число стежков и их начальные векторы -- из сцены (t = 0), а не из текущей модели: при --restart
+            // монитор создаётся после чтения чекпоинта, когда часть стежков уже порвана.
+            st_.n_stitch_0 = sc_.stitch_pairs.size();
+            n_stitch_ = sc_.stitch_pairs.size();
+            if (ns > 0 || n_stitch_ > 0)
             {
-                // Начальный относительный вектор пары r0 = x_j - x_i (для slip_mean и gap_mean).
-                stitch_r0_.clear();
-                for (const auto& pr : sc_.stitch_pairs)
-                    stitch_r0_.push_back({fb.x[0][pr.second] - fb.x[0][pr.first], fb.x[1][pr.second] - fb.x[1][pr.first],
-                                          fb.x[2][pr.second] - fb.x[2][pr.first]});
-                if (stitch_r0_.size() != sc_.stitch_pairs.size() || sc_.stitch_pairs.empty())
+                stitch_r0_ = sc_.stitch_r0;
+                if (stitch_r0_.size() != sc_.stitch_pairs.size() || sc_.stitch_pairs.empty() || ns > n_stitch_)
                     throw std::runtime_error("guo2019: монитор: в модели есть стежки, но сцена не хранит их пары");
             }
         }
@@ -268,6 +374,18 @@ public:
 
         if (!opt_.csv_path.empty())
         {
+            if (opt_.restart)
+                csv_pending_ = true; // открывается в restore_state() или на первом шаге
+            else
+                open_csv_fresh();
+        }
+    }
+
+    // Новый monitor.csv с заголовком.
+    void open_csv_fresh()
+    {
+        csv_pending_ = false;
+        {
             csv_ = std::fopen(opt_.csv_path.c_str(), "w");
             if (csv_)
                 std::fprintf(csv_,
@@ -281,6 +399,19 @@ public:
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",n_broken_h_p%d", k);
                     for (int k = 1; k <= nply_; ++k) std::fprintf(csv_, ",w_f_p%d", k);
                 }
+                // Модули реакций зажимов (решение владельца 2026-11-11), в конце строки -- номера прежних
+                // колонок не сдвигаются: |sum F| векторной суммы, sum |F_k| и max |F_k| по зажатым частицам.
+                std::fprintf(csv_, ",Fs_norm,Fs_abs_sum,Fs_abs_max,Ff_norm,Ff_abs_sum,Ff_abs_max");
+                // Только в режиме проекции: столбцы после всех прежних (при выключенной -- заголовок прежний).
+                if (proj_on_)
+                {
+                    std::fprintf(csv_, ",proj_n_ff,proj_n_fs,proj_max_ck,proj_max_cs,proj_resid,proj_resid_rel,"
+                                       "proj_warm_frac,W_proj_pos_max");
+                    // Новый столбец -- строго после прежних (номера прежних не сдвигаются).
+                    if (csv_load_col_) std::fprintf(csv_, ",proj_resid_load");
+                    if (csv_v3_cols_) std::fprintf(csv_, ",proj_resid_post,proj_warm_scale_min");
+                }
+                // Столбцы стежков (только со стёжкой) -- последними, после столбцов проекции.
                 if (n_stitch_ > 0)
                     std::fprintf(csv_, ",n_stitch,n_stitch_broken,F_stitch_max,F_stitch_sum,slip_mean,gap_mean");
                 std::fprintf(csv_, "\n");
@@ -303,6 +434,12 @@ public:
         const fiber::FiberState& fb = m_.fiber;
         ++st_.steps;
         const std::size_t step = st_.steps;
+        if (csv_pending_)
+        {
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: монитор: рестарт без состояния монитора -- monitor.csv заводится заново, "
+                                 "вердикт и максимумы по шару только с шага рестарта.\n");
+            open_csv_fresh();
+        }
         st_.t_end = time;
         if (st_.dt_first <= 0.0 && dt > 0.0) st_.dt_first = dt;
         if (dt > 0.0) st_.dt_min = std::min(st_.dt_min, dt);
@@ -340,6 +477,12 @@ public:
             r.Fs[d] = m_.clamp_report.solid_force[d];
             r.Ff[d] = m_.clamp_report.fiber_force[d];
         }
+        r.Fs_norm = std::sqrt(r.Fs[0] * r.Fs[0] + r.Fs[1] * r.Fs[1] + r.Fs[2] * r.Fs[2]);
+        r.Ff_norm = std::sqrt(r.Ff[0] * r.Ff[0] + r.Ff[1] * r.Ff[1] + r.Ff[2] * r.Ff[2]);
+        r.Fs_abs_sum = m_.clamp_report.solid_force_abs;
+        r.Fs_abs_max = m_.clamp_report.solid_force_max;
+        r.Ff_abs_sum = m_.clamp_report.fiber_force_abs;
+        r.Ff_abs_max = m_.clamp_report.fiber_force_max;
         if (std::fabs(r.Fs[2]) > std::fabs(st_.F_s_z_max))
         {
             st_.F_s_z_max = r.Fs[2];
@@ -458,6 +601,9 @@ public:
         // --- исход
         update_outcome(time, r.v_z, r.z_c);
 
+        // --- проекция нормального контакта: накопление за окно между строками csv
+        if (proj_on_ && m_.proj_stats.enabled) accumulate_proj(m_.proj_stats);
+
         // --- csv
         last_ = r;
         if (opt_.n_mon <= 1 || step == 1 || step % opt_.n_mon == 0)
@@ -494,6 +640,106 @@ public:
     }
 
     const MonitorStats& stats() const { return st_; }
+
+    // ---- состояние для чекпоинта (блок USER, checkpoint::UserState) ----------------------------------
+    // Зовётся при записи чекпоинта ПОСЛЕ on_step того же шага. Заодно сбрасывает monitor.csv на диск,
+    // чтобы строки до шага чекпоинта пережили аварию.
+    std::string save_state()
+    {
+        if (csv_)
+        {
+            std::fflush(csv_);
+#ifdef _WIN32
+            _commit(_fileno(csv_));
+#else
+            fsync(fileno(csv_));
+#endif
+        }
+        mon_detail::StateOut o;
+        std::uint64_t magic = kStateMagic, nt = nt_, nb = nb_;
+        std::int32_t nply = nply_;
+        std::uint8_t proj = proj_on_ ? 1 : 0;
+        o(magic);
+        o(nt);
+        o(nb);
+        o(nply);
+        o(proj);
+        state_io(o, kStateVersion);
+        return std::move(o.b);
+    }
+
+    // После чтения чекпоинта (до первого шага). blob пуст -- состояния нет (старый чекпоинт): monitor.csv
+    // заводится заново. Иначе состояние восстанавливается побитово, а в monitor.csv остаются строки до шага
+    // чекпоинта включительно (после него -- дописываются). Несовпадение сцены или шага -- исключение.
+    void restore_state(const std::string& blob, std::size_t guard_steps)
+    {
+        if (blob.empty())
+        {
+            if (csv_pending_)
+            {
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: в чекпоинте нет состояния монитора (формат v1/v2): monitor.csv "
+                                     "заводится заново, вердикт и максимумы по шару только с шага рестарта.\n");
+                open_csv_fresh();
+            }
+            return;
+        }
+        mon_detail::StateIn in{blob};
+        std::uint64_t magic = 0, nt = 0, nb = 0;
+        std::int32_t nply = 0;
+        std::uint8_t proj = 0;
+        in(magic);
+        in(nt);
+        in(nb);
+        in(nply);
+        in(proj);
+        int version = 0;
+        if (magic == kStateMagic)
+            version = 3;
+        else if (magic == kStateMagicV2)
+            version = 2;
+        else if (magic == kStateMagicV1)
+            version = 1;
+        else
+            throw std::runtime_error("состояние монитора в чекпоинте: неизвестный формат");
+        if (nt != nt_ || nb != nb_ || nply != nply_ || (proj != 0) != proj_on_)
+            throw std::runtime_error("состояние монитора в чекпоинте от другой сцены (частицы, бусины, слои или проекция)");
+        if (version == 1)
+        {
+            // Старый формат без proj_resid_load: новые поля -- нули, столбец proj_resid_load в monitor.csv
+            // не добавляется (шапка старого файла остаётся согласованной со строками).
+            st_.proj_resid_load_max = 0.0;
+            pw_resid_load_ = 0.0;
+            csv_load_col_ = false;
+            if (proj_on_)
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте старого формата GUOMON01: "
+                                     "proj_resid_load_max до шага рестарта неизвестен (0), столбец proj_resid_load "
+                                     "в monitor.csv не пишется.\n");
+        }
+        if (version <= 2)
+        {
+            // Без полей GUOMON03: значения по умолчанию, столбцы proj_resid_post,proj_warm_scale_min
+            // не добавляются (шапка старого monitor.csv остаётся согласованной со строками).
+            st_.proj_resid_post_max = 0.0;
+            st_.proj_resid_load_post_max = 0.0;
+            st_.W_warm_pos_max = 0.0;
+            st_.proj_warm_scale_min = 1.0;
+            st_.proj_warm_scaled_steps = 0;
+            pw3_ = ProjWindow3{};
+            csv_v3_cols_ = false;
+            if (proj_on_ && version == 2)
+                std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте формата GUOMON02: "
+                                     "proj_resid_post_max и proj_warm_scale_min до шага рестарта "
+                                     "неизвестны, их столбцы в monitor.csv не пишутся.\n");
+        }
+        state_io(in, version);
+        if (in.pos != blob.size()) throw std::runtime_error("состояние монитора в чекпоинте: лишние байты");
+        if (st_.steps != guard_steps)
+            throw std::runtime_error("состояние монитора в чекпоинте: шагов " + std::to_string(st_.steps) +
+                                     ", у сторожа " + std::to_string(guard_steps));
+        restored_ = true;
+        if (csv_pending_) reopen_csv_after_restart();
+    }
+    bool state_restored() const { return restored_; }
     double ball_mass() const { return ball_mass_; }
     double ball_Reff() const { return sc_.R_eff; }
     double ball_z_c0() const { return sc_.z_c0; }
@@ -562,13 +808,13 @@ public:
                         "n_broken_h=%zu w_f_max=%.9g t_first_break=%.9g w_f_at_first_break=%.9g w_p_max=%.9g "
                         "m_ej=%.9g n_tunnel=%zu max_delta_ff/d=%.9g max_delta_fs/d=%.9g contacts_per_crossing=%.9g "
                         "guard_reason=%s eps_p_max=%.9g W_p=%.9g n_bonds_plastic=%zu%s",
-                     config_name(sc_.config), level_name(sc_.level), sc_.V0, sc_.mu, outcome_name(st_.outcome), VR,
+                     config_name_str(sc_.config, sc_.n_plies).c_str(), level_name(sc_.level), sc_.V0, sc_.mu, outcome_name(st_.outcome), VR,
                      shot_energy(), st_.t_end, st_.steps, wall_s, st_.dt_first, st_.dt_min, st_.E_tot_max / E0,
                      st_.E_tot_end / E0, st_.F_s_z_max, st_.F_f_z_max, st_.n_clamped_s, st_.n_clamped_f,
                      st_.n_broken_v, st_.n_broken_h, st_.w_f_max, st_.t_first_break < 0.0 ? nan : st_.t_first_break,
                      st_.t_first_break < 0.0 ? nan : st_.w_f_at_first_break, st_.w_p_max, st_.m_ej, st_.n_tunnel,
                      st_.max_delta_ff_d, st_.max_delta_fs_d, st_.contacts_per_crossing, guard_reason.c_str(), st_.eps_p_max,
-                     st_.W_p_total, st_.n_bonds_plastic, nply_ >= 2 ? "" : "\n");
+                     st_.W_p_total, st_.n_bonds_plastic, (nply_ >= 2 || proj_on_) ? "" : "\n");
         if (nply_ >= 2)
         {
             // Новые ключи ТЗ 2T/4T §4.3 -- строго в конец строки (парсер tools/guo2019 читает по ключам).
@@ -588,9 +834,20 @@ public:
                 std::fprintf(f, " n_stitch_broken_end=%zu slip_mean_end=%.9g", st_.n_stitch_broken_end, st_.slip_mean_end);
             std::fprintf(f,
                          " contacts_per_crossing_inter=%.9g max_delta_ff_inter/d=%.9g ply_order_violations=%zu "
-                         "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e\n",
+                         "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e%s",
                          st_.contacts_per_crossing_inter, st_.max_delta_ff_inter_d, st_.ply_order_violations,
-                         st_.t_ply_order_first < 0.0 ? nan : st_.t_ply_order_first, st_.ply_gap_min, st_.ply_gap_max);
+                         st_.t_ply_order_first < 0.0 ? nan : st_.t_ply_order_first, st_.ply_gap_min, st_.ply_gap_max,
+                         proj_on_ ? "" : "\n");
+        }
+        if (proj_on_)
+        {
+            // Ключи режима проекции -- строго в конец строки.
+            std::fprintf(f, " proj_resid_max=%.9g proj_resid_rel_max=%.9g W_proj_pos_max=%.9g proj_slots_max=%zu"
+                            " proj_resid_load_max=%.9g proj_resid_post_max=%.9g proj_resid_load_post_max=%.9g"
+                            " W_warm_pos_max=%.9g proj_warm_scale_min=%.17g proj_warm_scaled_steps=%zu\n",
+                         st_.proj_resid_max, st_.proj_resid_rel_max, st_.W_proj_pos_max, st_.proj_slots_max,
+                         st_.proj_resid_load_max, st_.proj_resid_post_max, st_.proj_resid_load_post_max,
+                         st_.W_warm_pos_max, st_.proj_warm_scale_min, st_.proj_warm_scaled_steps);
         }
         std::fclose(f);
     }
@@ -642,6 +899,8 @@ private:
         double t = 0.0, dt = 0.0, z_c = 0.0, v_z = 0.0;
         double KE_s = 0.0, KE_p = 0.0, KE_f = 0.0, U_b = 0.0, U_int = 0.0, E_tot = 0.0;
         double Fs[3] = {}, Ff[3] = {};
+        double Fs_norm = 0.0, Fs_abs_sum = 0.0, Fs_abs_max = 0.0; // модули реакции пластины, Н
+        double Ff_norm = 0.0, Ff_abs_sum = 0.0, Ff_abs_max = 0.0; // модули реакции ткани, Н
         std::size_t n_bonds = 0, n_broken_v = 0, n_broken_h = 0;
         double w_f = 0.0, w_p = 0.0;
         std::vector<std::size_t> pv, ph; // по слоям (только при n_plies >= 2)
@@ -1118,18 +1377,224 @@ private:
         std::fprintf(csv_,
                      "%zu,%.12e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.12e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%zu,%zu,%zu,%.9e,%.9e%s",
                      r.step, r.t, r.dt, r.z_c, r.v_z, r.KE_s, r.KE_p, r.KE_f, r.U_b, r.U_int, r.E_tot, r.Fs[0], r.Fs[1],
-                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p,
-                     nply_ >= 2 || n_stitch_ > 0 ? "" : "\n");
+                     r.Fs[2], r.Ff[0], r.Ff[1], r.Ff[2], r.n_bonds, r.n_broken_v, r.n_broken_h, r.w_f, r.w_p, "");
         if (nply_ >= 2)
         {
             for (std::size_t k = 0; k < r.pv.size(); ++k) std::fprintf(csv_, ",%zu", r.pv[k]);
             for (std::size_t k = 0; k < r.ph.size(); ++k) std::fprintf(csv_, ",%zu", r.ph[k]);
             for (std::size_t k = 0; k < r.wp.size(); ++k) std::fprintf(csv_, ",%.9e", r.wp[k]);
-            if (n_stitch_ == 0) std::fprintf(csv_, "\n");
         }
+        // Модули реакций зажимов -- всегда, сразу после прежних столбцов (и до столбцов проекции).
+        std::fprintf(csv_, ",%.9e,%.9e,%.9e,%.9e,%.9e,%.9e", r.Fs_norm, r.Fs_abs_sum, r.Fs_abs_max, r.Ff_norm,
+                     r.Ff_abs_sum, r.Ff_abs_max);
+        if (proj_on_)
+        {
+            // Окно -- с прошлой записанной строки; пустое окно (нет шагов с проекцией) -- нули, warm_frac = 1.
+            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e", pw_.n_ff, pw_.n_fs, pw_.max_ck, pw_.max_cs,
+                         pw_.resid, pw_.resid_rel, pw_.warm_frac, pw_.W_pos);
+            if (csv_load_col_) std::fprintf(csv_, ",%.9e", pw_resid_load_);
+            if (csv_v3_cols_) std::fprintf(csv_, ",%.9e,%.17g", pw3_.resid_post, pw3_.warm_scale_min);
+            pw_ = ProjWindow{};
+            pw_resid_load_ = 0.0;
+            pw3_ = ProjWindow3{};
+        }
+        // Столбцы стежков (только со стёжкой) -- последними.
         if (n_stitch_ > 0)
-            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e\n", r.n_stitch, r.n_stitch_broken, r.F_stitch_max,
+            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e", r.n_stitch, r.n_stitch_broken, r.F_stitch_max,
                          r.F_stitch_sum, r.slip_mean, r.gap_mean);
+        std::fprintf(csv_, "\n");
+        // Сброс буфера: внешний сэмплер (tail -1 monitor.csv) видит актуальный шаг; содержимое файла не меняется.
+        std::fflush(csv_);
+    }
+
+    // Окно накопления столбцов проекции между записанными строками monitor.csv.
+    //   n_ff, n_fs, max_ck, max_cs, resid, resid_rel -- максимумы по шагам окна;
+    //   warm_frac -- МИНИМУМ по шагам окна с активными слотами (1, если слотов не было);
+    //   W_pos     -- max(0, max W_stage по шагам окна): положительная работа стадии (теоретически 0).
+    // Максимум resid_load по окну лежит ОТДЕЛЬНО (pw_resid_load_): ProjWindow пишется в чекпоинт
+    // побайтно (state_io), и изменение его размера сломало бы чтение формата GUOMON01.
+    struct ProjWindow
+    {
+        std::size_t n_ff = 0, n_fs = 0;
+        double max_ck = 0.0, max_cs = 0.0, resid = 0.0, resid_rel = 0.0;
+        double warm_frac = 1.0;
+        double W_pos = 0.0;
+    };
+
+    // Окно столбцов GUOMON03 (тоже отдельно от ProjWindow): resid_post -- максимум, warm_scale_min --
+    // минимум (1 -- тёплый старт не уменьшался). Поля -- по одному в state_io.
+    struct ProjWindow3
+    {
+        double resid_post = 0.0;
+        double warm_scale_min = 1.0;
+    };
+
+    void accumulate_proj(const interactions::NormalProjectionStats& ps)
+    {
+        pw_.n_ff = std::max(pw_.n_ff, ps.n_slots_ff);
+        pw_.n_fs = std::max(pw_.n_fs, ps.n_slots_fs);
+        pw_.max_ck = std::max(pw_.max_ck, ps.max_ck);
+        pw_.max_cs = std::max(pw_.max_cs, ps.max_cs);
+        pw_.resid = std::max(pw_.resid, ps.resid);
+        pw_.resid_rel = std::max(pw_.resid_rel, ps.resid_rel);
+        pw_resid_load_ = std::max(pw_resid_load_, ps.resid_load);
+        const std::size_t n_slots = ps.n_slots_ff + ps.n_slots_fs;
+        if (n_slots > 0) pw_.warm_frac = std::min(pw_.warm_frac, ps.warm_frac);
+        pw_.W_pos = std::max(pw_.W_pos, ps.W_stage);
+        // весь прогон
+        st_.proj_resid_max = std::max(st_.proj_resid_max, ps.resid);
+        st_.proj_resid_rel_max = std::max(st_.proj_resid_rel_max, ps.resid_rel);
+        st_.proj_resid_load_max = std::max(st_.proj_resid_load_max, ps.resid_load);
+        st_.W_proj_pos_max = std::max(st_.W_proj_pos_max, ps.W_stage);
+        st_.proj_slots_max = std::max(st_.proj_slots_max, n_slots);
+        // GUOMON03
+        if (ps.resid_post_valid)
+        {
+            pw3_.resid_post = std::max(pw3_.resid_post, ps.resid_post);
+            st_.proj_resid_post_max = std::max(st_.proj_resid_post_max, ps.resid_post);
+            st_.proj_resid_load_post_max = std::max(st_.proj_resid_load_post_max, ps.resid_load_post);
+        }
+        pw3_.warm_scale_min = std::min(pw3_.warm_scale_min, ps.warm_scale);
+        st_.W_warm_pos_max = std::max(st_.W_warm_pos_max, ps.W_warm);
+        st_.proj_warm_scale_min = std::min(st_.proj_warm_scale_min, ps.warm_scale);
+        if (ps.warm_scale < 1.0) ++st_.proj_warm_scaled_steps;
+    }
+
+    // Формат состояния: GUOMON02 = GUOMON01 + в конце proj_resid_load_max и pw_resid_load_;
+    // GUOMON03 (текущий) = GUOMON02 + в конце поля остатка после трения и масштабирования тёплого старта.
+    static constexpr std::uint64_t kStateMagicV1 = 0x3130'4e4f'4d4f'5547ull; // "GUOMON01"
+    static constexpr std::uint64_t kStateMagicV2 = 0x3230'4e4f'4d4f'5547ull; // "GUOMON02"
+    static constexpr std::uint64_t kStateMagic = 0x3330'4e4f'4d4f'5547ull;   // "GUOMON03"
+    static constexpr int kStateVersion = 3;
+
+    // Все поля, меняющиеся после конструктора (накопленные величины, исход, окно проекции, последняя строка).
+    // Величины конструктора (x0 зажатых, массы, z0, U_int0, пакет слоёв) -- от исходной сцены, она та же.
+    // ДОБАВЛЯЯ поле в MonitorStats или изменяемый член класса -- добавить его сюда, В КОНЕЦ, под
+    // условием на новую версию (version -- версия формата: 1 = GUOMON01, 2 = GUOMON02; запись всегда
+    // текущей, kStateVersion), и поднять magic.
+    template <class F>
+    void state_io(F& f, int version)
+    {
+        MonitorStats& s = st_;
+        f(s.steps), f(s.t_end), f(s.dt_first), f(s.dt_min);
+        f(s.E_tot_0), f(s.E_tot_max), f(s.E_tot_end);
+        f(s.KE_s_0), f(s.KE_s_end), f(s.KE_p_end), f(s.KE_f_end), f(s.U_b_end), f(s.U_int_end);
+        f(s.z_c_end), f(s.v_z_end);
+        f(s.F_s_z_max), f(s.F_s_z_max_t), f(s.F_f_z_max), f(s.F_f_z_max_t), f(s.n_clamped_s), f(s.n_clamped_f);
+        f(s.n_bonds_0), f(s.n_bonds_end), f(s.n_broken_v), f(s.n_broken_h);
+        f(s.t_first_break), f(s.w_f_at_first_break), f(s.w_f_max), f(s.w_p_max), f(s.w_f_end);
+        f(s.eps_p_max), f(s.W_p_total), f(s.n_bonds_plastic);
+        f(s.n_plies), f(s.n_broken_v_p), f(s.n_broken_h_p), f(s.t_first_break_p), f(s.w_f_at_first_break_p);
+        f(s.pullin_at_first_break_p), f(s.pullin_end_p), f(s.w_f_end_p);
+        f(s.contacts_per_crossing_inter), f(s.contacts_per_crossing_inter_step1), f(s.max_delta_ff_inter_d);
+        f(s.ff_intra_initial), f(s.ff_inter_initial), f(s.ff_intra_step1), f(s.ff_inter_step1);
+        f(s.ff_intra_last), f(s.ff_inter_last), f(s.ply_order_violations), f(s.ply_order_violations_step1);
+        f(s.t_ply_order_first), f(s.ply_gap_min), f(s.ply_gap_max);
+        f(s.m_ej), f(s.m_ej_max), f(s.n_tunnel), f(s.max_delta_ff_d), f(s.max_delta_fs_d);
+        f(s.contacts_per_crossing), f(s.contacts_per_crossing_step1), f(s.ff_contacts_initial), f(s.ff_delta_d_initial);
+        f(s.ff_contacts_step1), f(s.ff_delta_d_step1), f(s.ff_contacts_max);
+        f(s.plate_vmax_step1), f(s.bead_vmax_step1);
+        f(s.clamp_violations), f(s.clamp_first_violation), f(s.mass_violations);
+        f(s.outcome), f(s.V_R), f(s.t_outcome), f(s.stopped_by_monitor);
+        f(s.monitor_wall_s);
+        f(s.proj_resid_max), f(s.proj_resid_rel_max), f(s.W_proj_pos_max), f(s.proj_slots_max);
+
+        f(last_bonds_), f(broken_v_), f(broken_h_), f(cnt_), f(brk_pv_), f(brk_ph_), f(pullin_cur_);
+        f(t_pos_), f(pw_), f(last_written_);
+        Row& r = last_;
+        f(r.step), f(r.t), f(r.dt), f(r.z_c), f(r.v_z), f(r.KE_s), f(r.KE_p), f(r.KE_f), f(r.U_b), f(r.U_int), f(r.E_tot);
+        f(r.Fs), f(r.Ff), f(r.n_bonds), f(r.n_broken_v), f(r.n_broken_h), f(r.w_f), f(r.w_p), f(r.pv), f(r.ph), f(r.wp);
+
+        // окно исхода (deque) и пластическая работа по связям (unordered_map, в файле -- по возрастанию ключа)
+        std::vector<double> h;
+        std::vector<std::uint64_t> keys;
+        std::vector<double> vals;
+        if constexpr (std::is_same_v<F, mon_detail::StateOut>)
+        {
+            for (const auto& e : hist_) h.push_back(e.first), h.push_back(e.second);
+            for (const auto& kv : wp_bond_) keys.push_back(kv.first);
+            std::sort(keys.begin(), keys.end());
+            for (std::uint64_t k : keys) vals.push_back(wp_bond_.at(k));
+        }
+        f(h), f(keys), f(vals);
+        if constexpr (!std::is_same_v<F, mon_detail::StateOut>)
+        {
+            if (h.size() % 2 != 0 || keys.size() != vals.size())
+                throw std::runtime_error("состояние монитора в чекпоинте повреждено");
+            hist_.clear();
+            for (std::size_t i = 0; i < h.size(); i += 2) hist_.emplace_back(h[i], h[i + 1]);
+            wp_bond_.clear();
+            for (std::size_t i = 0; i < keys.size(); ++i) wp_bond_[keys[i]] = vals[i];
+        }
+
+        // GUOMON02: поля метрики resid_load (в GUOMON01 их нет -- остаются нулями).
+        if (version >= 2) f(s.proj_resid_load_max), f(pw_resid_load_);
+        // GUOMON03: остаток после трения и масштабирование тёплого старта (в GUOMON01/02 -- значения по
+        // умолчанию: нули и warm_scale_min = 1).
+        if (version >= 3)
+        {
+            f(s.proj_resid_post_max), f(s.proj_resid_load_post_max), f(s.W_warm_pos_max), f(s.proj_warm_scale_min);
+            f(s.proj_warm_scaled_steps);
+            f(pw3_.resid_post), f(pw3_.warm_scale_min);
+        }
+    }
+
+    // monitor.csv после рестарта с состоянием: заголовок и строки с шагом <= st_.steps (полные: столько же
+    // полей, сколько в заголовке) сохраняются, дальше файл дописывается. Нет файла -- заводится заново.
+    void reopen_csv_after_restart()
+    {
+        csv_pending_ = false;
+        std::ifstream in(opt_.csv_path);
+        if (!in)
+        {
+            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: монитор: нет %s -- строки до шага рестарта потеряны.\n",
+                         opt_.csv_path.c_str());
+            open_csv_fresh();
+            return;
+        }
+        std::vector<std::string> keep;
+        std::string line;
+        std::size_t ncomma = 0, last_step = 0, dropped_tail = 0;
+        while (std::getline(in, line))
+        {
+            if (keep.empty())
+            {
+                ncomma = static_cast<std::size_t>(std::count(line.begin(), line.end(), ','));
+                keep.push_back(line);
+                continue;
+            }
+            char* end = nullptr;
+            const unsigned long long st = std::strtoull(line.c_str(), &end, 10);
+            const bool full = end != line.c_str() && *end == ',' &&
+                              static_cast<std::size_t>(std::count(line.begin(), line.end(), ',')) == ncomma;
+            if (full && st <= st_.steps)
+            {
+                keep.push_back(line);
+                last_step = static_cast<std::size_t>(st);
+            }
+            else
+                ++dropped_tail;
+        }
+        in.close();
+        const std::string tmp = opt_.csv_path + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::trunc);
+            for (const auto& l : keep) out << l << '\n';
+            out.flush();
+            if (!out)
+                throw std::runtime_error("монитор: не удалось записать " + tmp + " при продолжении monitor.csv после рестарта");
+        }
+        // Ошибка на любом шаге -- исключение: молча продолжать без monitor.csv нельзя (ревью Codex).
+#ifdef _WIN32
+        std::remove(opt_.csv_path.c_str()); // rename в Windows не заменяет существующий файл
+#endif
+        if (std::rename(tmp.c_str(), opt_.csv_path.c_str()) != 0)
+            throw std::runtime_error("монитор: не удалось заменить " + opt_.csv_path + " (rename из " + tmp + ")");
+        csv_ = std::fopen(opt_.csv_path.c_str(), "a");
+        if (!csv_) throw std::runtime_error("монитор: не удалось открыть " + opt_.csv_path + " для дописывания");
+        std::fprintf(stderr, "монитор: состояние восстановлено на шаге %zu; monitor.csv: оставлено строк %zu (последняя -- шаг %zu), "
+                             "отброшено после чекпоинта %zu.\n", st_.steps, keep.empty() ? 0 : keep.size() - 1, last_step,
+                     dropped_tail);
     }
 
     const GuoScene& sc_;
@@ -1159,6 +1624,14 @@ private:
     double t_pos_ = -1.0;
 
     std::FILE* csv_ = nullptr;
+    bool csv_pending_ = false; // restart: monitor.csv ещё не открыт (ждём restore_state или первого шага)
+    bool restored_ = false;    // состояние восстановлено из чекпоинта
+    bool proj_on_ = false; // режим проекции нормального контакта включён в конфиге сцены
+    ProjWindow pw_;
+    double pw_resid_load_ = 0.0; // max resid_load по окну monitor.csv (вне ProjWindow, см. комментарий там)
+    bool csv_load_col_ = true;   // писать столбец proj_resid_load (false -- рестарт из чекпоинта GUOMON01)
+    ProjWindow3 pw3_;            // окно столбцов GUOMON03 (вне ProjWindow, см. комментарий там)
+    bool csv_v3_cols_ = true;    // писать столбцы GUOMON03 (false -- рестарт из чекпоинта GUOMON01/02)
     Row last_;
     bool last_written_ = true;
 

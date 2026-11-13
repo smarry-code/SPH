@@ -4,22 +4,27 @@
 // и замер стоимости (ТЗ Guo 2019 §7). Не тест: add_test() не добавлен.
 //
 // Использование:
-//   guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled
+//   guo2019_shot --config=A|1T|1T_A|A_1T|<k>T --level=base|fine|smoke|scaled
 //                (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)
 //                --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]
 //                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--mu-ff=<x>] [--mu-fs=<x>] [--repeat=N]
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
-//                [--probe-frame] [--plate-nz=N] [--save-t=<с>]
+//                [--probe-frame] [--plate-nz=N] [--save-t=<с>] [--ball-d=<м>] [--ball-mass=<кг>] [--ball-dx=<м>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
 //                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
 //                [--stitch=none|grid|seam] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]
 //                [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]
-//   --stitch=grid -- стёжка слоёв пакета (2T/4T) связями-стежками на линиях шва сетки патчей N x N (--stitch-tile,
+//   --stitch=grid -- стёжка слоёв пакета (2T, 4T, kT при k >= 2) связями-стежками на линиях шва сетки патчей N x N (--stitch-tile,
 //   по умолчанию 3; nx и ny уровня делятся на N); --stitch-lines -- какие линии шва; --stitch-every=N -- прокол на
 //   каждой N-й нити; материал стежка: E (8,5e10 Па), d (0,2e-3 м), eps_break (0,03), nu = 0,3. Ключи --stitch-*
 //   без --stitch=grid|seam и --stitch=grid при < 2 слоёв -- ошибка. --eps-break и --fiber-E к стежкам не относятся.
 //   --stitch=seam -- шов-строчка в плоскости каждого слоя (соседние проколы вдоль линии шва связываются
 //   стежком; любая конфигурация с тканью, в т. ч. 1T/A_1T/1T_A).
+//   <k>T -- пакет из k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи,
+//   t_max по умолчанию 600 мкс, оценка). --ball-d / --ball-mass / --ball-dx заменяют диаметр, массу и шаг решётки шара
+//   уровня (плотность выводится из массы); к имени каталога выстрела добавляется _bD<мм>m<г>dx<мм>, в shot.txt --
+//   ball_D=, ball_m=, ball_dx=, ball_rho=. При --checkpoint рядом пишется scene_id.txt; --restart с другим числом слоёв
+//   или другим шаром отклоняется (старые чекпоинты без scene_id.txt не проверяются).
 //   --mu задаёт ОБА коэффициента (μ_ff нить-нить и μ_fs нить-Solid); --mu-ff / --mu-fs переопределяют только свой
 //   коэффициент и имеют приоритет над --mu независимо от порядка ключей. Не заданный из пары берётся из --mu
 //   (по умолчанию kMuDefault). Без новых ключей поведение прежнее. Значения пишутся в shot.txt (mu_ff=, mu_fs=).
@@ -28,13 +33,14 @@
 //   --checkpoint / --checkpoint-every=N -- чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev) каждые N шагов
 //   интегрирования (N >= 1, по умолчанию 10000) и финальный при останове; --restart -- продолжить выстрел из него
 //   (нет файла -- ошибка); --force -- разрешить менять физические настройки при --restart (только с --restart).
-//   Состояние монитора пока не сохраняется: после --restart monitor.csv и вердикт по шару неполные.
+//   Состояние монитора хранится в чекпоинте (блок USER, формат v3): после --restart вердикт, максимумы (n_tunnel,
+//   max_delta_*) и monitor.csv -- как при непрерывном счёте; из чекпоинта v1/v2 -- только с шага рестарта.
 //   --fiber-inelastic -- файл с директивами PLASTIC/PLASTIC_TABLE/RATE/VISCO/FAILURE для материала 0 (без MATERIAL/FIBER);
 //   разбирается штатным парсером .fib и переносится в материалы сцены; --eps-break переопределяет eps_break
 //   (и l_break всех связей = (1+eps_break) l0).
 //
 // Каждый выстрел -- свежая сцена (build_guo_scene) в своём подкаталоге
-// <out>/<config>_<level>[_nz<N>]_v<V0>_r<i>/; файлы конвейера (log.txt, кадры) пишутся в CWD,
+// <out>/<config>_<level>[_nz<N>][_bD<мм>m<г>dx<мм>]_v<V0>_r<i>/; файлы конвейера (log.txt, кадры) пишутся в CWD,
 // поэтому на время выстрела делается chdir туда. Код сцены и монитора -- tests/guo2019_*.hpp.
 
 #include "guo2019_monitor.hpp"
@@ -110,6 +116,7 @@ std::string fmt_v0(double v)
 struct Options
 {
     Config config = Config::A;
+    int plies = 0; // число слоёв для Config::TK (для 1T, 2T, 4T тоже заполняется)
     Level level = Level::Base;
     bool have_config = false, have_level = false;
     bool have_v0 = false, paper_shots = false, have_list = false;
@@ -131,6 +138,7 @@ struct Options
     int threads = 0; // 0 -- как в cfg по умолчанию
     int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
+    double ball_d = 0.0, ball_m = 0.0, ball_dx = 0.0; // > 0 -- переопределить D_s, m_s, dx_s шара уровня
     fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
     double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
     double fiber_E = -1.0;    // > 0 -- переопределить модуль Юнга нити, Па (все материалы ткани)
@@ -142,6 +150,9 @@ struct Options
     // guo2019_initial_conditions.txt (по умолчанию 0 = Герц), иначе 0..3.
     int fs_contact = -1;
     int ff_contact = -1;
+    // Нормальная сила законов 1-3 как проекция скорости: -1 -- не задано (берётся из конфига).
+    int ff_predictor = -1, fs_predictor = -1;
+    int proj_iters = -1, proj_warm = -1;
     std::size_t contact_stats = 0; // > 0 -- contact_stats.csv каждые N шагов (только сборка с SPH_CONTACT_STATS)
     bool hold_n = false;           // контрфакт «удержание N» (только сборка с SPH_CONTACT_STATS)
     bool checkpoint = false;       // писать чекпоинты (--checkpoint или --checkpoint-every)
@@ -188,14 +199,17 @@ bool parse_ll(const std::string& s, long long& out)
 
 void print_usage()
 {
-    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T|2T|4T --level=base|fine|smoke|scaled\n"
+    std::printf("Использование: guo2019_shot --config=A|1T|1T_A|A_1T|<k>T --level=base|fine|smoke|scaled\n"
                 "                   (--v0=<м/с> | --paper-shots | --v0-list=a,b,c)\n"
                 "                   --out=<каталог> [--frames=off|camera] [--t-max=<с>] [--time-limit=<с>]\n"
                 "                   [--max-steps=N] [--no-body-isolation] [--mu=<μ>] [--mu-ff=<μ>] [--mu-fs=<μ>]\n"
                 "                   [--repeat=N]\n"
                 "                   [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]\n"
                 "                   [--probe-frame|--no-probe-frame] [--plate-nz=N] [--save-t=<с>]\n"
+                "                   [--ball-d=<м>] [--ball-mass=<кг>] [--ball-dx=<м>]  (шар: диаметр, масса, шаг решётки; каждый > 0)\n"
                 "                   [--fs-contact=0..4] [--ff-contact=0..4]  (закон контакта нитей, 0 = Герц, 4 = Герц + демпфер)\n"
+                "                   [--ff-contact-predictor=0|1] [--fs-contact-predictor=0|1] [--contact-proj-iters=1..100] [--contact-proj-warm=0|1]\n"
+                "                   (нормальная сила законов 1-3 как проекция скорости; по умолчанию 0)\n"
                 "                   [--contact-stats=N] [--hold-n]  (диагностика контактов, сборка с -DSPH_CONTACT_STATS=ON)\n"
                 "                   [--fiber-inelastic=<файл.fib>] [--eps-break=<x>] [--fiber-E=<Па>]\n"
                 "                   [--energy-log=N]  (лог энергии, сборка с -DSPH_ENERGY_LOG=ON)\n"
@@ -208,10 +222,14 @@ void print_usage()
                 "  умолчанию 3; nx и ny уровня делятся на N); --stitch-every=N -- прокол на каждой N-й нити; по умолчанию\n"
                 "  E = 8.5e10 Па, d = 0.2e-3 м, eps_break = 0.03. --stitch-* без --stitch=grid|seam -- ошибка.\n"
                 "  --stitch=seam: шов-строчка в плоскости каждого слоя (любая конфигурация с тканью, в т. ч. 1T).\n"
+                "  <k>T: k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи, t_max 600 мкс).\n"
+                "  --ball-*: к имени каталога выстрела добавляется _bD<мм>m<г>dx<мм>; в shot.txt -- ball_D, ball_m, ball_dx, ball_rho;\n"
+                "  --restart с другим числом слоёв или шаром отклоняется (по scene_id.txt, пишется при --checkpoint).\n"
                 "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
                 "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
                 "  --restart: продолжить выстрел из checkpoint.ckpt (если файла нет -- ошибка; при битом основном берётся .prev).\n"
-                "  Состояние монитора пока не сохраняется: monitor.csv и вердикт по шару после --restart неполные.\n"
+                "  Состояние монитора хранится в чекпоинте (v3): вердикт, максимумы и monitor.csv после --restart полные\n"
+                "  (из чекпоинта v1/v2 -- только с шага рестарта).\n"
                 "  --force: при --restart разрешить менять физические настройки (без него любое отличие -- отказ со списком полей).\n"
                 "  --force без --restart -- ошибка. Риски --force:\n%s"
                 "  --mu задаёт оба коэффициента трения (нить-нить и нить-Solid); --mu-ff / --mu-fs переопределяют только\n"
@@ -235,7 +253,12 @@ int parse_args(int argc, char** argv, Options& o)
         if (a == "-h" || a == "--help") return 1;
         else if (a.rfind("--config=", 0) == 0)
         {
-            if (!parse_config(val("--config="), o.config)) return bad("--config");
+            std::string cerr_msg;
+            if (!parse_config(val("--config="), o.config, o.plies, &cerr_msg))
+            {
+                if (!cerr_msg.empty()) std::fprintf(stderr, "%s\n", cerr_msg.c_str());
+                return bad("--config");
+            }
             o.have_config = true;
         }
         else if (a.rfind("--level=", 0) == 0)
@@ -343,6 +366,21 @@ int parse_args(int argc, char** argv, Options& o)
             if (!parse_ll(val("--plate-nz="), n) || n < 1 || n > 64) return bad("--plate-nz");
             o.plate_nz = static_cast<int>(n);
         }
+        else if (a.rfind("--ball-d=", 0) == 0)
+        {
+            if (!parse_double(val("--ball-d="), d) || !(d > 0.0)) return bad("--ball-d");
+            o.ball_d = d;
+        }
+        else if (a.rfind("--ball-mass=", 0) == 0)
+        {
+            if (!parse_double(val("--ball-mass="), d) || !(d > 0.0)) return bad("--ball-mass");
+            o.ball_m = d;
+        }
+        else if (a.rfind("--ball-dx=", 0) == 0)
+        {
+            if (!parse_double(val("--ball-dx="), d) || !(d > 0.0)) return bad("--ball-dx");
+            o.ball_dx = d;
+        }
         else if (a.rfind("--fs-contact=", 0) == 0)
         {
             if (!parse_ll(val("--fs-contact="), n) || n < 0 || n > 4) return bad("--fs-contact");
@@ -352,6 +390,26 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--ff-contact="), n) || n < 0 || n > 4) return bad("--ff-contact");
             o.ff_contact = static_cast<int>(n);
+        }
+        else if (a.rfind("--ff-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--ff-contact-predictor="), n) || n < 0 || n > 1) return bad("--ff-contact-predictor");
+            o.ff_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--fs-contact-predictor=", 0) == 0)
+        {
+            if (!parse_ll(val("--fs-contact-predictor="), n) || n < 0 || n > 1) return bad("--fs-contact-predictor");
+            o.fs_predictor = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-iters=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-iters="), n) || n < 1 || n > 100) return bad("--contact-proj-iters");
+            o.proj_iters = static_cast<int>(n);
+        }
+        else if (a.rfind("--contact-proj-warm=", 0) == 0)
+        {
+            if (!parse_ll(val("--contact-proj-warm="), n) || n < 0 || n > 1) return bad("--contact-proj-warm");
+            o.proj_warm = static_cast<int>(n);
         }
         else if (a.rfind("--contact-stats=", 0) == 0 || a == "--hold-n")
         {
@@ -469,7 +527,7 @@ int parse_args(int argc, char** argv, Options& o)
             return 2;
         }
     }
-    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T|2T|4T\n"); return 2; }
+    if (!o.have_config) { std::fprintf(stderr, "Нужен --config=A|1T|1T_A|A_1T|<k>T\n"); return 2; }
     if (!o.have_level) { std::fprintf(stderr, "Нужен --level=base|fine|smoke|scaled\n"); return 2; }
     if (o.out.empty()) { std::fprintf(stderr, "Нужен --out=<каталог>\n"); return 2; }
     const int modes = (o.have_v0 ? 1 : 0) + (o.paper_shots ? 1 : 0) + (o.have_list ? 1 : 0);
@@ -485,10 +543,10 @@ int parse_args(int argc, char** argv, Options& o)
     }
     if (o.stitch)
     {
-        if (o.stitch_seam ? !config_has_fabric(o.config) : (o.config != Config::T2 && o.config != Config::T4))
+        if (o.stitch_seam ? !config_has_fabric(o.config) : fabric_plies(o.config, o.plies) < 2)
         {
             std::fprintf(stderr, o.stitch_seam ? "--stitch=seam требует конфигурации с тканью (не --config=A)\n"
-                                               : "--stitch=grid требует пакета из >= 2 слоёв (--config=2T|4T)\n");
+                                               : "--stitch=grid требует пакета из >= 2 слоёв (--config=<k>T, k >= 2)\n");
             return 2;
         }
         const LevelSpec ls = level_spec(o.level);
@@ -658,6 +716,8 @@ KV apply_fiber_overrides(const Options& opt, GuoScene& sc, const fs::path& workd
     info.emplace_back("impulse_push_vmax", fmtg(opt.impulse_push_vmax));
     info.emplace_back("impulse_gamma", fmtg(opt.impulse_gamma > 0.0 ? opt.impulse_gamma : 1.0));
     info.emplace_back("dt_scale", fmtg(opt.dt_scale));
+    // Ключи проекции нормального контакта пишутся в shot.txt отдельно (по sc.cfg после применения CLI,
+    // см. run_shot): здесь cfg выстрела ещё не заполнен, а сама функция зовётся только при переопределениях нити.
     return info;
 }
 
@@ -666,11 +726,20 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
     ShotRecord rec;
     rec.V0 = V0;
     rec.rep = rep;
-    const std::string cname = config_name(opt.config);
+    const std::string cname = config_name_str(opt.config, opt.plies);
     const std::string lname = level_name(opt.level);
     const std::string nz_tag = opt.plate_nz > 0 ? "_nz" + std::to_string(opt.plate_nz) : std::string();
+    // Шар не по умолчанию -- свой каталог, чтобы не пересечься с обычными выстрелами
+    std::string ball_tag;
+    if (opt.ball_d > 0.0 || opt.ball_m > 0.0 || opt.ball_dx > 0.0)
+    {
+        const LevelSpec L0 = level_spec(opt.level);
+        const double bd = opt.ball_d > 0.0 ? opt.ball_d : L0.D_s, bm = opt.ball_m > 0.0 ? opt.ball_m : L0.m_s,
+                     bx = opt.ball_dx > 0.0 ? opt.ball_dx : L0.dx_s;
+        ball_tag = "_bD" + fmtg(bd * 1e3, 6) + "m" + fmtg(bm * 1e3, 6) + "dx" + fmtg(bx * 1e3, 6);
+    }
     const fs::path sub =
-        fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
+        fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + ball_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
     rec.dir = sub;
     try
     {
@@ -692,7 +761,8 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             ss.E = opt.stitch_E;
             ss.d = opt.stitch_d;
             ss.eps_break = opt.stitch_eps_break;
-            sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz, ss);
+            sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz,
+                                  opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx, ss);
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
@@ -736,6 +806,11 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         if (opt.impulse_gamma > 0.0)
             sc.cfg.fiber_solid_contact_impulse_gamma = sc.cfg.fiber_fiber_contact_impulse_gamma = opt.impulse_gamma;
         sc.cfg.dt_scale = opt.dt_scale;
+        if (opt.ff_predictor >= 0) sc.cfg.fiber_fiber_contact_predictor = opt.ff_predictor;
+        if (opt.fs_predictor >= 0) sc.cfg.fiber_solid_contact_predictor = opt.fs_predictor;
+        if (opt.proj_iters >= 0) sc.cfg.fiber_contact_projection_iters = opt.proj_iters;
+        if (opt.proj_warm >= 0) sc.cfg.fiber_contact_projection_warm = opt.proj_warm;
+        validate_fiber_contact_projection(sc.cfg); // ошибка настроек -- исключение выстрела (ОШИБКА)
 #ifdef SPH_CONTACT_STATS
         // Статистика контактов -- в подкаталог выстрела (CWD).
         sc.cfg.contact_stats_every = opt.contact_stats;
@@ -762,6 +837,33 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         // Чекпоинты/рестарт: файл -- в каталоге выстрела (абсолютный путь, CWD = sub). При --restart
         // dt/time ниже перекрываются состоянием цикла из чекпоинта (time_integration).
         const fs::path ckpt_path = sub / "checkpoint.ckpt";
+        // Идентификатор сцены (число слоёв и шар): параметры шара и слоёв не входят в cfg чекпоинта, поэтому
+        // сверяются отдельным текстовым файлом; формат чекпоинта не меняется, старые чекпоинты без файла допускаются.
+        // Стёжка -- тоже часть сцены (связи в топологии); без стёжки строка прежняя.
+        const std::string stitch_id =
+            opt.stitch ? std::string(" stitch=") + (opt.stitch_seam ? "seam" : "grid") + " tile=" + std::to_string(opt.stitch_tile) +
+                             " lines=" + (opt.stitch_lines_x ? "x" : "") + (opt.stitch_lines_y ? "y" : "") +
+                             " every=" + std::to_string(opt.stitch_every) + " E=" + fmtg(opt.stitch_E, 17) +
+                             " d=" + fmtg(opt.stitch_d, 17) + " eps_break=" + fmtg(opt.stitch_eps_break, 17) +
+                             " n_stitch=" + std::to_string(sc.n_stitch)
+                       : std::string();
+        const std::string scene_id = "config=" + config_name_str(opt.config, sc.n_plies) + " plies=" + std::to_string(sc.n_plies) +
+                                     " ball_D=" + fmtg(sc.spec.D_s, 17) + " ball_m=" + fmtg(sc.spec.m_s, 17) +
+                                     " ball_dx=" + fmtg(sc.spec.dx_s, 17) + stitch_id + "\n";
+        const fs::path id_path = sub / "scene_id.txt";
+        if (opt.checkpoint && !opt.restart)
+        {
+            std::ofstream idf(id_path);
+            idf << scene_id;
+        }
+        if (opt.restart && fs::exists(id_path))
+        {
+            std::ifstream idf(id_path);
+            const std::string saved((std::istreambuf_iterator<char>(idf)), std::istreambuf_iterator<char>());
+            if (saved != scene_id)
+                throw std::runtime_error("--restart: сцена не совпадает с сохранённой (число слоёв/шар/стёжка):\n  сохранено: " + saved +
+                                         "  сейчас:    " + scene_id);
+        }
         if (opt.checkpoint)
         {
             sc.cfg.checkpoint_file = ckpt_path.string();
@@ -774,9 +876,6 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                 throw std::runtime_error("--restart: нет чекпоинта " + ckpt_path.string() + " (и .prev) в каталоге выстрела");
             sc.cfg.restart_file = (fs::exists(ckpt_path) ? ckpt_path : prev).string();
             sc.cfg.restart_force = opt.force;
-            std::fprintf(stderr, "ПРЕДУПРЕЖДЕНИЕ: --restart: состояние монитора не сохраняется -- monitor.csv и вердикт по "
-                                 "шару для %s после рестарта неполные (monitor.csv перезаписывается с шага рестарта).\n",
-                         sub.string().c_str());
         }
 
         double dt = compute_cfl_timestep(sc.cfg, sc.model.solid, sc.ntotal) * sc.cfg.dt_scale, time = 0.0;
@@ -788,14 +887,20 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         mo.t_max = t_max;
         mo.csv_path = (sub / "monitor.csv").string();
         mo.guard = &guard;
+        mo.restart = opt.restart;
         GuoShotMonitor monitor(sc, mo);
         guard.set_step_observer([&](double d, double t) { monitor.on_step(d, t); });
+        // Состояние монитора -- в блоке USER чекпоинта (только при --checkpoint / --restart).
+        checkpoint::UserState mon_state;
+        mon_state.save = [&monitor] { return monitor.save_state(); };
+        mon_state.restore = [&monitor](const std::string& b, std::size_t n) { monitor.restore_state(b, n); };
+        const checkpoint::UserState* mon_state_ptr = (opt.checkpoint || opt.restart) ? &mon_state : nullptr;
 
         // ---- прогон
         const auto w0 = std::chrono::steady_clock::now();
         {
             e2e::ScopedSilence silence(true);
-            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard);
+            time_integration(sc.cfg, sc.model, sc.ntotal, dt, time, sc.spec.dx_s, &guard, mon_state_ptr);
         }
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count();
         monitor.finalize();
@@ -866,12 +971,23 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         add("wall_forecast_h", fmtg(wall_fc_h, 6));
         add("monitor_wall_s", fmtg(st.monitor_wall_s, 6));
         add("monitor_share_pct", fmtg(mon_share, 4));
+        // Только при --restart: restored -- вердикт и максимумы за весь выстрел; partial -- только с шага рестарта.
+        if (opt.restart) add("monitor_state", monitor.state_restored() ? "restored" : "partial");
         add("frames_sph_n", std::to_string(fz.n_sph));
         add("frames_fiber_n", std::to_string(fz.n_fiber));
         add("frames_bytes_total", std::to_string(fz.bytes_sph + fz.bytes_fiber));
         add("frame_sph_bytes", fmtg(frame_sph, 10));
         add("frame_fiber_bytes", fmtg(frame_fiber, 10));
         for (const auto& kvp : fiber_info) add(kvp.first, kvp.second);
+        // Режим проекции (любой вид контакта): ключи из ИТОГОВОЙ конфигурации sc.cfg (после CLI); при
+        // выключенном режиме строка shot.txt не меняется. Место в строке -- прежнее (перед mu_ff).
+        if (sc.cfg.fiber_fiber_contact_predictor == 1 || sc.cfg.fiber_solid_contact_predictor == 1)
+        {
+            add("ff_contact_predictor", std::to_string(sc.cfg.fiber_fiber_contact_predictor == 1 ? 1 : 0));
+            add("fs_contact_predictor", std::to_string(sc.cfg.fiber_solid_contact_predictor == 1 ? 1 : 0));
+            add("contact_proj_iters", std::to_string(sc.cfg.fiber_contact_projection_iters));
+            add("contact_proj_warm", std::to_string(sc.cfg.fiber_contact_projection_warm));
+        }
         add("mu_ff", fmtg(mu_ff));
         add("mu_fs", fmtg(mu_fs));
         if (opt.stitch)
@@ -884,6 +1000,13 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             add("stitch_d", fmtg(opt.stitch_d));
             add("stitch_eps_break", fmtg(opt.stitch_eps_break));
             add("n_stitch", std::to_string(sc.n_stitch));
+        }
+        if (opt.ball_d > 0.0 || opt.ball_m > 0.0 || opt.ball_dx > 0.0) // шар не по умолчанию
+        {
+            add("ball_D", fmtg(sc.spec.D_s));
+            add("ball_m", fmtg(sc.spec.m_s));
+            add("ball_dx", fmtg(sc.spec.dx_s));
+            add("ball_rho", fmtg(sc.rho_s));
         }
         {
             std::ofstream outf(sub / "shot.txt");
@@ -980,7 +1103,7 @@ void write_vbl(const Options& opt, const std::vector<ShotRecord>& recs, std::FIL
     const VblResult v = compute_vbl(recs);
     const PaperVBL pv = paper_vbl(opt.config);
     auto emit = [&](std::FILE* f) {
-        std::fprintf(f, "config=%s level=%s mu=%g body_isolation=%d\n", config_name(opt.config), level_name(opt.level),
+        std::fprintf(f, "config=%s level=%s mu=%g body_isolation=%d\n", config_name_str(opt.config, opt.plies).c_str(), level_name(opt.level),
                      opt.mu, opt.body_isolation ? 1 : 0);
         std::fprintf(f, "выстрелов с определённым исходом: %zu, не определён (исключены): %zu\n", v.n_det, v.n_undet);
         if (v.has_n) std::fprintf(f, "наибольшая «н» (не пробит): %.1f м/с\n", v.max_n);
@@ -1103,7 +1226,7 @@ int main(int argc, char** argv)
 
     std::printf("=== guo2019_shot: config=%s level=%s, выстрелов в серии %zu, mu=%g, изоляция тел %s, кадры %s, "
                 "t_max=%.0f мкс, time-limit=%s, n_mon=%zu, n_diag=%zu, repeat=%d, bracket=%s, probe-frame=%s ===\n",
-                config_name(opt.config), level_name(opt.level), v_first.size(), opt.mu,
+                config_name_str(opt.config, opt.plies).c_str(), level_name(opt.level), v_first.size(), opt.mu,
                 opt.body_isolation ? "вкл." : "ВЫКЛ.", opt.frames_camera ? "camera" : "off",
                 (opt.t_max > 0.0 ? opt.t_max : default_t_max(opt.config, opt.level)) * 1e6,
                 opt.time_limit > 0.0 ? fmtg(opt.time_limit, 6).c_str() : "нет", opt.n_mon, opt.n_diag, opt.repeat,
@@ -1201,11 +1324,11 @@ int main(int argc, char** argv)
             std::printf("\n--- повторы пропущены: V_BL модели не определён ---\n");
     }
 
-    std::printf("\n=== Итог: %s %s ===\n", config_name(opt.config), level_name(opt.level));
+    std::printf("\n=== Итог: %s %s ===\n", config_name_str(opt.config, opt.plies).c_str(), level_name(opt.level));
     write_shots_csv(opt, recs);
     write_vbl(opt, recs, stdout);
     // Послойные разрывы последнего пробивного выстрела (ТЗ 2T/4T §4.5), только для пакета из >= 2 слоёв
-    if (fabric_plies(opt.config) >= 2)
+    if (fabric_plies(opt.config, opt.plies) >= 2)
     {
         const ShotRecord* last = nullptr;
         for (const auto& s : recs)

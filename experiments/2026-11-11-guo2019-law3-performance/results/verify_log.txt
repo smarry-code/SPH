@@ -1,0 +1,63 @@
+2026-11-11 15:43:07 === старт: NEW=contact3_fix 2026-11-11 15:43:07 = b6b3d77 + правки по ревью Codex (безопасный тёплый старт по f, неподвижные опоры в Т4); BASE=6edcdc5 (HEAD b6b3d77 без правок по ревью Codex)
+2026-11-11 15:44:37 сборка NEW build rc=0 предупреждений: 1
+2026-11-11 15:46:06 сборка NEW build-elog rc=0 предупреждений: 1
+2026-11-11 15:46:06 сборка BASE build-elog (guo2019_shot) rc=0 предупреждений: 0
+2026-11-11 15:46:06 предупреждения в изменённых файлах NEW:
+2026-11-11 15:46:08 test_fiber_contact_projection (build) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-11 15:46:10 test_fiber_contact_projection (build-elog) rc=0: fiber_contact_projection_test: ALL OK
+  ok   : Т4: W_stage <= 1e-12 E
+  ok   : Т4: W_stage <= 1e-12 E
+  ok   : Т4: W_stage <= 1e-12 E (узел из 3 нитей)
+  ok   : Т4: W_stage <= 1e-12 E (Solid на 3 бусинах)
+  ok   : Т4: W_stage <= 1e-12 E (цепочка Solid-сегмент-бусина)
+T4 random: W_pos/E = 0.000e+00 (порог 1e-12)
+  ok   : Т4: W_stage <= 1e-12 E на каждом шаге (случайная сцена)
+    Т4 random (без закреплённых): W_pos/E = 0.000e+00 (порог 1e-12); последний шаг: W_warm = 3.382e-04 Дж, warm_scale = 0.62472606744468639, W_stage = -3.168e-04 Дж
+  ok   : Т4: W_stage <= 1e-12 E на каждом шаге (случайная сцена без закреплённых)
+    Т4 random (со закреплённых): W_pos/E = 0.000e+00 (порог 1e-12); последний шаг: W_warm = 8.167e-07 Дж, warm_scale = 0.99900105491157998, W_stage = -4.976e-04 Дж
+  ok   : Т4: W_stage <= 1e-12 E на каждом шаге (случайная сцена со закреплённых)
+[Т4а] тёплый старт на расходящейся паре
+  ok   : Т4: W_stage <= 1e-12 E на каждом шаге (variant 0)
+  ok   : Т4: W_stage <= 1e-12 E на каждом шаге (variant 1)
+2026-11-11 15:51:46 ctest build rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-11 15:57:29 ctest build-elog rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-11 15:57:29 test_checkpoint (вывод) rc=0
+PASS: 1a. round-trip PC (ode_solver=0), связи целы
+PASS: 1b. round-trip Euler (ode_solver=1), связи целы
+PASS: 2a. round-trip PC, связи рвутся до шага N
+PASS: 2b. round-trip Euler, связи рвутся до шага N
+PASS: 3. целостность: порча байта, обрезка, неверный magic
+PASS: 4. политика настроек: t_total/save_t -- да, CFL -- только с force
+PASS: 4a. периодичность checkpoint_every_steps=7
+PASS: 5. ротация: .ckpt и .ckpt.prev, без временного файла
+PASS: 7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается
+PASS: 8. v3: user_state round-trip (в т.ч. нулевые байты); файл v2 читается
+         A: слотов нить-нить 1, resid = 1.034e-16 м/с, W_stage = -1.906e-14 Дж, warm_scale = 1
+         чекпоинт на шаге 20: записей тёплого старта 1, h_prev = 1.357e-08
+  ok   : в чекпоинте непустая таблица тёплого старта
+PASS: 9. проекция: рестарт с заполненным тёплым стартом побитово равен непрерывному прогону
+PASS: 10. проекция: полный шаг на 1 и 4 потоках побитово одинаков
+2026-11-11 15:58:37   закон 0 monitor.csv: СОВПАДАЕТ
+2026-11-11 15:58:37   закон 0 energy_log.csv: СОВПАДАЕТ
+2026-11-11 15:58:37   закон 0 shot.txt (без времени): СОВПАДАЕТ
+2026-11-11 15:59:40   закон 3 monitor.csv: СОВПАДАЕТ
+2026-11-11 15:59:40   закон 3 energy_log.csv: СОВПАДАЕТ
+2026-11-11 15:59:40   закон 3 shot.txt (без времени): СОВПАДАЕТ
+2026-11-11 16:00:48   закон 4 monitor.csv: СОВПАДАЕТ
+2026-11-11 16:00:48   закон 4 energy_log.csv: СОВПАДАЕТ
+2026-11-11 16:00:48   закон 4 shot.txt (без времени): СОВПАДАЕТ
+2026-11-11 16:00:59 проекция BASE rc=0
+2026-11-11 16:01:09 проекция NEW rc=0
+2026-11-11 16:01:09   проекция energy_log.csv: ОТЛИЧАЕТСЯ с строки line 8
+2026-11-11 16:01:09   проекция monitor.csv, общие 31 столбцов: ОТЛИЧАЕТСЯ с строки line 551; столбцов NEW = 33; шапка NEW: W_proj_pos_max proj_resid_load proj_resid_post proj_warm_scale_min 
+2026-11-11 16:01:09   NEW shot.txt проекция: proj_resid_max=5.76327569 proj_resid_rel_max=75.5125781 W_proj_pos_max=0 proj_slots_max=246 proj_resid_load_max=0.068978536 proj_resid_post_max=5.90044582 proj_resid_load_post_max=0.0707985716 proj_warm_scale_min=0 proj_warm_scaled_steps=256 
+2026-11-11 16:01:09   BASE shot.txt проекция: proj_resid_max=5.76327569 proj_resid_rel_max=9.60674072 W_proj_pos_max=1.25004711e-06 proj_slots_max=250 proj_resid_load_max=0.0581808701 
+2026-11-11 16:01:16 чекпоинт ч.1 rc=0
+2026-11-11 16:01:20 чекпоинт ч.2 rc=0: монитор: состояние восстановлено на шаге 1300; monitor.csv: оставлено строк 1300 (последняя -- шаг 1300), отброшено после чекпоинта 0.
+2026-11-11 16:01:20   рестарт monitor.csv: СОВПАДАЕТ
+2026-11-11 16:01:20   рестарт energy_log.csv: СОВПАДАЕТ
+2026-11-11 16:01:20   рестарт shot.txt: СОВПАДАЕТ
+2026-11-11 16:01:27 чекпоинт BASE (GUOMON02) ч.1 rc=0
+2026-11-11 16:01:31 ч.2 NEW rc=0: ПРЕДУПРЕЖДЕНИЕ: состояние монитора в чекпоинте формата GUOMON02: proj_resid_post_max и proj_warm_scale_min до шага рестарта неизвестны, их столбцы в monitor.csv не пишутся. монитор: состояние восстановлено на шаге 1300; monitor.csv: оставлено строк 1300 (последняя -- шаг 1300), отброшено после чекпоинта 0. 
+2026-11-11 16:01:31   шапка monitor.csv после рестарта из GUOMON02: W_proj_pos_max proj_resid_load ; строк с другим числом полей: 0
+2026-11-11 16:01:31 готово

@@ -38,7 +38,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -977,6 +979,310 @@ void test_8_8_friction_zero_mu_regression()
     }
 }
 
+// =========================================================================
+// Консервативный отсев fiber_contact_surely_apart и предел шага закона 0 из ядра.
+// =========================================================================
+
+bool same_bits(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+using V3 = std::array<double, 3>;
+
+// Четыре бусины (a0,a1,b0,b1) в состоянии; материалы 0 и 1 с разным d. a1/b1 == -1 -- точечный сегмент.
+struct PairCase
+{
+    fiber::FiberState state;
+    std::vector<fiber::FiberMaterial> materials;
+    interactions::FiberContactPrimitive prim;
+};
+
+PairCase make_pair_case(const V3& a0, const V3& a1, bool a_point, const V3& b0, const V3& b1, bool b_point,
+                        double d_a, double d_b)
+{
+    PairCase c;
+    c.state.resize(4);
+    const V3* pts[4] = {&a0, &a1, &b0, &b1};
+    for (std::size_t k = 0; k < 4; ++k)
+    {
+        for (std::size_t d = 0; d < 3; ++d)
+        {
+            c.state.x[d][k] = (*pts[k])[d];
+            c.state.vx[d][k] = 0.0;
+        }
+        c.state.mass[k] = 1.0e-6;
+        c.state.object_id[k] = k < 2 ? 0 : 1;
+        c.state.material_id[k] = k < 2 ? 0 : 1;
+    }
+    c.materials.push_back(make_material(2.0e9, 0.3, d_a, 1200.0));
+    c.materials.push_back(make_material(2.0e9, 0.3, d_b, 1200.0));
+    c.prim.a0 = 0;
+    c.prim.a1 = a_point ? -1 : 1;
+    c.prim.b0 = 2;
+    c.prim.b1 = b_point ? -1 : 3;
+    return c;
+}
+
+V3 vadd(const V3& a, const V3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
+V3 vmul(const V3& a, double k) { return {a[0] * k, a[1] * k, a[2] * k}; }
+V3 vsub(const V3& a, const V3& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
+double vdot(const V3& a, const V3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+V3 vcross(const V3& a, const V3& b)
+{
+    return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+}
+V3 vunit(const V3& a) { return vmul(a, 1.0 / std::sqrt(vdot(a, a))); }
+
+void test_surely_apart_conservative()
+{
+    std::printf("test_surely_apart_conservative:\n");
+    std::mt19937_64 gen(20261112ULL);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    auto rand_dir = [&]() {
+        const double z = 2.0 * U(gen) - 1.0, ph = 2.0 * kPi * U(gen);
+        const double rr = std::sqrt(std::max(0.0, 1.0 - z * z));
+        return V3{rr * std::cos(ph), rr * std::sin(ph), z};
+    };
+
+    std::size_t violations = 0, n_apart = 0, n_contact = 0, n_total = 0, n_far_apart = 0, n_far = 0;
+    auto test_case = [&](const PairCase& c, bool far_expected) {
+        const bool apart = interactions::fiber_contact_surely_apart(c.state, c.materials, c.prim);
+        const auto geom = interactions::compute_fiber_contact_geometry(c.state, c.materials, c.prim);
+        ++n_total;
+        if (apart) ++n_apart;
+        if (geom.contact) ++n_contact;
+        if (apart && geom.contact) ++violations;
+        if (far_expected)
+        {
+            ++n_far;
+            if (apart) ++n_far_apart;
+        }
+    };
+
+    // 1) Случайные пары в кубе (в т.ч. точечные сегменты, пересекающиеся и почти параллельные).
+    for (int it = 0; it < 60000; ++it)
+    {
+        const double scale = (it % 3 == 0) ? 0.3 : 1.0;
+        const double d_a = 0.01 + 0.2 * U(gen), d_b = 0.01 + 0.2 * U(gen);
+        const V3 a0 = {scale * U(gen), scale * U(gen), scale * U(gen)};
+        const V3 b0 = {scale * U(gen), scale * U(gen), scale * U(gen)};
+        const bool a_point = (U(gen) < 0.15), b_point = (U(gen) < 0.15);
+        const V3 ea = rand_dir();
+        // Часть пар -- почти параллельные оси.
+        V3 eb = rand_dir();
+        if (it % 5 == 0) eb = vunit(vadd(ea, vmul(rand_dir(), 1.0e-6)));
+        const V3 a1 = vadd(a0, vmul(ea, 0.5 * U(gen)));
+        const V3 b1 = vadd(b0, vmul(eb, 0.5 * U(gen)));
+        test_case(make_pair_case(a0, a1, a_point, b0, b1, b_point, d_a, d_b), false);
+    }
+
+    // 2) Адверсариальные: истинное расстояние d_eff*(1 +- eps). Нить A -- отрезок, B -- перпендикулярный
+    //    отрезок/точка над внутренней точкой A (расстояние ровно D) либо сдвиг за конец A.
+    const double eps_list[] = {1e-10, -1e-10, 1e-6, -1e-6, 1e-12, -1e-12, 1e-9, -1e-9, 0.0};
+    for (int it = 0; it < 20000; ++it)
+    {
+        const double d_a = 0.01 + 0.1 * U(gen), d_b = 0.01 + 0.1 * U(gen);
+        const double d_eff = 0.5 * (d_a + d_b);
+        const double eps = eps_list[it % 9];
+        const double dist = d_eff * (1.0 + eps);
+        const V3 e1 = rand_dir();
+        V3 e2 = rand_dir();
+        e2 = vunit(vsub(e2, vmul(e1, vdot(e2, e1))));
+        const V3 e3 = vcross(e1, e2);
+        const double La = (U(gen) < 0.2) ? 0.0 : 0.05 + 0.5 * U(gen);
+        const V3 p0 = {U(gen), U(gen), U(gen)};
+        const double off = (it % 4 == 0) ? 100.0 : 0.0; // большие координаты -- проверка округления
+        const V3 pbase = {p0[0] + off, p0[1] + off, p0[2] + off};
+        const V3 a1 = vadd(pbase, vmul(e1, La));
+        V3 qb;
+        if (it % 3 == 0 && La > 0.0)
+        {
+            // Ближайшая точка -- внутри A.
+            qb = vadd(vadd(pbase, vmul(e1, La * (0.1 + 0.8 * U(gen)))), vmul(e2, dist));
+        }
+        else
+        {
+            // Ближайшая точка -- за концом A: расстояние dist по диагонали (долю даёт угол).
+            const double ang = 0.2 + 1.2 * U(gen);
+            qb = vadd(vadd(a1, vmul(e1, dist * std::sin(ang))), vmul(e2, dist * std::cos(ang)));
+        }
+        const double Lb = (U(gen) < 0.3) ? 0.0 : 0.05 + 0.5 * U(gen);
+        const V3 b0 = vsub(qb, vmul(e3, Lb * U(gen)));
+        const V3 b1 = vadd(b0, vmul(e3, Lb));
+        test_case(make_pair_case(pbase, a1, La == 0.0, b0, b1, Lb == 0.0, d_a, d_b), false);
+    }
+
+    // 3) Заведомо далёкие пары: фильтр должен срабатывать.
+    for (int it = 0; it < 5000; ++it)
+    {
+        const double d_a = 0.01 + 0.1 * U(gen), d_b = 0.01 + 0.1 * U(gen);
+        const V3 a0 = {U(gen), U(gen), U(gen)};
+        const V3 a1 = vadd(a0, vmul(rand_dir(), 0.3 * U(gen)));
+        const V3 b0 = {U(gen) + 5.0, U(gen), U(gen)};
+        const V3 b1 = vadd(b0, vmul(rand_dir(), 0.3 * U(gen)));
+        test_case(make_pair_case(a0, a1, (it % 7 == 0), b0, b1, (it % 11 == 0), d_a, d_b), true);
+    }
+
+    // 4) Большие абсолютные координаты (ревью Codex): округление середин и длин при |x| >> длины.
+    //    Точный контрпример без абсолютного запаса: точка A в base-8, отрезок B [base-5, base+8] по оси x,
+    //    d_eff = 3.25, base = 2^52: истинное расстояние 3 < d_eff -- контакт есть, отсев недопустим.
+    {
+        const double base = std::ldexp(1.0, 52);
+        const PairCase ce = make_pair_case({base - 8.0, 0, 0}, {base - 8.0, 0, 0}, true, {base - 5.0, 0, 0},
+                                           {base + 8.0, 0, 0}, false, 3.25, 3.25);
+        const auto g = interactions::compute_fiber_contact_geometry(ce.state, ce.materials, ce.prim);
+        check(g.contact, "контрпример 2^52: полная геометрия видит контакт (кейс содержателен)");
+        check(!interactions::fiber_contact_surely_apart(ce.state, ce.materials, ce.prim),
+              "контрпример 2^52: отсева нет");
+        test_case(ce, false);
+    }
+    //    Семейство: адверсариальные пары у порога, сдвинутые на 2^20 .. 2^60 по всем осям.
+    for (int it = 0; it < 8000; ++it)
+    {
+        const double off = std::ldexp(1.0, 20 + (it % 41));
+        const double d_a = 0.5 + U(gen), d_b = 0.5 + U(gen);
+        const double d_eff = 0.5 * (d_a + d_b);
+        const double dist = d_eff * (1.0 + eps_list[it % 9]);
+        const V3 e1 = rand_dir();
+        V3 e2 = rand_dir();
+        e2 = vunit(vsub(e2, vmul(e1, vdot(e2, e1))));
+        const V3 e3 = vcross(e1, e2);
+        const double La = (U(gen) < 0.2) ? 0.0 : 1.0 + 20.0 * U(gen);
+        const V3 pbase = {off + U(gen), off + U(gen), off + U(gen)};
+        const V3 a1 = vadd(pbase, vmul(e1, La));
+        const V3 qb = vadd(vadd(pbase, vmul(e1, La * U(gen))), vmul(e2, dist));
+        const double Lb = (U(gen) < 0.3) ? 0.0 : 1.0 + 20.0 * U(gen);
+        const V3 b0 = vsub(qb, vmul(e3, Lb * U(gen)));
+        const V3 b1 = vadd(b0, vmul(e3, Lb));
+        test_case(make_pair_case(pbase, a1, La == 0.0, b0, b1, Lb == 0.0, d_a, d_b), false);
+    }
+
+    std::printf("    пар=%zu, контактов=%zu, отсеяно=%zu, далёких отсеяно %zu из %zu, нарушений=%zu\n", n_total,
+                n_contact, n_apart, n_far_apart, n_far, violations);
+    check(violations == 0, "surely_apart => нет контакта (нарушений нет)");
+    check(n_contact > 1000, "в наборе достаточно настоящих контактов (тест не пустой)");
+    check(n_far_apart == n_far, "заведомо далёкие пары отсеиваются фильтром");
+    check(n_apart > n_total / 10, "фильтр отсеивает заметную долю пар");
+
+    // Некорректный материал -> false (решает полная геометрия).
+    PairCase bad = make_pair_case({0, 0, 0}, {1, 0, 0}, false, {0, 10, 0}, {1, 10, 0}, false, 0.01, 0.01);
+    check(interactions::fiber_contact_surely_apart(bad.state, bad.materials, bad.prim),
+          "корректная далёкая пара: отсев");
+    bad.state.material_id[0] = 7;
+    check(!interactions::fiber_contact_surely_apart(bad.state, bad.materials, bad.prim),
+          "индекс материала вне диапазона -> false");
+}
+
+// Сцена с множеством контактов: nx нитей вдоль x и ny вдоль y, пересекающихся на разной глубине.
+struct GridScene
+{
+    fiber::FiberState state;
+    fiber::FiberTopology topology;
+    std::vector<fiber::FiberMaterial> materials;
+};
+
+GridScene make_grid_scene(int nf, double z_gap_scale)
+{
+    GridScene g;
+    const double d = 1.0e-3, l0 = 0.01;
+    g.materials.push_back(make_material(2.0e9, 0.3, d, 1200.0));
+    const int nb = 12;
+    const std::size_t total = static_cast<std::size_t>(2 * nf * nb);
+    g.state.resize(total);
+    g.topology.resize(total);
+    std::size_t base = 0;
+    int oid = 0;
+    for (int j = 0; j < nf; ++j)
+    {
+        std::vector<std::array<double, 3>> beads;
+        std::vector<double> masses;
+        for (int i = 0; i < nb; ++i)
+        {
+            beads.push_back({(i - 5.5) * l0, 0.5 * l0 + j * 0.9 * l0, 1.0e-4 * z_gap_scale * j});
+            masses.push_back(1.0e-6);
+        }
+        append_chain(g.state, g.topology, base, oid++, 0, beads, masses);
+        base += static_cast<std::size_t>(nb);
+    }
+    for (int k = 0; k < nf; ++k)
+    {
+        std::vector<std::array<double, 3>> beads;
+        std::vector<double> masses;
+        for (int i = 0; i < nb; ++i)
+        {
+            beads.push_back({0.5 * l0 + k * 0.9 * l0 - 2.5 * l0, (i - 2.0) * l0, 0.95e-3 - 0.7e-4 * z_gap_scale * k});
+            masses.push_back(1.0e-6 * (1.0 + 0.1 * k));
+        }
+        append_chain(g.state, g.topology, base, oid++, 0, beads, masses);
+        base += static_cast<std::size_t>(nb);
+    }
+    return g;
+}
+
+void test_law0_dt_from_kernel()
+{
+    std::printf("test_law0_dt_from_kernel:\n");
+    for (int scene = 0; scene < 3; ++scene)
+    {
+        // 0: плотная сетка с контактами; 1: контактов нет; 2: одна y-нить против x-нитей.
+        GridScene g = (scene == 0) ? make_grid_scene(6, 1.0) : make_grid_scene(6, scene == 1 ? 40.0 : 1.0);
+        if (scene == 1)
+            for (std::size_t i = 0; i < g.state.size(); ++i) g.state.x[2][i] += (g.state.object_id[i] >= 6) ? 0.05 : 0.0;
+        if (scene == 2)
+            for (std::size_t i = 0; i < g.state.size(); ++i)
+                if (g.state.object_id[i] >= 7) g.state.x[2][i] += 1.0; // в контакте остаётся одна y-нить (6) с x-нитями
+        for (int nt : {1, 2, 7, 8})
+        {
+            rhs::CpuExecutor exec(nt);
+            interactions::FiberContactSearchResult search;
+            interactions::build_fiber_contact_search(exec, g.state, g.topology, g.materials, search);
+            std::size_t ncontact = 0;
+            for (const auto& pr : search.primitives)
+                if (interactions::compute_fiber_contact_geometry(g.state, g.materials, pr).contact) ++ncontact;
+
+            interactions::FiberContactStepParams p;
+            double dt_kernel = -1.0;
+            p.law0_dt_min_out = &dt_kernel;
+            std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
+            std::vector<interactions::FiberFrictionContact> slots;
+            interactions::compute_fiber_contact_contributions(exec, g.state, g.materials, search.primitives, buffers,
+                                                              slots, p);
+            const double dt_ref = interactions::compute_fiber_contact_dt_limit(exec, g.state, g.materials,
+                                                                                search.primitives);
+            const std::string lab = "сцена " + std::to_string(scene) + ", потоков " + std::to_string(nt);
+            std::printf("    %s: primitives=%zu, контактов=%zu, dt=%.9e\n", lab.c_str(), search.primitives.size(),
+                        ncontact, dt_ref);
+            check(same_bits(dt_kernel, dt_ref), lab + ": dt ядра == compute_fiber_contact_dt_limit (побитово)");
+            // Независимый эталон без отсева fiber_contact_surely_apart (ревью Codex): прежняя формула
+            // parallel_reduce(min) по полной геометрии всех primitive.
+            const auto& prims = search.primitives;
+            const double dt_nofilter = exec.parallel_reduce(
+                prims.size(), std::numeric_limits<double>::max(),
+                [&](std::size_t k) {
+                    return interactions::fiber_contact_pair_dt_limit(
+                        g.state, prims[k], interactions::compute_fiber_contact_geometry(g.state, g.materials, prims[k]));
+                },
+                [](double a, double b) { return std::min(a, b); });
+            check(same_bits(dt_kernel, dt_nofilter), lab + ": dt ядра == эталон без отсева (побитово)");
+            if (scene == 0) check(ncontact > 5, lab + ": в сцене много контактов (предпосылка)");
+            if (scene == 1)
+                check(ncontact == 0 && dt_kernel == std::numeric_limits<double>::max(),
+                      lab + ": без контактов -> max()");
+        }
+    }
+    // n == 0: пустой список primitive.
+    {
+        rhs::CpuExecutor exec(2);
+        GridScene g = make_grid_scene(2, 1.0);
+        std::vector<interactions::FiberContactPrimitive> none;
+        interactions::FiberContactStepParams p;
+        double dt_kernel = -1.0;
+        p.law0_dt_min_out = &dt_kernel;
+        std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> buffers;
+        std::vector<interactions::FiberFrictionContact> slots;
+        interactions::compute_fiber_contact_contributions(exec, g.state, g.materials, none, buffers, slots, p);
+        check(dt_kernel == std::numeric_limits<double>::max(), "n == 0: dt ядра = max()");
+    }
+}
+
 } // namespace
 
 int main()
@@ -990,6 +1296,8 @@ int main()
     test_8_7_dt_limit();
     test_8_8_friction_coefficient_mixing();
     test_8_8_friction_zero_mu_regression();
+    test_surely_apart_conservative();
+    test_law0_dt_from_kernel();
 
     if (failures == 0)
         std::printf("test_fiber_contact: OK\n");

@@ -30,12 +30,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
 #include "contact_force.hpp"
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_bond.hpp" // fiber_bond_pair_dt
+#include "interactions/fiber_normal_projection_types.hpp" // FiberNormalContact, FiberSolidNormalContact
 #include "rhs/cpu_executor.hpp"
 #include "simulation_config.hpp" // dt_scale (impulse_unscaled_limit)
 
@@ -80,6 +82,16 @@ struct FiberContactLaw
     double push_vmax = 0.0;
 };
 
+// Ссылка на активный слот трения: индекс primitive k и номер отрезка seg (kDetSegments), в котором k стоял
+// при обходе parallel_for_segments по ВСЕМ primitive. Списки таких ссылок (по возрастанию k) позволяют
+// стадии трения обходить только активные слоты с прежним разбиением на отрезки -- порядок суммирования
+// на частицу (буфер seg -> позиция в буфере) тот же, что при обходе плотного массива слотов.
+struct FrictionActiveRef
+{
+    std::size_t k = 0;
+    std::uint16_t seg = 0;
+};
+
 struct FiberContactStepParams
 {
     FiberContactLaw law;
@@ -99,6 +111,32 @@ struct FiberContactStepParams
     std::vector<double>* pair_dt_limit = nullptr;
     // Только для типа 4 и лога энергии: ядро считает лишь вязкую часть силы.
     bool damper_only = false;
+    // РЕЖИМ ПРОЕКЦИИ (законы 1-3, fiber/TZ_LAW3_PROJECTION.md): если задан, ядро НЕ считает
+    // нормальную силу, а заполняет нормальные слоты для стадии run_normal_projection -- сжатым
+    // массивом только активных контактов (delta > 0) по возрастанию primitive, с индексом
+    // primitive (prim) и номером отрезка (seg); вкладов в ускорение, слота трения и предела шага
+    // (в pair_dt_limit -- kNoLimit) нет. normal_ff -- ядро нить-нить, normal_fs -- нить-Solid.
+    // nullptr -- прежний путь, побитово.
+    std::vector<FiberNormalContact>* normal_ff = nullptr;
+    std::vector<FiberSolidNormalContact>* normal_fs = nullptr;
+    // Рабочая память сбора нормальных слотов по отрезкам (живёт между шагами, память только
+    // растёт; заголовки векторов -- в своих кэш-линиях). nullptr -- ядро заводит временную.
+    std::vector<rhs::CpuExecutor::SegPart<FiberNormalContact>>* normal_ff_parts = nullptr;
+    std::vector<rhs::CpuExecutor::SegPart<FiberSolidNormalContact>>* normal_fs_parts = nullptr;
+    // Только тип 0: если задан, ядро отдаёт предел шага контакта (минимум fiber_contact_pair_dt_limit по
+    // принятым контактам; max(), если контактов нет) -- тот же результат, что compute_*_dt_limit для
+    // типа 0 (та же свёртка по отрезкам kDetSegments, побитово), без повторного обхода primitive.
+    // nullptr -- не считается.
+    double* law0_dt_min_out = nullptr;
+    // РЕЖИМ СПИСКА слотов трения: если fric_active задан, плотный массив слотов friction_contacts не
+    // обнуляется целиком на каждом шаге -- ядро сбрасывает только слоты из списка ПРОШЛОГО вызова, а
+    // после прохода заполняет список активными слотами (по возрастанию k, с номером отрезка).
+    // Инвариант: каждый слот вне списка равен FiberFrictionContact{} / FiberSolidFrictionContact{}.
+    // Список ведёт тот же вызывающий код, что и массив слотов (в режиме проекции его перезаполняет
+    // fill_friction_slots_from_normal_*). nullptr -- прежний путь с полным сбросом, побитово.
+    std::vector<FrictionActiveRef>* fric_active = nullptr;
+    // Рабочая память сбора списка по отрезкам (память только растёт); nullptr -- временная.
+    std::vector<rhs::CpuExecutor::SegPart<FrictionActiveRef>>* fric_active_parts = nullptr;
 };
 
 // Есть ли у закона новые (не Герц) типы -- нужен ли dt_bead.
@@ -131,6 +169,39 @@ inline std::vector<double>& compute_fiber_bead_dt_ref(const fiber::FiberState& s
         const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[k])];
         out[k] = fiber_bond_pair_dt(mat, mat.d, state.mass[k], state.mass[k]);
     }
+    return out;
+}
+
+// Вариант с executor: dt по связям -- параллельно (та же fiber_bond_pair_dt, те же аргументы), затем
+// последовательная раскладка минимума по бусинам в том же порядке связей -- результат побитово прежний.
+inline std::vector<double>& compute_fiber_bead_dt_ref(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
+                                                       const fiber::FiberTopology& topology,
+                                                       const std::vector<fiber::FiberMaterial>& materials,
+                                                       std::vector<double>& out)
+{
+    const double kInf = std::numeric_limits<double>::max();
+    const std::size_t n = state.size();
+    out.assign(n, kInf);
+    const std::size_t nb = topology.bonds.size();
+    std::vector<double> bond_dt(nb);
+    exec.parallel_for(nb, [&](std::size_t q) {
+        const fiber::FiberBond& b = topology.bonds[q];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
+        bond_dt[q] = fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
+    });
+    for (std::size_t q = 0; q < nb; ++q)
+    {
+        const fiber::FiberBond& b = topology.bonds[q];
+        const double dt = bond_dt[q];
+        out[b.i] = std::min(out[b.i], dt);
+        out[b.j] = std::min(out[b.j], dt);
+    }
+    exec.parallel_for(n, [&](std::size_t k) {
+        if (out[k] < kInf) return;
+        // Виртуальная связь длины d: E*A/d, m_red = m_k*m_k/(2 m_k) = m_k/2.
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[k])];
+        out[k] = fiber_bond_pair_dt(mat, mat.d, state.mass[k], state.mass[k]);
+    });
     return out;
 }
 
