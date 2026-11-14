@@ -3,7 +3,8 @@
 
 Допуск, проверка занятых потоков и продолжение из чекпоинта после перезагрузки -- window_pinball.run_shot.
 Выстрел ждёт FREE >= --threads, поэтому стартует сам, когда освободится сервер. Новых точек не выбирает.
-«Не определён» к --t-max не продолжается: финальный чекпоинт остаётся, решение за владельцем.
+«Не определён» к --t-max: без --t-max-long не продолжается (финальный чекпоинт остаётся, решение за владельцем);
+с --t-max-long -- продолжение из финального чекпоинта до --t-max-long в каталоге <...>_long.
 Итог: <work>/result.txt. Код возврата 0 -- выстрел досчитан (при любом вердикте), 1 -- выстрел упал дважды.
 """
 import argparse, os, sys
@@ -23,6 +24,8 @@ def main():
     ap.add_argument("--mu", type=float, required=True)
     ap.add_argument("--threads", type=int, required=True)
     ap.add_argument("--t-max", type=float, required=True)
+    ap.add_argument("--t-max-long", type=float, default=0.0,
+                    help="если к --t-max «не определён» -- продолжить из чекпоинта до этого t (0 -- нет)")
     ap.add_argument("--fiber-E", type=float, default=8e10)
     ap.add_argument("--eps-break", type=float, default=0.05)
     ap.add_argument("--level", default="base")
@@ -47,6 +50,19 @@ def main():
         wp.log(args.work, "ОСТАНОВЛЕНО: %s" % exc)
         return 1
     p, why = wp.verdict(r)
+    if p is None and args.t_max_long > args.t_max:
+        # «Не определён» к t_max -> продолжение из финального чекпоинта до t_max_long в каталоге <...>_long
+        # (решение владельца 2026-11-14 для серии w50: до 1000 мкс).
+        wp.log(args.work, "%s не определён к t_max=%g (%s) -> продолжение до %g" % (
+            args.config, args.t_max, why, args.t_max_long))
+        base = wp.shot_dir(args.work, args.mu, args.v0, "", args.config)
+        try:
+            r = wp.run_shot(args, args.mu, args.v0, args.threads, args.t_max_long, "_long", seed=base)
+        except Exception as exc:
+            wp.log(args.work, "ОСТАНОВЛЕНО (продолжение): %s" % exc)
+            return 1
+        p, why = wp.verdict(r)
+        why += ", продолжен до t_max=%g" % args.t_max_long
     line = "%s contact=%d: %s (%s), V_R=%s, t_end=%s" % (
         args.config, args.contact, wp.word(p), why, r.get("V_R"), r.get("t_end"))
     wp.log(args.work, "итог: " + line)
