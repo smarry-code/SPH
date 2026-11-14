@@ -13,12 +13,14 @@
 //                [--fabric-n=N] [--fabric-clamp-edge=<м>] [--fabric-overhang-y=<м>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
 //                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
-//                [--stitch=none|grid|seam] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]
+//                [--stitch=none|grid|seam] [--stitch-tile=N | --stitch-patch=P] [--stitch-lines=x|y|xy] [--stitch-every=N]
 //                [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]
 //   --stitch=grid -- стёжка слоёв пакета (2T, 4T, kT при k >= 2) связями-стежками на линиях шва сетки патчей N x N (--stitch-tile,
 //   по умолчанию 3; nx и ny уровня делятся на N); --stitch-lines -- какие линии шва; --stitch-every=N -- прокол на
 //   каждой N-й нити; материал стежка: E (8,5e10 Па), d (0,2e-3 м), eps_break (0,03), nu = 0,3. Ключи --stitch-*
 //   без --stitch=grid|seam и --stitch=grid при < 2 слоёв -- ошибка. --eps-break и --fiber-E к стежкам не относятся.
+//   --stitch-patch=P (вместо --stitch-tile) -- кусочки по P нитей симметрично от центра, у краёв остаток (1..P нитей);
+//   число нитей на P делиться не обязано (43 нити, P = 5: 4 + 7*5 + 4); при нечётном числе нитей P нечётно.
 //   --stitch=seam -- шов-строчка в плоскости каждого слоя (соседние проколы вдоль линии шва связываются
 //   стежком; любая конфигурация с тканью, в т. ч. 1T/A_1T/1T_A).
 //   <k>T -- пакет из k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи,
@@ -168,6 +170,8 @@ struct Options
     bool stitch_seam = false; // --stitch=seam (при stitch == true)
     bool stitch_param_given = false; // задан какой-либо --stitch-* кроме --stitch=
     int stitch_tile = kFabricTileBase;
+    int stitch_patch = 0; // > 0: --stitch-patch=P (кусочки по P нитей от центра) вместо --stitch-tile
+    bool stitch_tile_given = false;
     bool stitch_lines_x = true, stitch_lines_y = true;
     int stitch_every = 1;
     double stitch_E = 8.5e10, stitch_d = 0.2e-3, stitch_eps_break = 0.03;
@@ -220,12 +224,13 @@ void print_usage()
                 "                   [--impulse-push-tau=<с>] [--impulse-push-depth=<доля r>] [--impulse-push-vmax=<м/с>] [--impulse-gamma=<g>]  (тип 3)\n"
                 "                   [--dt-scale=<s из (0;1]>]  (множитель шага, сходимость)\n"
                 "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
-                "                   [--stitch=none|grid|seam] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]\n"
+                "                   [--stitch=none|grid|seam] [--stitch-tile=N | --stitch-patch=P] [--stitch-lines=x|y|xy] [--stitch-every=N]\n"
                 "                   [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]  (стёжка слоёв; grid: >= 2 слоя)\n"
                 "  --stitch=grid: связи-стежки между соседними слоями на линиях шва сетки патчей N x N (--stitch-tile, по\n"
                 "  умолчанию 3; nx и ny уровня делятся на N); --stitch-every=N -- прокол на каждой N-й нити; по умолчанию\n"
                 "  E = 8.5e10 Па, d = 0.2e-3 м, eps_break = 0.03. --stitch-* без --stitch=grid|seam -- ошибка.\n"
                 "  --stitch=seam: шов-строчка в плоскости каждого слоя (любая конфигурация с тканью, в т. ч. 1T).\n"
+                "  --stitch-patch=P: кусочки по P нитей симметрично от центра, у краёв остаток (вместо --stitch-tile).\n"
                 "  <k>T: k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи, t_max 600 мкс).\n"
                 "  --ball-*: к имени каталога выстрела добавляется _bD<мм>m<г>dx<мм>; в shot.txt -- ball_D, ball_m, ball_dx, ball_rho;\n"
                 "  --fabric-n=<nx=ny> --fabric-clamp-edge=<c_e, м> --fabric-overhang-y=<e_y, м>: габариты ткани уровня (только kT);\n"
@@ -461,6 +466,13 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_ll(val("--stitch-tile="), n) || n < 1 || n > 1000) return bad("--stitch-tile");
             o.stitch_tile = static_cast<int>(n);
+            o.stitch_tile_given = true;
+            o.stitch_param_given = true;
+        }
+        else if (a.rfind("--stitch-patch=", 0) == 0)
+        {
+            if (!parse_ll(val("--stitch-patch="), n) || n < 1 || n > 1000) return bad("--stitch-patch");
+            o.stitch_patch = static_cast<int>(n);
             o.stitch_param_given = true;
         }
         else if (a.rfind("--stitch-lines=", 0) == 0)
@@ -574,7 +586,22 @@ int parse_args(int argc, char** argv, Options& o)
         const LevelSpec ls = level_spec(o.level);
         const int snx = o.fabric_n > 0 ? o.fabric_n : static_cast<int>(ls.nx);
         const int sny = o.fabric_n > 0 ? o.fabric_n : static_cast<int>(ls.ny);
-        if (snx % o.stitch_tile != 0 || sny % o.stitch_tile != 0)
+        if (o.stitch_patch > 0)
+        {
+            if (o.stitch_tile_given)
+            {
+                std::fprintf(stderr, "--stitch-patch и --stitch-tile взаимоисключающие\n");
+                return 2;
+            }
+            if (o.stitch_patch >= snx || o.stitch_patch >= sny ||
+                ((snx - o.stitch_patch) % 2 != 0 && snx % 2 != 0) || ((sny - o.stitch_patch) % 2 != 0 && sny % 2 != 0))
+            {
+                std::fprintf(stderr, "--stitch-patch=%d: нужно P < n (n = %d x %d), при нечётном n -- P нечётно\n",
+                             o.stitch_patch, snx, sny);
+                return 2;
+            }
+        }
+        else if (snx % o.stitch_tile != 0 || sny % o.stitch_tile != 0)
         {
             std::fprintf(stderr, "--stitch-tile=%d: nx = %d и ny = %d ткани должны делиться на N\n", o.stitch_tile, snx,
                          sny);
@@ -788,6 +815,7 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             ss.enabled = opt.stitch;
             ss.seam = opt.stitch_seam;
             ss.tile = opt.stitch_tile;
+            ss.patch = opt.stitch_patch;
             ss.lines_x = opt.stitch_lines_x;
             ss.lines_y = opt.stitch_lines_y;
             ss.every = opt.stitch_every;
@@ -876,7 +904,9 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         // Габариты ткани дописываются только при --fabric-*, стёжка -- только при --stitch (связи в топологии):
         // у прежних выстрелов scene_id.txt прежний.
         const std::string stitch_id =
-            opt.stitch ? std::string(" stitch=") + (opt.stitch_seam ? "seam" : "grid") + " tile=" + std::to_string(opt.stitch_tile) +
+            opt.stitch ? std::string(" stitch=") + (opt.stitch_seam ? "seam" : "grid") +
+                             (opt.stitch_patch > 0 ? " patch=" + std::to_string(opt.stitch_patch)
+                                                   : " tile=" + std::to_string(opt.stitch_tile)) +
                              " lines=" + (opt.stitch_lines_x ? "x" : "") + (opt.stitch_lines_y ? "y" : "") +
                              " every=" + std::to_string(opt.stitch_every) + " E=" + fmtg(opt.stitch_E, 17) +
                              " d=" + fmtg(opt.stitch_d, 17) + " eps_break=" + fmtg(opt.stitch_eps_break, 17) +
@@ -1033,7 +1063,8 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         if (opt.stitch)
         {
             add("stitch", opt.stitch_seam ? "seam" : "grid");
-            add("stitch_tile", std::to_string(opt.stitch_tile));
+            if (opt.stitch_patch > 0) add("stitch_patch", std::to_string(opt.stitch_patch));
+            else add("stitch_tile", std::to_string(opt.stitch_tile));
             add("stitch_lines", std::string(opt.stitch_lines_x ? "x" : "") + (opt.stitch_lines_y ? "y" : ""));
             add("stitch_every", std::to_string(opt.stitch_every));
             add("stitch_E", fmtg(opt.stitch_E));

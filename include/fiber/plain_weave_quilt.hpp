@@ -80,6 +80,34 @@ inline void quilt_seams(const PlainWeaveParams& full, int patch_nx, int patch_ny
         sy.push_back(full.cy + (static_cast<double>(t) * patch_nx - 0.5 - 0.5 * (full.nx - 1)) * p);
 }
 
+// centered_patch_seams -- линии шва кусочков по patch нитей, симметрично от центра полотна из n нитей с шагом
+// pitch и центром c (решение владельца 2026-11-14, малое полотно 43 нити, кусочки 5 x 5): средний кусочок --
+// полный и стоит по центру (при n - patch чётном) либо линия шва идёт через центр (n - patch нечётно, n чётно);
+// дальше полные кусочки по patch нитей, у краёв -- остаток (от 1 до patch нитей). Линии -- посередине между
+// соседними нитями: в индексах нитей s = (n-1)/2 + (n - patch чётно ? patch/2 : 0) + j*patch, 0 < s < n-1.
+// При нечётном n и чётном patch центр -- нить, симметрия невозможна: invalid_argument.
+// Пример: n = 43, patch = 5 -> 8 линий, кусочки 4 + 7*5 + 4.
+inline std::vector<double> centered_patch_seams(double c, double pitch, int n, int patch)
+{
+    if (n < 2 || patch < 1 || patch >= n)
+        throw std::invalid_argument("centered_patch_seams: нужно 1 <= patch < n, n >= 2");
+    if ((n - patch) % 2 != 0 && n % 2 != 0)
+        throw std::invalid_argument("centered_patch_seams: при нечётном числе нитей кусочек должен быть нечётным");
+    // удвоенные индексы (целые): 2s = (n-1) + (n-patch чётно ? patch : 0) + 2*j*patch
+    const long long base2 = (n - 1) + ((n - patch) % 2 == 0 ? patch : 0);
+    long long j0 = 0;
+    while (base2 + 2LL * (j0 - 1) * patch > 0) --j0;
+    std::vector<double> s;
+    for (long long j = j0;; ++j)
+    {
+        const long long s2 = base2 + 2LL * j * patch;
+        if (s2 <= 0) continue;
+        if (s2 >= 2LL * (n - 1)) break;
+        s.push_back(c + (0.5 * static_cast<double>(s2) - 0.5 * (n - 1)) * pitch);
+    }
+    return s;
+}
+
 namespace plain_weave_quilt_detail
 {
 // Номер ряда по координате вдоль нити: число стыков строго левее v (с допуском).

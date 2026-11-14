@@ -273,6 +273,7 @@ struct StitchSpec
     bool enabled = false;
     bool seam = false;              // true -- шов-строчка в плоскости слоя (>= 1 слоя), false -- сетка между слоями (>= 2)
     int tile = kFabricTileBase;     // сетка патчей tile x tile; nx и ny делятся на tile
+    int patch = 0;                  // > 0: кусочки по patch нитей от центра, у краёв остаток (вместо tile)
     bool lines_x = true, lines_y = true;
     int every = 1;
     double E = 8.5e10, nu = 0.3, d = 0.2e-3, rho = 1440.0, eps_break = 0.03; // материал 1 стежка
@@ -481,10 +482,19 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             if (stitch.seam ? sc.n_plies < 1 : sc.n_plies < 2)
                 throw std::invalid_argument(stitch.seam ? "guo2019: шов-строчка требует >= 1 слоя ткани"
                                                         : "guo2019: стёжка требует пакета из >= 2 слоёв");
-            if (stitch.tile < 1 || q.nx % stitch.tile != 0 || q.ny % stitch.tile != 0)
-                throw std::invalid_argument("guo2019: стёжка: nx и ny должны делиться на stitch-tile");
             std::vector<double> sx, sy;
-            fiber::quilt_seams(q, q.nx / stitch.tile, q.ny / stitch.tile, stitch.tile, stitch.tile, sx, sy);
+            if (stitch.patch > 0)
+            {
+                // как в quilt_seams: x-линии -- по ny нитям вдоль y, y-линии -- по nx (у kT nx = ny)
+                sx = fiber::centered_patch_seams(q.cx, q.pitch, q.ny, stitch.patch);
+                sy = fiber::centered_patch_seams(q.cy, q.pitch, q.nx, stitch.patch);
+            }
+            else
+            {
+                if (stitch.tile < 1 || q.nx % stitch.tile != 0 || q.ny % stitch.tile != 0)
+                    throw std::invalid_argument("guo2019: стёжка: nx и ny должны делиться на stitch-tile");
+                fiber::quilt_seams(q, q.nx / stitch.tile, q.ny / stitch.tile, stitch.tile, stitch.tile, sx, sy);
+            }
             fiber::QuiltStitchParams sp;
             sp.every = stitch.every;
             sp.lines_x = stitch.lines_x;
