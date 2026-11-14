@@ -10,6 +10,7 @@
 //                [--max-steps=N] [--no-body-isolation] [--mu=<μ_ff=μ_fs>] [--mu-ff=<x>] [--mu-fs=<x>] [--repeat=N]
 //                [--bracket|--no-bracket] [--n-mon=N] [--n-diag=N] [--threads=N]
 //                [--probe-frame] [--plate-nz=N] [--save-t=<с>] [--ball-d=<м>] [--ball-mass=<кг>] [--ball-dx=<м>]
+//                [--fabric-n=N] [--fabric-clamp-edge=<м>] [--fabric-overhang-y=<м>]
 //                [--fiber-inelastic=<файл>] [--eps-break=<x>] [--energy-log=N]
 //                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
 //   <k>T -- пакет из k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи,
@@ -131,6 +132,9 @@ struct Options
     int probe_frame = -1; // -1 -- по умолчанию (включён при --max-steps)
     int plate_nz = 0;     // > 0 -- переопределить n_z пластины уровня (сравнение стоимости)
     double ball_d = 0.0, ball_m = 0.0, ball_dx = 0.0; // > 0 -- переопределить D_s, m_s, dx_s шара уровня
+    int fabric_n = 0;                                 // > 0 -- переопределить nx = ny ткани уровня (только kT)
+    double fabric_ce = 0.0, fabric_ey = 0.0;          // > 0 -- переопределить c_e и e_y ткани уровня (только kT)
+    bool fabric_override() const { return fabric_n > 0 || fabric_ce > 0.0 || fabric_ey > 0.0; }
     fs::path fiber_inelastic; // непусто -- файл директив неупругости нити (материал 0)
     double eps_break = -1.0;  // > 0 -- переопределить eps_break нити
     double fiber_E = -1.0;    // > 0 -- переопределить модуль Юнга нити, Па (все материалы ткани)
@@ -202,6 +206,8 @@ void print_usage()
                 "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
                 "  <k>T: k слоёв ткани без пластины, k = 1..64 (1T, 2T, 4T -- как раньше; прочие k без данных статьи, t_max 600 мкс).\n"
                 "  --ball-*: к имени каталога выстрела добавляется _bD<мм>m<г>dx<мм>; в shot.txt -- ball_D, ball_m, ball_dx, ball_rho;\n"
+                "  --fabric-n=<nx=ny> --fabric-clamp-edge=<c_e, м> --fabric-overhang-y=<e_y, м>: габариты ткани уровня (только kT);\n"
+                "  к имени каталога добавляется _fN<n>ce<мм>ey<мм>, в shot.txt -- fabric_n, fabric_clamp_edge, fabric_overhang_y.\n"
                 "  --restart с другим числом слоёв или шаром отклоняется (по scene_id.txt, пишется при --checkpoint).\n"
                 "  --checkpoint: чекпоинт <каталог выстрела>/checkpoint.ckpt (+ .prev); --checkpoint-every=N: период в шагах\n"
                 "  интегрирования (N >= 1, по умолчанию 10000; ключ сам включает чекпоинты); финальный чекпоинт пишется при останове.\n"
@@ -358,6 +364,21 @@ int parse_args(int argc, char** argv, Options& o)
         {
             if (!parse_double(val("--ball-dx="), d) || !(d > 0.0)) return bad("--ball-dx");
             o.ball_dx = d;
+        }
+        else if (a.rfind("--fabric-n=", 0) == 0)
+        {
+            if (!parse_ll(val("--fabric-n="), n) || n < 2 || n > 1000) return bad("--fabric-n");
+            o.fabric_n = static_cast<int>(n);
+        }
+        else if (a.rfind("--fabric-clamp-edge=", 0) == 0)
+        {
+            if (!parse_double(val("--fabric-clamp-edge="), d) || !(d > 0.0)) return bad("--fabric-clamp-edge");
+            o.fabric_ce = d;
+        }
+        else if (a.rfind("--fabric-overhang-y=", 0) == 0)
+        {
+            if (!parse_double(val("--fabric-overhang-y="), d) || !(d > 0.0)) return bad("--fabric-overhang-y");
+            o.fabric_ey = d;
         }
         else if (a.rfind("--fs-contact=", 0) == 0)
         {
@@ -651,8 +672,17 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                      bx = opt.ball_dx > 0.0 ? opt.ball_dx : L0.dx_s;
         ball_tag = "_bD" + fmtg(bd * 1e3, 6) + "m" + fmtg(bm * 1e3, 6) + "dx" + fmtg(bx * 1e3, 6);
     }
-    const fs::path sub =
-        fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + ball_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
+    // Габариты ткани не по умолчанию -- тоже свой каталог: _fN<нитей>ce<мм>ey<мм>
+    std::string fabric_tag;
+    if (opt.fabric_override())
+    {
+        const LevelSpec L0 = level_spec(opt.level);
+        const int fn = opt.fabric_n > 0 ? opt.fabric_n : L0.nx;
+        const double fce = opt.fabric_ce > 0.0 ? opt.fabric_ce : L0.c_e, fey = opt.fabric_ey > 0.0 ? opt.fabric_ey : L0.e_y;
+        fabric_tag = "_fN" + std::to_string(fn) + "ce" + fmtg(fce * 1e3, 6) + "ey" + fmtg(fey * 1e3, 6);
+    }
+    const fs::path sub = fs::absolute(opt.out) /
+                         (cname + "_" + lname + nz_tag + ball_tag + fabric_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
     rec.dir = sub;
     try
     {
@@ -665,7 +695,8 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         {
             e2e::ScopedSilence silence(true);
             sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz,
-                                  opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx);
+                                  opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx, opt.fabric_n, opt.fabric_ce,
+                                  opt.fabric_ey);
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
@@ -742,9 +773,15 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
         const fs::path ckpt_path = sub / "checkpoint.ckpt";
         // Идентификатор сцены (число слоёв и шар): параметры шара и слоёв не входят в cfg чекпоинта, поэтому
         // сверяются отдельным текстовым файлом; формат чекпоинта не меняется, старые чекпоинты без файла допускаются.
+        // Габариты ткани дописываются только при --fabric-*: у прежних выстрелов scene_id.txt прежний.
         const std::string scene_id = "config=" + config_name_str(opt.config, sc.n_plies) + " plies=" + std::to_string(sc.n_plies) +
                                      " ball_D=" + fmtg(sc.spec.D_s, 17) + " ball_m=" + fmtg(sc.spec.m_s, 17) +
-                                     " ball_dx=" + fmtg(sc.spec.dx_s, 17) + "\n";
+                                     " ball_dx=" + fmtg(sc.spec.dx_s, 17) +
+                                     (opt.fabric_override() ? " fabric_n=" + std::to_string(sc.spec.nx) +
+                                                                  " fabric_ce=" + fmtg(sc.spec.c_e, 17) +
+                                                                  " fabric_ey=" + fmtg(sc.spec.e_y, 17)
+                                                            : std::string()) +
+                                     "\n";
         const fs::path id_path = sub / "scene_id.txt";
         if (opt.checkpoint && !opt.restart)
         {
@@ -891,6 +928,12 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             add("ball_m", fmtg(sc.spec.m_s));
             add("ball_dx", fmtg(sc.spec.dx_s));
             add("ball_rho", fmtg(sc.rho_s));
+        }
+        if (opt.fabric_override()) // габариты ткани не по умолчанию
+        {
+            add("fabric_n", std::to_string(sc.spec.nx));
+            add("fabric_clamp_edge", fmtg(sc.spec.c_e));
+            add("fabric_overhang_y", fmtg(sc.spec.e_y));
         }
         {
             std::ofstream outf(sub / "shot.txt");
