@@ -52,8 +52,12 @@ struct Contribution
 // "Временная память": "не следует выполнять большое количество небольших
 // heap allocations внутри... interaction kernel").
 // ----------------------------------------------------------------------
+// alignas(64): буферы лежат в std::vector по одному на отрезок (kDetSegments), соседние отрезки
+// заполняют разные потоки. Без выравнивания заголовки vector (24 Б) соседних буферов делят
+// кэш-линию, и каждый push_back гоняет её между ядрами (false sharing). На порядок вкладов
+// и результат выравнивание не влияет.
 template <class Delta>
-class ContributionBuffer
+class alignas(64) ContributionBuffer
 {
 public:
     void clear() { data_.clear(); }

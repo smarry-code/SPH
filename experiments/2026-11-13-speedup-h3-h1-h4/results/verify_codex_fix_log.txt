@@ -1,0 +1,96 @@
+2026-11-13 11:18:13 === старт: NEW=speedup 7147083 + правки по ревью Codex (незакоммичено); REF=280b0f4 + правки по ревью Codex (постоянные части сбора слотов, тест Т8)
+2026-11-13 11:32:43 сборка NEW build rc=0 предупреждений: 15
+2026-11-13 11:45:52 сборка NEW build-elog rc=0 предупреждений: 15
+2026-11-13 11:46:12 сборка SPH_c3sp build-cstats rc=0
+2026-11-13 11:46:12 сборка SPH_c3opt build-cstats rc=0
+2026-11-13 11:46:12 сборка REF build-elog (guo2019_shot) rc=0 предупреждений: 0
+2026-11-13 11:46:12 предупреждения в изменённых файлах NEW:
+include/rhs/cpu_executor.hpp:247:63: warning: ISO C++ does not support ‘__int128’ for ‘type name’ [-Wpedantic]
+2026-11-13 11:46:21 test_spatial_index (build) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-13 11:46:30 test_spatial_index (build-elog) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-13 11:46:30 test_executor (build) rc=0: test_executor: ПРОЙДЕН
+2026-11-13 11:46:30 test_executor (build-elog) rc=0: test_executor: ПРОЙДЕН
+2026-11-13 11:46:31 test_fiber_contact (build) rc=0: test_fiber_contact: OK
+2026-11-13 11:46:31 test_fiber_contact (build-elog) rc=0: test_fiber_contact: OK
+2026-11-13 11:46:31 test_fiber_friction (build) rc=0: test_fiber_friction: OK
+2026-11-13 11:46:32 test_fiber_friction (build-elog) rc=0: test_fiber_friction: OK
+2026-11-13 11:46:32 test_fiber_solid (build) rc=0: test_fiber_solid: OK
+2026-11-13 11:46:32 test_fiber_solid (build-elog) rc=0: test_fiber_solid: OK
+2026-11-13 11:46:34 test_fiber_contact_projection (build) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-13 11:46:37 test_fiber_contact_projection (build-elog) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-13 11:46:38 test_fiber_time_integration_equivalence (build) rc=0: === ПРОЙДЕН (провалов: 0) ===
+2026-11-13 11:46:40 test_fiber_time_integration_equivalence (build-elog) rc=0: === ПРОЙДЕН (провалов: 0) ===
+2026-11-13 11:50:13 ctest build rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-13 11:53:59 ctest build-elog rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-13 11:54:00 test_checkpoint (вывод) rc=0
+PASS: 1a. round-trip PC (ode_solver=0), связи целы
+PASS: 1b. round-trip Euler (ode_solver=1), связи целы
+PASS: 2a. round-trip PC, связи рвутся до шага N
+PASS: 2b. round-trip Euler, связи рвутся до шага N
+PASS: 3. целостность: порча байта, обрезка, неверный magic
+PASS: 4. политика настроек: t_total/save_t -- да, CFL -- только с force
+PASS: 4a. периодичность checkpoint_every_steps=7
+PASS: 5. ротация: .ckpt и .ckpt.prev, без временного файла
+PASS: 7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается
+PASS: 8. v3: user_state round-trip (в т.ч. нулевые байты); файл v2 читается
+PASS: 9. проекция: рестарт с заполненным тёплым стартом побитово равен непрерывному прогону
+PASS: 10. проекция: полный шаг на 1 и 4 потоках побитово одинаков
+2026-11-13 11:54:21   закон 0 monitor.csv: СОВПАДАЕТ
+2026-11-13 11:54:21   закон 0 energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:54:21   закон 0 shot.txt (без времени): СОВПАДАЕТ
+2026-11-13 11:54:40   закон 3 monitor.csv: СОВПАДАЕТ
+2026-11-13 11:54:40   закон 3 energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:54:40   закон 3 shot.txt (без времени): СОВПАДАЕТ
+2026-11-13 11:55:02   закон 4 monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:02   закон 4 energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:55:02   закон 4 shot.txt (без времени): СОВПАДАЕТ
+2026-11-13 11:55:06 проекция REF rc=0
+2026-11-13 11:55:09 проекция NEW rc=0
+2026-11-13 11:55:12 проекция NEW 2 потока rc=0
+2026-11-13 11:55:12   проекция NEW/REF monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:12   проекция NEW 1/2 потока monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:12   проекция NEW/REF energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:55:12   проекция NEW 1/2 потока energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:55:12   проекция NEW/REF shot.txt (без времени): СОВПАДАЕТ
+2026-11-13 11:55:12   NEW shot.txt проекция: W_proj_pos_max=0 proj_slots_max=246 proj_warm_scaled_steps=256 
+2026-11-13 11:55:16 cstats закон 3 ref rc=0
+2026-11-13 11:55:19 cstats закон 3 new rc=0
+2026-11-13 11:55:21 cstats закон 3 new2 rc=0
+2026-11-13 11:55:21   cstats закон 3 new/ref ./o/1T_smoke_v79.0_r0/monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:21   cstats закон 3 new/ref ./o/1T_smoke_v79.0_r0/contact_stats_summary.txt: СОВПАДАЕТ
+2026-11-13 11:55:21   cstats закон 3 new/ref ./o/1T_smoke_v79.0_r0/contact_stats.csv: СОВПАДАЕТ
+2026-11-13 11:55:21   cstats закон 3 new2/ref ./o/1T_smoke_v79.0_r0/monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:21   cstats закон 3 new2/ref ./o/1T_smoke_v79.0_r0/contact_stats_summary.txt: СОВПАДАЕТ
+2026-11-13 11:55:21   cstats закон 3 new2/ref ./o/1T_smoke_v79.0_r0/contact_stats.csv: СОВПАДАЕТ
+2026-11-13 11:55:25 cstats закон 4 ref rc=0
+2026-11-13 11:55:27 cstats закон 4 new rc=0
+2026-11-13 11:55:31 cstats закон 4 new2 rc=0
+2026-11-13 11:55:31   cstats закон 4 new/ref ./o/1T_smoke_v79.0_r0/monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:31   cstats закон 4 new/ref ./o/1T_smoke_v79.0_r0/contact_stats_summary.txt: СОВПАДАЕТ
+2026-11-13 11:55:31   cstats закон 4 new/ref ./o/1T_smoke_v79.0_r0/contact_stats.csv: СОВПАДАЕТ
+2026-11-13 11:55:31   cstats закон 4 new2/ref ./o/1T_smoke_v79.0_r0/monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:31   cstats закон 4 new2/ref ./o/1T_smoke_v79.0_r0/contact_stats_summary.txt: СОВПАДАЕТ
+2026-11-13 11:55:31   cstats закон 4 new2/ref ./o/1T_smoke_v79.0_r0/contact_stats.csv: СОВПАДАЕТ
+2026-11-13 11:55:32 чекпоинт ч.1 rc=0
+2026-11-13 11:55:34 чекпоинт ч.2 rc=0: монитор: состояние восстановлено на шаге 1300; monitor.csv: оставлено строк 1300 (последняя -- шаг 1300), отброшено после чекпоинта 0.
+2026-11-13 11:55:34   рестарт monitor.csv: СОВПАДАЕТ
+2026-11-13 11:55:34   рестарт energy_log.csv: СОВПАДАЕТ
+2026-11-13 11:55:34   рестарт shot.txt: СОВПАДАЕТ
+2026-11-13 11:55:34 бинарь этапа: f4be6560d115224c86664469acd96866  /home/claude/c3sp_tests/bin_fix; прошлый: 18a92988bb241bde7c10950810cc76e1  /home/claude/c3sp_tests/bin_h1
+2026-11-13 11:58:43 полная сцена H.base.1 rc=0: шагов=4372, wall=189.30 с (0.0433 с/шаг)
+2026-11-13 11:58:43   H.base.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:01:55 полная сцена H.new.1 rc=0: шагов=4372, wall=191.31 с (0.0438 с/шаг)
+2026-11-13 12:01:55   H.new.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:05:28 полная сцена P.base.1 rc=0: шагов=4372, wall=212.83 с (0.0487 с/шаг)
+2026-11-13 12:05:28   P.base.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:08:44 полная сцена P.new.1 rc=0: шагов=4372, wall=195.67 с (0.0448 с/шаг)
+2026-11-13 12:08:44   P.new.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:11:49 полная сцена H.base.2 rc=0: шагов=4372, wall=184.94 с (0.0423 с/шаг)
+2026-11-13 12:11:49   H.base.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:14:55 полная сцена H.new.2 rc=0: шагов=4372, wall=185.25 с (0.0424 с/шаг)
+2026-11-13 12:14:55   H.new.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:18:08 полная сцена P.base.2 rc=0: шагов=4372, wall=192.64 с (0.0441 с/шаг)
+2026-11-13 12:18:08   P.base.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:21:19 полная сцена P.new.2 rc=0: шагов=4372, wall=190.51 с (0.0436 с/шаг)
+2026-11-13 12:21:19   P.new.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-13 12:21:19 готово

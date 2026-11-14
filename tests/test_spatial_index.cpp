@@ -503,6 +503,22 @@ static void test_parallel_build()
     clouds.push_back(lattice_cloud<Dim>(Dim == 3 ? 6 : 12, 0.3, -0.731));
     Cloud<Dim> same_cell = random_cloud<Dim>(300, 0.01, rng); // все точки в одной ячейке при большой cell
     clouds.push_back(same_cell);
+    // Огромное смещение (+-1e15: шаг double ~0.1-0.2, min/max/floor на грани точности) и вырожденная ось.
+    for (double shift : {1e15, -1e15})
+    {
+        Cloud<Dim> far = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
+        for (std::size_t d = 0; d < Dim; ++d)
+            for (std::size_t i = 0; i < far.n; ++i) far.coord[d][i] += shift;
+        clouds.push_back(far);
+    }
+    {
+        Cloud<Dim> flat = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
+        for (std::size_t i = 0; i < flat.n; ++i) flat.coord[0][i] = 0.37; // все x одинаковы: hi == lo по оси 0
+        clouds.push_back(flat);
+        Cloud<Dim> flat_far = flat;
+        for (std::size_t i = 0; i < flat_far.n; ++i) flat_far.coord[0][i] = 1e15;
+        clouds.push_back(flat_far);
+    }
     const double cells[] = {0.05, 0.25, 0.5, 0.0005, 100.0}; // 0.0005: nc >> n (облако в одной ячейке); 100: nc = 1 << n
     const int threads[] = {1, 2, 7, 8};
     bool ok = true;
@@ -535,6 +551,54 @@ static void test_parallel_build()
     check(ok, "build(exec): тот же индекс (порядок пар find_pairs/cross), что у последовательного build, на 1/2/7/8 потоках");
 }
 
+// -----------------------------------------------------------------------
+// for_each_pair_segmented(exec, radius, accept, f(seg, i, j)): пары, собранные по seg и склеенные по возрастанию
+// seg, -- тот же вектор (состав И порядок), что find_pairs_parallel; seg не убывает вдоль вектора. Размеры
+// включают n = 0, 1 и сетки с числом ячеек < 64 (часть отрезков пуста). 1/2/7/8 потоков.
+// -----------------------------------------------------------------------
+template <std::size_t Dim>
+static void test_for_each_pair_segmented()
+{
+    std::mt19937 rng(424242u + static_cast<unsigned>(Dim));
+    bool ok = true, ok_seg = true;
+    const auto accept = [](index_t i, index_t j) { return (i % 3) != (j % 3); };
+    for (std::size_t n : {std::size_t(0), std::size_t(1), std::size_t(2), std::size_t(30), std::size_t(500)})
+    {
+        for (double box : {0.5, 3.0})
+        {
+            const Cloud<Dim> cloud = random_cloud<Dim>(n, box, rng);
+            for (double cell : {0.4, 1.5, 6.0}) // крупная ячейка -> nc < 64
+            {
+                SpatialIndex<Dim> index;
+                index.build(cloud.ptrs(), n, cell);
+                for (double radius : {0.3, 1.0})
+                {
+                    for (int nt : {1, 2, 7, 8})
+                    {
+                        CpuExecutor exec(nt);
+                        const PairVec ref = index.find_pairs_parallel(exec, radius, accept);
+                        std::vector<PairVec> by_seg(CpuExecutor::kDetSegments);
+                        index.for_each_pair_segmented(exec, radius, accept, [&](std::size_t seg, std::size_t i, std::size_t j) {
+                            by_seg[seg].emplace_back(static_cast<index_t>(i), static_cast<index_t>(j));
+                        });
+                        PairVec cat;
+                        std::vector<std::size_t> seg_of_pair;
+                        for (std::size_t s = 0; s < by_seg.size(); ++s)
+                        {
+                            cat.insert(cat.end(), by_seg[s].begin(), by_seg[s].end());
+                            seg_of_pair.insert(seg_of_pair.end(), by_seg[s].size(), s);
+                        }
+                        ok = ok && (cat == ref);
+                        ok_seg = ok_seg && std::is_sorted(seg_of_pair.begin(), seg_of_pair.end());
+                    }
+                }
+            }
+        }
+    }
+    check(ok, "for_each_pair_segmented: пары по отрезкам, склеенные по порядку, == find_pairs_parallel (1/2/7/8 потоков)");
+    check(ok_seg, "for_each_pair_segmented: seg не убывает вдоль вектора пар");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -552,6 +616,8 @@ int main()
     test_pruned_order<3>();
     test_parallel_build<2>();
     test_parallel_build<3>();
+    test_for_each_pair_segmented<2>();
+    test_for_each_pair_segmented<3>();
 
     if (failures == 0)
         std::printf("test_spatial_index: ПРОЙДЕН\n");

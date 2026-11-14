@@ -262,6 +262,131 @@ static void test_seg_groups()
     check(ok_cat, "concat_segments: порядок последовательного цикла");
 }
 
+// ---------------------------------------------------------------------------
+// seg_of_index(k, n) -- отрезок индекса k при parallel_for_segments(n): совпадает с отрезком, который
+// реально передаёт parallel_for_segments (все k для n = 1..3000, выборка k при n ~ 2^40 по границам
+// отрезков). parallel_for_seg_bounds / parallel_reduce_seg_bounds при границах из seg_group_bounds --
+// то же, что parallel_for_seg_groups / parallel_reduce_seg_groups (побитово для суммы double).
+// ---------------------------------------------------------------------------
+static void test_seg_bounds()
+{
+    constexpr std::size_t S = CpuExecutor::kDetSegments;
+    bool ok_all = true, ok_big = true, ok_cover = true;
+    {
+        CpuExecutor exec(1);
+        for (std::size_t n = 1; n <= 3000; ++n)
+        {
+            std::vector<std::size_t> seen(n, S + 1);
+            exec.parallel_for_segments(n, [&](std::size_t s, std::size_t i) { seen[i] = s; });
+            for (std::size_t k = 0; k < n; ++k)
+                if (CpuExecutor::seg_of_index(k, n) != seen[k]) ok_all = false;
+        }
+    }
+    // n ~ 2^40: проверяем границы каждого отрезка (b-1, b, b+1) и крайние индексы по определению отрезка.
+    for (std::size_t n : {(std::size_t(1) << 40), (std::size_t(1) << 40) + 12345, (std::size_t(1) << 40) - 7})
+    {
+        for (std::size_t s = 0; s < S; ++s)
+        {
+            const std::size_t b = n * s / S, e = n * (s + 1) / S; // [b, e) -- отрезок s
+            for (std::size_t k : {b, b + 1, e - 1, e, b == 0 ? std::size_t(0) : b - 1})
+            {
+                if (k >= n) continue;
+                const std::size_t sk = CpuExecutor::seg_of_index(k, n);
+                const bool in_seg = n * sk / S <= k && k < n * (sk + 1) / S;
+                if (!in_seg) ok_big = false;
+            }
+            if (b < e && CpuExecutor::seg_of_index(b, n) != s) ok_big = false;
+            if (b < e && CpuExecutor::seg_of_index(e - 1, n) != s) ok_big = false;
+        }
+        if (CpuExecutor::seg_of_index(n - 1, n) != S - 1) ok_big = false;
+        if (CpuExecutor::seg_of_index(0, n) != 0) ok_big = false;
+    }
+    check(ok_all, "seg_of_index == seg из parallel_for_segments (n = 1..3000, все k)");
+    check(ok_big, "seg_of_index при n ~ 2^40: k лежит в своём отрезке");
+
+    // n у верхней границы size_t: n*s и 64*k+63 переполнились бы. seg_begin == floor(n*s/S) (эталон 128-битный),
+    // seg_of_index кладёт границы отрезков в свой отрезок.
+    bool ok_huge = true;
+    for (std::size_t n : {std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max() - 12345,
+                          (std::size_t(1) << 63) + 1, (std::size_t(1) << 58) + 3})
+    {
+        for (std::size_t s = 0; s <= S; ++s)
+        {
+#if defined(__SIZEOF_INT128__)
+            const auto ref = static_cast<std::size_t>(static_cast<unsigned __int128>(n) * s / S);
+            if (CpuExecutor::seg_begin(n, s) != ref) ok_huge = false;
+#endif
+            if (s == S && CpuExecutor::seg_begin(n, s) != n) ok_huge = false;
+        }
+        for (std::size_t s = 0; s < S; ++s)
+        {
+            const std::size_t b = CpuExecutor::seg_begin(n, s), e = CpuExecutor::seg_begin(n, s + 1);
+            if (b < e && CpuExecutor::seg_of_index(b, n) != s) ok_huge = false;
+            if (b < e && CpuExecutor::seg_of_index(e - 1, n) != s) ok_huge = false;
+        }
+        if (CpuExecutor::seg_of_index(n - 1, n) != S - 1) ok_huge = false;
+    }
+    check(ok_huge, "seg_begin/seg_of_index при n ~ SIZE_MAX: без переполнения, границы в своих отрезках");
+
+    std::mt19937 rng(91u);
+    std::uniform_real_distribution<double> val(-1.0, 1.0);
+    std::uniform_real_distribution<double> mag(-30.0, 30.0);
+    bool ok_sum = true, ok_for = true, ok_cnt = true;
+    for (int nt : {1, 3, 7, 8})
+    {
+        CpuExecutor exec(nt);
+        for (std::size_t n : {std::size_t(0), std::size_t(1), std::size_t(5), std::size_t(64), std::size_t(1000),
+                              std::size_t(12345)})
+        {
+            std::vector<double> x(n);
+            for (auto& v : x) v = val(rng) * std::pow(10.0, mag(rng) / 3.0);
+            for (double frac : {0.0, 0.05, 0.5, 1.0})
+            {
+                std::vector<std::size_t> sel;
+                std::vector<std::uint16_t> seg;
+                for (std::size_t s = 0; s < S; ++s)
+                    for (std::size_t i = n * s / S; i < n * (s + 1) / S; ++i)
+                        if (std::uniform_real_distribution<double>(0.0, 1.0)(rng) < frac)
+                        {
+                            sel.push_back(i);
+                            seg.push_back(static_cast<std::uint16_t>(s));
+                        }
+                const std::size_t m = sel.size();
+                std::size_t bound[S + 1];
+                exec.seg_group_bounds(m, [&](std::size_t j) { return seg[j]; }, bound);
+                // границы выбранных через seg_of_index (как у поиска с отсечкой): тот же результат
+                std::size_t bound2[S + 1];
+                for (std::size_t s = 0; s <= S; ++s)
+                    bound2[s] = static_cast<std::size_t>(std::lower_bound(sel.begin(), sel.end(), n * s / S) - sel.begin());
+                for (std::size_t s = 0; s <= S; ++s) ok_cover = ok_cover && bound[s] == bound2[s];
+                for (std::size_t j = 0; j < m; ++j) ok_cover = ok_cover && CpuExecutor::seg_of_index(sel[j], n) == seg[j];
+
+                const auto plus = [](double a, double b) { return a + b; };
+                const double g = m ? exec.parallel_reduce_seg_groups(
+                                         m, [&](std::size_t j) { return seg[j]; }, 0.0,
+                                         [&](std::size_t j) { return x[sel[j]]; }, plus)
+                                   : 0.0;
+                const double b = exec.parallel_reduce_seg_bounds(bound, 0.0, [&](std::size_t j) { return x[sel[j]]; }, plus);
+                ok_sum = ok_sum && std::memcmp(&g, &b, sizeof(double)) == 0;
+                const std::size_t c = exec.parallel_reduce_seg_bounds(
+                    bound, std::size_t(0), [&](std::size_t) { return std::size_t(1); },
+                    [](std::size_t p, std::size_t q) { return p + q; });
+                ok_cnt = ok_cnt && c == m;
+
+                std::vector<std::vector<std::size_t>> seen_g(S), seen_b(S);
+                exec.parallel_for_seg_groups(m, [&](std::size_t j) { return seg[j]; },
+                                             [&](std::size_t s, std::size_t j) { seen_g[s].push_back(j); });
+                exec.parallel_for_seg_bounds(bound, [&](std::size_t s, std::size_t j) { seen_b[s].push_back(j); });
+                ok_for = ok_for && seen_g == seen_b;
+            }
+        }
+    }
+    check(ok_cover, "границы seg_group_bounds == lower_bound по границам отрезков; seg_of_index == seg выбранных");
+    check(ok_sum, "parallel_reduce_seg_bounds: сумма double побитово = parallel_reduce_seg_groups (1/3/7/8 потоков)");
+    check(ok_cnt, "parallel_reduce_seg_bounds: счётчик");
+    check(ok_for, "parallel_for_seg_bounds: те же (s, j), что parallel_for_seg_groups");
+}
+
 int main()
 {
 #ifdef _WIN32
@@ -274,6 +399,7 @@ int main()
     test_parallel_scan();
     test_parallel_sort();
     test_seg_groups();
+    test_seg_bounds();
 
     if (failures == 0)
         std::printf("test_executor: ПРОЙДЕН\n");
