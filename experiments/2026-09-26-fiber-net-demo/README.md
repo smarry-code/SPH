@@ -1,6 +1,6 @@
 # Демо: снаряд пробивает крестообразную сеть из двух нитей
 
-Постановка — [`fiber/DEMO_VISUALIZATION_TASK.md`](../../fiber/DEMO_VISUALIZATION_TASK.md).
+Постановка — `fiber/DEMO_VISUALIZATION_TASK.md` (удалён).
 Расчёт идёт через продовый цикл `time_integration(cfg, fiber::Model&, ...)`,
 кадры рендерятся в GIF скриптом `scripts/animate.py`.
 

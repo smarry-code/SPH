@@ -492,7 +492,7 @@ $$\Delta t_{\mathrm{limit}} = 0{,}8\,\Delta t_{\mathrm{ref}}/\sqrt{K_p} = \mathr
 \approx 2{,}7\cdot10^{-8}$ м — завышение $\approx 6\cdot10^{3}$ раз: $4{,}5\cdot10^{8}$ Н
 вместо гасящих $7{,}3\cdot10^{4}$ Н и $3{,}5\cdot10^{4}$ м/с приращения за шаг. Вентиль
 $\dot p > 0$ превращал это в храповик: сила только расталкивала и никогда не возвращала.
-Разбор по кадрам — [contact/10-debug-handoff.md](10-debug-handoff.md).
+Разбор по кадрам — contact/10-debug-handoff.md (удалён).
 
 **Исправление.** Потолок $F_{\mathrm{cap}} = m_{red}\dot p/\Delta t_{\mathrm{ref}}$ — та самая
 сила, что гасит сближение за опорный шаг. В области применимости (2.6) он тождественно
@@ -833,14 +833,14 @@ ctest --test-dir build -L slow --output-on-failure
 | [contact/00-audit.md](00-audit.md) | `a25acff` | Аудит `Report_SPH_contact.md` против кодовой базы; вердикт — документ не соответствует репозиторию и недостаточен для внедрения |
 | [contact/01-plan.md](01-plan.md) | `a25acff` | Основной план внедрения: шаги 0-6, код, тесты, чек-лист приёмки |
 | [contact/02-decisions.md](02-decisions.md) | `a25acff` | Шесть решений, требующих подтверждения владельцем (D1-D6); все приняты в варианте A |
-| [contact/03-review-brief.md](03-review-brief.md) | `a25acff` | ТЗ на код-ревью реализации контакта |
+| contact/03-review-brief.md (удалён) | `a25acff` | ТЗ на код-ревью реализации контакта |
 | [contact/04-e2e-test-brief.md](04-e2e-test-brief.md) | `5357558` | ТЗ на e2e-тест, §1-§8 + раздел «Статус реализации» |
 | [contact/05-e2e-math.md](05-e2e-math.md) | `a25acff` | Математическое описание того, что считает `test_e2e_bc2`, со ссылками на реализацию |
 | [contact/06-e2e-case.md](06-e2e-case.md) | `0534c4e` | Физическая постановка BC2: геометрия сборки, НУ/ГУ, регистрируемая величина |
 | [contact/07-changes.md](07-changes.md) | `a25acff` | Этот документ |
 | [contact/08-phase-shift.md](08-phase-shift.md) | `a25acff` | Разбор расхождения с эталоном по кадрам |
 | [contact/09-article-conformance.md](09-article-conformance.md) | `a25acff` | Сверка реализации со статьёй-источником эталона |
-| [contact/10-debug-handoff.md](10-debug-handoff.md) | `48997cd` | Передача отладки обрыва при `contact_force_type = 2`. Обрыв закрыт (**fix** 2.8, 2.9); документ сохранён как разбор, по которому механизм устанавливался |
+| contact/10-debug-handoff.md (удалён) | `48997cd` | Передача отладки обрыва при `contact_force_type = 2`. Обрыв закрыт (**fix** 2.8, 2.9); документ сохранён как разбор, по которому механизм устанавливался |
 | [contact/README.md](README.md) | `a25acff` | Оглавление каталога |
 | [contact/e2e/gold_standart.txt](e2e/gold_standart.txt) | `a25acff` | Приборный профиль скорости — источник `tests/data/bc2_reference.txt` |
 | [contact/e2e/BC2_velocity_profile_raw.csv](e2e/BC2_velocity_profile_raw.csv) | `a25acff` | Тот же набор в исходном виде (км/с) |
@@ -872,7 +872,7 @@ ctest --test-dir build -L slow --output-on-failure
 
 Во всех четырёх сценариях `rho > 0`, `mass > 0`, без NaN/Inf на всех 140 кадрах. Тип 2 стал
 доходить до конца после **fix** 2.8 и 2.9; до них он обрывался на шаге 1666 (94,2 %) —
-разбор в [contact/10-debug-handoff.md](10-debug-handoff.md).
+разбор в contact/10-debug-handoff.md (удалён).
 
 ### Открыто: невоспроизводимость расчёта от прогона к прогону
 
@@ -909,7 +909,7 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 ограничителя) и **fix** 2.9 (потолок радиуса по $\varrho_0$); весь набор проходит.
 
 Разбор, по которому механизм устанавливался, — в
-[contact/10-debug-handoff.md](10-debug-handoff.md). Гипотезы H1 (осевой член
+contact/10-debug-handoff.md (удалён). Гипотезы H1 (осевой член
 неразрывности) и H2 (несимметричный контакт у оси) из того документа **опровергнуты числами**
 и исправлений не потребовали: осевой член давал 0,57 % от наблюдавшегося `drho`, радиальная
 составляющая контакта — около 3 % от осевой и направлена от оси. Подтвердилась H3 (жёсткость

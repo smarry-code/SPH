@@ -81,6 +81,10 @@
   описанный в них код удалён в a4ce0b9 (этап Ф4-B2), тексты доступны в истории git.
 - Исторические врезки о старом конвейере в главах архитектуры, раздел о `bench_color`,
   строка «Graph coloring» глоссария.
+- Рабочие заметки: `Gia/E2E_EXPERIMENT_CONTEXT.md` (принципы e2e-тестов и чек-лист автора ТЗ
+  перенесены приложениями А и Б в `Gia/TZ_GUO2019_EXPERIMENTS.md`), `Gia/E2E_CONTEXT_CODE_MAP.md`,
+  `fiber/DEMO_VISUALIZATION_TASK.md`, `contact/03-review-brief.md`, `contact/10-debug-handoff.md`;
+  ссылки на них заменены текстом с пометкой «(удалён)».
 
 ### Исправлено
 

@@ -463,7 +463,7 @@ $0{,}5\Delta x$ пара обнаруживается и сила появляе
 | 09-23 | `ed4cd3d` | **Дефект:** дребезг типа 3 на BC6 (СКО ряби 5,1 м/с против 0,12) → нормальная составляющая $\dot p$ и доля гашения $\gamma$, на BC6 $\gamma = 0{,}5$ |
 
 Подробный журнал — [contact/07-changes.md](07-changes.md); разбор обрыва типа 2 —
-[contact/10-debug-handoff.md](10-debug-handoff.md) и
+contact/10-debug-handoff.md (удалён) и
 [experiments/2026-09-20-bc2-abort-contact-type2](../experiments/2026-09-20-bc2-abort-contact-type2/).
 
 ---
