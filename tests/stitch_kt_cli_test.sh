@@ -60,7 +60,7 @@ P=("${A[@]/--stitch-tile=4/--stitch-patch=3}")
 PD="$(ls -d "$T"/p/3T_smoke_* 2>/dev/null | head -1)"
 if [ -n "$PD" ] && cmp -s "$CD/monitor.csv" "$PD/monitor.csv"; then ok "--stitch-patch=3 == --stitch-tile=4 (monitor.csv)"
 else bad "--stitch-patch=3 и --stitch-tile=4 дают разный monitor.csv"; fi
-[ -n "$PD" ] && grep -q "stitch=grid patch=3" "$PD/scene_id.txt" && ok "patch в scene_id.txt" || bad "нет patch в scene_id.txt"
+[ -n "$PD" ] && grep -q "stitch_patch=3" "$PD/shot.txt" && ok "stitch_patch в shot.txt" || bad "нет stitch_patch в shot.txt"
 "$SHOT" "${P[@]}" --stitch-tile=4 --out="$T/e2" --max-steps=2 >"$T/e2.log" 2>&1
 [ $? -eq 2 ] && ok "--stitch-patch вместе с --stitch-tile -- код 2" || bad "--stitch-patch + --stitch-tile: ожидался код 2"
 Q=(--config=3T --level=smoke --v0=100 --frames=off --threads=1 --no-bracket --stitch=grid --fabric-n=11)
