@@ -273,11 +273,11 @@ struct FiberSolidContactPrimitive
 inline double fiber_solid_contact_search_radius(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                                                   const fiber::FiberTopology& topology,
                                                   const std::vector<fiber::FiberMaterial>& materials,
-                                                  double r_s_max_contact)
+                                                  double r_s_max_contact, const double* l_max_in = nullptr)
 {
     double r_f_max = 0.0;
     for (const auto& m : materials) r_f_max = std::max(r_f_max, 0.5 * m.d);
-    const double l_max = fiber_max_current_bond_length(exec, state, topology);
+    const double l_max = l_max_in ? *l_max_in : fiber_max_current_bond_length(exec, state, topology);
     return r_f_max + r_s_max_contact + l_max;
 }
 
@@ -325,7 +325,7 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
                                               const ParticleSystem& sys, std::size_t ntotal,
                                               const fiber::FiberState& state, const fiber::FiberTopology& topology,
                                               const std::vector<fiber::FiberMaterial>& materials,
-                                              FiberSolidContactSearchResult& out)
+                                              FiberSolidContactSearchResult& out, const double* l_max = nullptr)
 {
     // primitives очищается только на ранних выходах (при построении перезаписывается целиком).
     const std::size_t nfiber = state.size();
@@ -365,7 +365,7 @@ inline void build_fiber_solid_contact_search(const rhs::CpuExecutor& exec, const
             return;
         }
 
-        const double radius = fiber_solid_contact_search_radius(exec, state, topology, materials, r_s_max);
+        const double radius = fiber_solid_contact_search_radius(exec, state, topology, materials, r_s_max, l_max);
 
         std::vector<double>(&sx)[dim] = out.sx;
         for (std::size_t d = 0; d < dim; ++d) sx[d].resize(eligible.size());
@@ -719,7 +719,7 @@ inline bool compute_fiber_solid_contact_contributions(
     friction_contacts.resize(n);
     const bool penalty = params.law.type != 0;
     std::vector<double>* pair_dt = penalty ? params.pair_dt_limit : nullptr;
-    if (pair_dt) pair_dt->assign(n, std::numeric_limits<double>::max());
+    if (pair_dt) pair_dt->resize(n); // слот k инициализируется в начале тела цикла (покрывает все k)
     // Режим проекции: нормальные слоты только активных контактов (delta > 0), сжатым массивом по возрастанию
     // primitive (как у нить-нить, compute_fiber_contact_contributions).
     std::vector<FiberSolidNormalContact>* const normal = penalty ? params.normal_fs : nullptr;
@@ -756,6 +756,7 @@ inline bool compute_fiber_solid_contact_contributions(
         for (std::size_t s = 0; s < rhs::CpuExecutor::kDetSegments; ++s) dt_seg_min[s] = kInfDt;
 
     exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+        if (pair_dt) (*pair_dt)[k] = std::numeric_limits<double>::max();
         if (!fric_list) friction_contacts[k] = FiberSolidFrictionContact{};
         const FiberSolidContactPrimitive& prim = primitives[k];
         const FiberSolidContactGeometry geom = compute_fiber_solid_contact_geometry(mats, sys, state, materials, prim);
@@ -899,9 +900,10 @@ inline bool compute_fiber_solid_contact(
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers, FiberSolidContactSearchResult& search,
     std::vector<fiber::FiberDelta>& fiber_delta, std::vector<SolidDelta>& solid_delta, rhs::ReduceScratch& scratch,
-    std::vector<FiberSolidFrictionContact>* friction_contacts, const FiberContactStepParams& params = {})
+    std::vector<FiberSolidFrictionContact>* friction_contacts, const FiberContactStepParams& params = {},
+    const double* l_max = nullptr)
 {
-    build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search);
+    build_fiber_solid_contact_search(exec, mats, sys, ntotal, state, topology, materials, search, l_max);
     // Слот предела шага -- в search, если вызывающая сторона не дала свой.
     FiberContactStepParams p = params;
     if (p.pair_dt_limit == nullptr) p.pair_dt_limit = &search.pair_dt_limit;
@@ -924,14 +926,15 @@ inline FiberSolidContactResult compute_fiber_solid_contact(
     const std::vector<fiber::FiberMaterial>& materials,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
     std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
-    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr, const FiberContactStepParams& params = {})
+    std::vector<FiberSolidFrictionContact>* friction_contacts = nullptr, const FiberContactStepParams& params = {},
+    const double* l_max = nullptr)
 {
     FiberSolidContactSearchResult search;
     rhs::ReduceScratch scratch;
     FiberSolidContactResult out;
     out.has_active_friction = compute_fiber_solid_contact(exec, mats, sys, ntotal, state, topology, materials,
                                                            fiber_buffers, solid_buffers, search, out.fiber_delta,
-                                                           out.solid_delta, scratch, friction_contacts, params);
+                                                           out.solid_delta, scratch, friction_contacts, params, l_max);
     out.primitives = std::move(search.primitives);
     return out;
 }

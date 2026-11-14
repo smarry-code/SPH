@@ -387,10 +387,15 @@ inline void write_fabric_stack_layout(std::ostream& os, const std::vector<fiber:
 inline GuoScene build_guo_scene(Config config, Level level, double V0, const std::filesystem::path& workdir,
                                 double mu = kMuDefault, bool body_isolation = true, int plate_nz_override = 0,
                                 int plies = 0, double ball_d_override = 0.0, double ball_m_override = 0.0,
-                                double ball_dx_override = 0.0, const StitchSpec& stitch = StitchSpec{})
+                                double ball_dx_override = 0.0, int fabric_n_override = 0,
+                                double fabric_clamp_edge_override = 0.0, double fabric_overhang_y_override = 0.0,
+                                const StitchSpec& stitch = StitchSpec{})
 {
     // plies -- число слоёв для Config::TK; ball_*_override > 0 заменяют D_s, m_s, dx_s шара уровня
     // (решение владельца 2026-11-09); плотность по-прежнему выводится из массы: m_s / (n_ball dx_s^3).
+    // fabric_*_override > 0 заменяют габариты ткани уровня (решение владельца 2026-11-14, малое полотно):
+    // число нитей nx = ny, границу зажима c_e и выступ зажатых нитей e_y. Только для мишеней без пластины:
+    // пластина своих габаритов не меняет, и окно ткани с ней разошлось бы.
     if (config == Config::TK && (plies < 1 || plies > kMaxPlies))
         throw std::runtime_error("guo2019: для конфигурации kT число слоёв должно быть от 1 до " + std::to_string(kMaxPlies));
     GuoScene sc;
@@ -401,6 +406,14 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     if (ball_d_override > 0.0) sc.spec.D_s = ball_d_override;
     if (ball_m_override > 0.0) sc.spec.m_s = ball_m_override;
     if (ball_dx_override > 0.0) sc.spec.dx_s = ball_dx_override;
+    if (fabric_n_override > 0 || fabric_clamp_edge_override > 0.0 || fabric_overhang_y_override > 0.0)
+    {
+        if (!config_has_fabric(config) || config_has_plate(config))
+            throw std::runtime_error("guo2019: габариты ткани (--fabric-*) меняются только для мишеней без пластины (kT)");
+        if (fabric_n_override > 0) sc.spec.nx = sc.spec.ny = fabric_n_override;
+        if (fabric_clamp_edge_override > 0.0) sc.spec.c_e = fabric_clamp_edge_override;
+        if (fabric_overhang_y_override > 0.0) sc.spec.e_y = fabric_overhang_y_override;
+    }
     sc.V0 = V0;
     sc.mu = mu;
     sc.body_isolation = body_isolation;
