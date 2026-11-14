@@ -1,5 +1,7 @@
 # Аудит `Report_SPH_contact.md` против кодовой базы
 
+> **Примечание (2026-11-14):** документ — снимок на `a4147b9` (2026-09-18). Он сверяет `Report_SPH_contact.md` с тогдашней базой и не описывает текущий код: старый путь RHS (`direct_find`, `PairGraph`, `FlatGrid`) удалён в a4ce0b9 (этап Ф4-B2), ссылки на эти файлы убраны. Контакт внедрён и описан в [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md) и [contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md).
+
 **Дата проверки:** 2026-09-18
 **Проверенное состояние:** ветка `master`, HEAD `a4147b9`, рабочее дерево чистое
 **Вердикт:** документ **не соответствует** этой кодовой базе и **недостаточен** для внедрения без доработки.
@@ -141,7 +143,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   →  ошибка сборки 
 | Блокер | Место | Причина |
 |---|---|---|
 | `error: extra qualification on member 'Particle'` | [param.hpp:12](../include/param.hpp#L12) — `Particle::Particle();` | Принимается MSVC, отвергается Clang. Структура `Particle` — мёртвый код (первичное хранилище — `ParticleSystem`) |
-| `fatal error: 'omp.h' file not found` | [pair_graph.hpp:29](../include/pair_graph.hpp#L29) — `#include <omp.h>` без охраны | Apple Clang требует `-Xpreprocessor -fopenmp` и путей Homebrew libomp; голый `-fopenmp` отвергается (`unsupported option`) |
+| `fatal error: 'omp.h' file not found` | pair_graph.hpp:29 — `#include <omp.h>` без охраны | Apple Clang требует `-Xpreprocessor -fopenmp` и путей Homebrew libomp; голый `-fopenmp` отвергается (`unsupported option`) |
 | `fatal error: 'windows.h' file not found` | [main.cpp:13](../src/main.cpp#L13) | Единственный незащищённый `#include <windows.h>`; во всех остальных модулях он под `#ifdef _WIN32` |
 
 **Проверено:** после трёх правок (`Particle();`, `#ifdef _WIN32` вокруг `windows.h`,
@@ -158,7 +160,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   →  ошибка сборки 
   скорость звука на момент расчёта контакта актуальна.
 - **Контактные пары гарантированно есть в списке соседей.** Радиус поиска —
   `scale_k * (h_i+h_j)/2`, для кубического сплайна `scale_k = 2`
-  ([direct_find.cpp:12,34-37](../src/direct_find.cpp#L34-L37)), то есть `h_i+h_j`.
+  (direct_find.cpp:12,34-37), то есть `h_i+h_j`.
   Порог контакта `(h_i+h_j)/2` — ровно вдвое меньше. Отдельный поиск не нужен.
 - **`dvxdt` — ускорения, не силы** ([ext_force.cpp:105-110](../src/ext_force.cpp#L105-L110)),
   пары обрабатываются последовательно (OpenMP в `ext_force` нет) — гонок при
@@ -166,6 +168,6 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   →  ошибка сборки 
 - **`ext_force` вызывается для `ntotal + nvirt`**, пары включают виртуальные частицы
   (`itype < 0`) — фильтр обязан требовать `itype > 0` с обеих сторон.
 - **Стиль тестов:** без фреймворка — `int main()`, счётчик `failures`, `std::printf`
-  ([test_particle_system.cpp:12-20](../test_particle_system.cpp#L12-L20)).
+  ([test_particle_system.cpp:12-20](../tests/test_particle_system.cpp#L12-L20)).
 - **Следующий свободный номер ADR — 007**; в `mkdocs.yml` есть явный `nav`
   ([mkdocs.yml:116-123](../mkdocs.yml#L116-L123)), новый ADR надо в него вписать.

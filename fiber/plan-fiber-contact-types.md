@@ -1,5 +1,7 @@
 # План v2: законы pinball / Swegle / импульсный для Fiber–Solid и Fiber–Fiber
 
+> **Статус (2026-11-14):** реализовано, с расширением. Ключи `fiber_solid_*` / `fiber_fiber_*` (`contact_type`, `penalty_scale`, `impulse_gamma`) и закон `include/interactions/fiber_contact_law.hpp` есть (`src/input.cpp`, `simulation_config.hpp`), тесты `tests/test_fiber_solid_types.cpp`, `tests/test_fiber_contact_types.cpp`; вместо диапазона 0..3 действует 0..4 (тип 4 — Герц + демпфер), добавлены ключи `*_impulse_push_*`. Номера строк в плане устарели. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+
 Адресат: локальный агент (Claude Code на машине владельца).
 Репозиторий `smarry-code/SPH`, база `fiber_new` @ `318342c`, рабочая ветка `fiber_contact_types` (создать от базы).
 Исходный план: `plan-fiber-contact-types.md` (рядом, не менять). Постановка: `feasibility-pinball-swegle-impulse-for-fibers.md`, контекст: `contacts-equations-and-config.md`.

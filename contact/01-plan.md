@@ -1,5 +1,7 @@
 # План внедрения контактных сил «частица–частица» (типы 1–3 по `part_0.md`)
 
+> **Статус (2026-11-14):** реализовано, с отличиями. Формулы типов 1–3 — `include/contact_force.hpp`, ключи — `src/input.cpp` (`contact_force_type`, `contact_penalty_scale`, `contact_impulse_gamma`). Оркестратор в `src/ext_force.cpp` (шаги 3–4 плана) больше не продовый: контакт Solid–Solid считает `include/interactions/solid_contact.hpp`, а `ext_force.cpp` линкуется только в `test_contact`; критерий пары «разные материалы» (D2=A) заменён на `body[i] != body[j]`. Номера строк и пути плана — на `a4147b9`. Актуальное описание — [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md), [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md).
+
 **Адресат:** следующий запуск Claude Code в этом репозитории.
 **Основание:** `part_0.md` (разд. 2.1, 2.3), проверено по первоисточнику.
 **Не основание:** `Report_SPH_contact.md` — его раздел «что уже есть в кодовой базе»
@@ -331,7 +333,7 @@ inline Result penalty_force(int type, const PairGeom& g, const PairProps& pr,
 
 ### 2.2 Новый файл `test_contact.cpp` (математическая часть)
 
-Стиль — как в [`test_particle_system.cpp`](../test_particle_system.cpp#L12-L20):
+Стиль — как в [`test_particle_system.cpp`](../tests/test_particle_system.cpp#L12-L20):
 `int main()`, счётчик `failures`, `std::printf`, без фреймворка. Сравнение чисел —
 относительное, допуск `1e-12`.
 

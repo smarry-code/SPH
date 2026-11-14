@@ -1,5 +1,7 @@
 # Контактный алгоритм «частица–частица»: полный отчёт о внедрении
 
+> **Примечание (2026-11-14):** отчёт на коммит `0e18976` (2026-09-23). Изменилось: продовый контакт Solid–Solid — `include/interactions/solid_contact.hpp` (этап Ф4-B2), `src/ext_force.cpp` — только стенд для `tests/test_contact.cpp`; критерий пары — `body[i] != body[j]`, а не «разные материалы» (ограничение «B4C↔B4C не виден» снято); добавлен ключ `sph_same_body_only` (`src/input.cpp`). `contact_force.hpp` (типы 0–3) прежний. Актуальное описание — [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md), [contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md), [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md).
+
 | | |
 |---|---|
 | **Состояние кода** | ветка `BC6`, коммит `0e18976` (2026-09-23) |

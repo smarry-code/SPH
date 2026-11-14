@@ -1,5 +1,7 @@
 # Узкое место `compute_solid_contact_diagnostics`: диагностика и исправление
 
+> **Примечание (2026-11-14):** `src/ext_force.cpp` теперь только тестовый стенд (`test_contact`, `test_e2e_bc2/bc6` вызывают `ext_force` для ручных пар); продовый контакт Solid–Solid — `include/interactions/solid_contact.hpp`. Прямой тест `compute_solid_contact_diagnostics` (п. 3 §6.3) с тех пор появился: `tests/test_sph_body_isolation.cpp`. Старый путь RHS (`link_list`, `FlatGrid`, `PairGraph`, `int_force`) удалён в a4ce0b9; поиск — `rhs::SpatialIndex` ([neighbor-search](../docs/04-explanation/architecture/neighbor-search.md), [parallelism](../docs/04-explanation/architecture/parallelism.md)).
+
 Дата замеров: 2026-10-02/03.
 
 - **Диагностика (§2–§6):** код ветки `speedup` @ `12be13b` (то же, что в

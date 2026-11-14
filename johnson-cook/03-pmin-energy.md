@@ -4,6 +4,8 @@
 - Коммиты: `0de8845` (p_min, диагностика энергии), `4a85ec1` (p_min = −4 ГПа для 4340, U20)
 - Все прогоны на `claude-compute`, `~/jc_runs/pmin_pdv/`
 
+> **Примечание (2026-11-14):** §2.2 описывает состояние до коммита `a686ee9`: член −(p/ρ)·v_r/r в `du` позже добавлен (`include/interactions/solid_sph.hpp`, `finalize_solid`, поле `du_pdv`; см. `04-pdv-energy-j7-bc6.md`). `int_force.cpp` удалён (a4ce0b9), номера строк устарели.
+
 ## 1. E3: предел давления p_min
 
 `JcMaterial::p_min` — нижняя граница давления, аналог Autodyn Hydro Pmin.

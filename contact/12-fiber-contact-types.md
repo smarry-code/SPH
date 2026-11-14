@@ -1,5 +1,7 @@
 # Законы pinball / Swegle / импульсный для контактов нитей
 
+> **Примечание (2026-11-14):** в тексте две неточности относительно текущего кода. Диапазон `fiber_*_contact_type` — `0..4` (4 = Герц + демпфер), вне диапазона откат к 0 (`parse_fiber_contact_type`, `src/input.cpp:79-90`), а не `0..3`. Законы нить–нить (`fiber_fiber_contact_type ≠ 0`) реализованы в этапе 2 (раздел ниже) — фраза этапа 1 о «пока не реализован» относится только к его коммиту. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md), раздел 4.
+
 **Ветка:** `fiber_contact_types` от `fiber_new` @ `318342c`.
 **План:** `fiber/plan-fiber-contact-types.md` (v2).
 **Описание формул:** `fiber/SPH.md`, раздел Fiber-Solid-Contact, подраздел «Законы нормальной силы».

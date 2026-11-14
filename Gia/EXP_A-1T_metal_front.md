@@ -1,7 +1,7 @@
 # Эксперимент A/1T: алюминиевая пластина спереди, ткань сзади
 
 **Источник:** Y.B. Guo, H.J. Chiang, J.J. Deng, V.P.W. Shim. *Projectile impact on fabric-metal assemblies – Influence of fabric-metal sequence.* Int. J. Impact Eng. 127 (2019) 1–16, doi:10.1016/j.ijimpeng.2019.01.004.
-PDF: `/mnt/project-files/uploads/hearth/51e5a8f1-caf4-4162-98bb-c2d15abf6681`. Общая сводка: `../ARTICLE_GUO2019_SUMMARY.md`. Смежные: `EXP_1T_single_ply.md`, `EXP_1T-A_fabric_front.md`.
+PDF: `/mnt/project-files/uploads/hearth/51e5a8f1-caf4-4162-98bb-c2d15abf6681`. Общая сводка: `ARTICLE_GUO2019_SUMMARY.md`. Смежные: `EXP_1T_single_ply.md`, `EXP_1T-A_fabric_front.md`.
 
 **Условные обозначения достоверности:**
 - без пометки — прямо из текста статьи;

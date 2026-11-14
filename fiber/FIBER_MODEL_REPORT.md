@@ -1,5 +1,7 @@
 # Модель нитей в проекте SPH: устройство, уравнения и обоснование решений
 
+> **Примечание (2026-11-14):** номера строк `src/time_integration.cpp` в разделе 11 (и другие `файл:строка`) сдвинулись с момента написания (например, `solver.predict` теперь на строке 398, `compute_fiber_bond` — 428–431, `apply_clamp_projection` — 565); искать по имени функции. Порядок действий шага и описание модели соответствуют текущему коду, изгиба и кручения нити по-прежнему нет (см. [механика нитей](../docs/04-explanation/models/04-fiber-mechanics.md), [шаг по времени](../docs/04-explanation/models/06-time-integration.md)).
+
 **Ветка:** `fiber_contact_damped` (содержит `fiber_new` + законы контакта 1–4). Дата: 2026-10-19.
 Ссылки на код даны в виде `файл:строка` относительно корня репозитория. Номера строк сверены
 по этой ветке; если строка сдвинулась, ищите по имени функции.
@@ -699,7 +701,7 @@ $J=\min(\mu Nh,\|\mathbf u_t\|/W)$ с $N\propto\dot p$. Направление �
 ### 9.6. Сверка с измерениями
 
 Серия G1–G5, 1T, 73 м/с, μ = 0,1
-([experiments/2026-10-16-guo2019-1t-contact-types-friction](../../fiber-contact-types/experiments/2026-10-16-guo2019-1t-contact-types-friction/README.md),
+([experiments/2026-10-16-guo2019-1t-contact-types-friction](../experiments/2026-10-16-guo2019-1t-contact-types-friction/README.md),
 ветка `fiber_contact_types`), и серия окна:
 
 | Предсказание вывода | Измерено |

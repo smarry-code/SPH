@@ -1,5 +1,7 @@
 # ТЗ: кинематическое закрепление частиц Solid и Fiber
 
+> **Статус (2026-11-14):** реализовано. `include/interactions/clamp.hpp` (`ClampSet`, `ClampList`, `ClampReport`, `ClampWorkspace`, `build_clamp_list`, `validate_clamps`, `apply_clamp_projection`, `apply_clamp_friction_counts`, `mark_clamp_box`, `kClampReduceBlock`, `kClampSerialThreshold = 8192`), поля `Model::clamps`/`clamp_report` (`include/fiber/model.hpp`), точки [1]–[3] в `src/time_integration.cpp`, директива `CLAMP_BOX` в `src/fiber_input.cpp`, тесты `tests/test_clamp.cpp` (`clamp_test_t1/t2/t4`). Сверх плана: добавлены `prepare_clamp_workspace`, `clamp_report_counts`; открытый п. 14.2 (закрепления из k-файла) закрыт — `*BOUNDARY_SPC_*`, тест `k_clamp_test`. Номера строк в ТЗ относятся к `a642103` и устарели; §15 («Статус реализации») не заполнен. Актуальное описание — [Закрепление (Clamp)](../docs/04-explanation/models/03-solid-contact.md).
+
 **Исполнитель:** Claude Code в локальном репозитории SPH, ветка `fiber_new` (сверено на HEAD `a642103`, 2026-09-30). Номера строк — на этом коммите; если код сдвинулся, искать по контексту, приведённому рядом.
 **Язык кода и комментариев:** как в проекте (комментарии по-русски, стиль заголовков `include/interactions/*.hpp`, тесты с `int main` и счётчиком `failures`).
 **Конкретные области закрепления, координаты и значения параметров сцен в этом ТЗ не задаются.** Их выбирает сцена или тест; исполнитель записывает выбранные значения в сам тест.

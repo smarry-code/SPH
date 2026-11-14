@@ -1,5 +1,7 @@
 # Инструкция: трение нить–нить как проекция на уровне скоростей
 
+> **Статус (2026-11-14):** реализовано. Стадия трения вне RHS: `friction_projection_impulse`, `fiber_friction_impulse`, mass splitting — `include/interactions/fiber_friction.hpp`, `FiberVelocityUpdate` в `include/ode/ode_solver.hpp`, вызов в `src/time_integration.cpp`; один `mu_ff` на статику и кинематику; тесты `tests/test_fiber_friction.cpp`. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
+
 Задача 3 из 4. Порядок: 1 — `fiber/fiber_contact_segment_pairs.md` (один контакт нить–нить на пересечение, геометрия «сегмент–сегмент» с параметрами $s$, $t$); 2 — `fiber/fiber_solid_contact_fix.md` (нормальный контакт Fiber–Solid); 3 — эта задача; 4 — `fiber/fiber_solid_friction_implementation.md` (трение Fiber–Solid в той же стадии). Начинать после того, как приняты задачи 1 и 2.
 
 Стадию трения проектировать так, чтобы задача 4 добавила в неё второй вид контактов (свой вектор слотов, вклады в Solid) без переделки: формулы проекции — в отдельной функции, не привязанной к виду контакта; проход — по списку слотов каждого вида внутри одной стадии.

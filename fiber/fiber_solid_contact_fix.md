@@ -1,5 +1,7 @@
 # Инструкция: исправление нормального контакта Fiber–Solid (излом нити, радиус поиска)
 
+> **Статус (2026-11-14):** реализовано. Правило владения узлом с прижатием параметра (`a_prev` вместо `a_is_first`) и радиус поиска по текущей длине связи (`fiber_max_current_bond_length`) — `include/interactions/fiber_solid_contact.hpp`, `fiber_contact_common.hpp`; тесты `test_kink_vertex`, `test_concave_kink`, `test_stretched_bonds` в `tests/test_fiber_solid.cpp`. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+
 Задача 2 из 4 (порядок задач — в `fiber/fiber_friction_projection.md`, начало документа).
 
 Небольшая самостоятельная задача. Её нужно сделать **до** трения Fiber–Solid (`fiber/fiber_solid_friction_implementation.md`): она меняет нормальный контакт, и регрессия трения при `mu_fs = 0` должна сравниваться уже с исправленным поведением.

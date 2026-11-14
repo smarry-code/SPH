@@ -1,5 +1,7 @@
 # План внедрения модели Джонсона-Кука (прочность + разрушение) в smarry-code/SPH
 
+> **Статус (2026-11-14):** реализовано. Этапы J1–J7: `include/strength/johnson_cook.hpp`, `include/interactions/jc_strength.hpp`, `itype` 12–15 и `make_jc_library()` в `include/materials.hpp`, УРС `eos_jc`, опция Тейлора–Куинни (`jc_heating`, `jc_chi`), тесты `test_jc_*`, `test_e2e_jc_*`; решения — в ADR-009. Ссылки `файл:строка` относятся к `c76207a` и устарели. Актуальное описание — [02-constitutive.md](../docs/04-explanation/models/02-constitutive.md) (разд. 6), [ADR-009](../docs/04-explanation/decisions/adr-009-johnson-cook.md).
+
 Документ для агента Claude Code. Только план, без кода. Основа:
 - анализ модели и констант: [`jc-analysis.md`](jc-analysis.md) (та же папка);
 - код ветки **`fiber_new`**, коммит `c76207a`. Ссылки `файл:строка` относятся к ней.

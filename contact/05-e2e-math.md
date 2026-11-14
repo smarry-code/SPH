@@ -1,5 +1,7 @@
 # Математическое описание расчёта в e2e-тесте BC2
 
+> **Примечание (2026-11-14):** документ описывает конвейер до этапа Ф4-B2: `direct_find`, `density.cpp`, `art_visc.cpp`, `av_vel.cpp`, `virt_part.cpp` и `int_force()` (кроме `urs()`) удалены в a4ce0b9, ссылки на них убраны. Актуальные уравнения — в [docs/04-explanation/models](../docs/04-explanation/models/index.md), конвейер — в [pipeline-overview.md](../docs/04-explanation/architecture/pipeline-overview.md).
+
 Что именно считает `test_e2e_bc2` — от постановки до дискретных уравнений, в том
 виде, в каком они реализованы в коде. Каждый блок снабжён ссылкой на реализацию;
 при расхождении формулы и кода истиной является код, а документ подлежит правке.
@@ -57,7 +59,7 @@ $$W(q) = \sigma\begin{cases}
 \end{cases}$$
 
 Носитель $2h_{ij}$ задаёт и радиус поиска соседей
-([direct_find.cpp:34-37](../src/direct_find.cpp#L34-L37)).
+(direct_find.cpp:34-37).
 
 Длина сглаживания при `sle = 1` — не эволюционное уравнение, а алгебраическая связь
 ([h_upgrade.cpp:17-25](../src/h_upgrade.cpp#L17-L25)):
@@ -69,7 +71,7 @@ $$h_i = 1{,}3\left(\frac{m_i}{\varrho_i}\right)^{1/\mathrm{dim}} .$$
 ## 3. Уравнение неразрывности
 
 Плоская часть при `density_method = 1`
-([density.cpp:126-130](../src/density.cpp#L126-L130)):
+(density.cpp:126-130):
 
 $$\left.\frac{d\varrho_i}{dt}\right|_{\text{пар}} = \sum_j m_j\,(\mathbf v_i - \mathbf v_j)\cdot\nabla_i W_{ij},$$
 
@@ -86,7 +88,7 @@ $$\nabla\cdot\mathbf v = \frac{\partial v_r}{\partial r} + \frac{v_r}{r} + \frac
 $$\frac{d\varrho_i}{dt} = \sum_j m_j\,(\mathbf v_i - \mathbf v_j)\cdot\nabla_i W_{ij}\;-\;\varrho_i\,\frac{v_{r,i}}{r_i}.$$
 
 Второе слагаемое относится к **частице**, а не к паре, и вычисляется в отдельном
-пер-частичном цикле после парного ([density.cpp:235-247](../src/density.cpp#L235-L247)).
+пер-частичном цикле после парного (density.cpp:235-247).
 
 > **История.** До правки этот член стоял внутри цикла по парам и не имел множителя
 > $\varrho_i$: на каждую пару добавлялось $-v_{r,i}/r_i$. Частица с $N_i$ соседями
@@ -118,7 +120,7 @@ a^z_{\text{сим},i} = \sum_j \frac{m_j}{\varrho_i\varrho_j}\,\frac{S^{rz}_j}{r
 
 ### Искусственная вязкость
 
-Монагановская форма ([art_visc.cpp:42-62](../src/art_visc.cpp#L42-L62)), включается
+Монагановская форма (art_visc.cpp:42-62), включается
 только при сближении $\mathbf v_{ij}\cdot\mathbf x_{ij} < 0$:
 
 $$\mu_{ij} = \frac{h_{ij}\,\mathbf v_{ij}\cdot\mathbf x_{ij}}{|\mathbf x_{ij}|^2 + \eta_q^2 h_{ij}^2},
@@ -241,7 +243,7 @@ $$\frac{de_i}{dt} = \underbrace{\dot e_i^{\,p}}_{\text{давление}} + \fra
 
 ## 9. Сглаживание скоростей (XSPH)
 
-При `average_velocity = true` ([av_vel.cpp:24-36](../src/av_vel.cpp#L24-L36)):
+При `average_velocity = true` (av_vel.cpp:24-36):
 
 $$\delta\mathbf v_i = -\varepsilon\sum_j \frac{2m_j}{\varrho_i + \varrho_j}\,(\mathbf v_i - \mathbf v_j)\,W_{ij},\qquad \varepsilon = 0.25,$$
 

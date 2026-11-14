@@ -3,6 +3,8 @@
 Дата: 2026-11-09. Ветка `fiber_johnson_cook` (на `origin`, GitHub `smarry-code/SPH`).
 Файл для новой сессии Claude Code: прочитать целиком перед началом работы.
 
+> **Примечание (2026-11-14):** документ — снимок на 2026-11-09. Хеши коммитов ниже — из ветки `fiber_johnson_cook`; в `fiber_new`/`documentation` те же изменения лежат под другими хешами (напр. `c2733a0` + `51f9371` вместо `6be23bb` + `e17ea4d`; `887d6b8` — отчёт 05, ADR-009, HANDOFF). Ключ `axisym_pair_mass` откатан и в коде отсутствует; ключи `xsph_mode`, `jc_heating`, `jc_chi` и каналы мощности лога энергии (`include/energy_log.hpp`) в коде есть (`src/input.cpp`, `include/simulation_config.hpp`). Старый путь RHS (`density.cpp`, `int_force()` и т. п.) удалён в a4ce0b9. Сведения о сервере (2 ядра, правила про `claude-compute-8t`) верны на 2026-11-09 и могли измениться. Актуальное описание — [ADR-009](../docs/04-explanation/decisions/adr-009-johnson-cook.md), [how-to](../docs/02-how-to/06-johnson-cook-material.md), [запуск тестов](../docs/02-how-to/01-run-tests.md).
+
 ## 1. Рабочая машина и сборка
 
 - Windows 11, репозиторий `C:\dip\SPH\SPH`.
@@ -64,7 +66,7 @@
 | BC6 отчёт | оговорка об извлекателе; бюджет clamp full 12000/14400 с | fd76598 |
 | XSPH | ключ `xsph_mode = velocity \| position` | 30f76b2 |
 | G5 | диагностика баланса пар в `test_axisym` | 4fe6e0d |
-| ring | `axisym_pair_mass = ring` и откат (Тейлор хуже) | 6be23bb, e17ea4d |
+| ring | `axisym_pair_mass = ring` и откат (Тейлор хуже); в коде ключа нет | 6be23bb, e17ea4d |
 | лог энергии | каналы мощности по механизмам, `closure` | f99b11d |
 
 Подробности и числа — `04-pdv-energy-j7-bc6.md`, `05-xsph-axisym-energy.md`.

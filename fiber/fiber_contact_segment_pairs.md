@@ -1,5 +1,7 @@
 # Инструкция: один контакт на пересечение нитей (Fiber-Fiber-Contact «сегмент–сегмент»)
 
+> **Статус (2026-11-14):** реализовано. Контакт нить–нить построен на паре сегментов с одной силой на пересечение и правилом владения узлом (`include/interactions/fiber_contact.hpp`, `fiber_contact_common.hpp`; тесты `tests/test_fiber_contact.cpp`, `tests/test_e2e_fiber_contact.cpp`). Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+
 Задача 1 из 2. Задачу 2 (трение как проекция на уровне скоростей, `fiber/fiber_friction_projection.md`) начинать только после того, как эта задача принята.
 
 ## Цель

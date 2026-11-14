@@ -1,14 +1,16 @@
 # ТЗ: эксперименты Guo 2019 (1T, 1T/A, A/1T) в коде SPH
 
+> **Статус (2026-11-14):** реализовано (и расширено). Сцена и числа — `tests/guo2019_case.hpp`, `tests/guo2019_scene.hpp`, монитор — `tests/guo2019_monitor.hpp`, читалка кадров нитей — `tests/e2e_fiber_frames.hpp`, smoke — `tests/test_e2e_guo2019.cpp`, серийные выстрелы — `tools/guo2019/guo2019_shot.cpp`, изоляция SPH-пар по телам — `SimulationConfig::sph_same_body_only` (`include/simulation_config.hpp:78`, ключ в `src/input.cpp:297`) с тестом `tests/test_sph_body_isolation.cpp`; постановка — `fiber/guo2019-e2e.md`. Отличия от плана: конфигурации `2T` и `4T` (в ТЗ исключены) и уровни разрешения `smoke`/`scaled` добавлены, `ctest` регистрирует `e2e_guo2019_smoke_{A,1T,1T_A,A_1T,2T,4T}` (метки `3d;e2e`, `OMP_NUM_THREADS=2`); у `guo2019_shot` много ключей сверх §8.1 (чекпоинты/рестарт, `--fs-contact`, `--bracket` и др.). Расчёт идёт на текущем коде, а не на `2b67fd6`; §14 («Статус реализации») не заполнен. Актуальное описание — [CLI: `guo2019_shot`](../docs/03-reference/cli.md) и [Запуск тестов](../docs/02-how-to/01-run-tests.md).
+
 **Исполнитель:** Claude Code в локальном репозитории SPH, ветка `weave` (HEAD `fb4e8a2`, 2026-10-01: ветка `clamp` `610fd5d` + генератор полотна, 5 коммитов). В `clamp` влит `fiber_new` `738d452` целиком; поверх — кинематическое закрепление Solid и Fiber по `TZ_CLAMP_SOLID_FIBER.md` и его e2e-тесты по `CLAMP_TESTS.md`. Номера строк ядра ниже сверены на `610fd5d`; `weave` ядро не трогает. Исправления контакта и трения нитей (задачи 1–4, `fiber/FRICTION_REPORT.md`) в ветке есть. Если работа идёт в `fiber_new` после слияния `clamp`, номера строк сверить по контексту.
 **Автор ТЗ не видит результатов прогонов.** Всё, что помечено «оценка», исполнитель пересчитывает и фиксирует в §14.
 **Язык кода и комментариев:** как в проекте (комментарии по-русски, `printf`, `int main`, счётчик `failures`).
 **Предыдущие шаги:** закрепление (`TZ_CLAMP_SOLID_FIBER.md`) **внедрено** в ветке `clamp`; генератор полотняного переплетения (`TZ_PLAIN_WEAVE_GENERATOR.md`) **внедрён** в ветке `weave`: `include/fiber/plain_weave.hpp`, CLI `tools/plain_weave/plain_weave_gen.cpp`, тесты `tests/test_plain_weave.cpp`, инструкция `docs/02-how-to/02-plain-weave-generator.md` (в ней же измеренные числа, раздел «Известные ограничения»). Это ТЗ опирается на этот код.
 
 Источники постановки (лежат рядом с этим файлом; в репозиторий их не копировать, ссылаться по имени):
-- `experiments/EXP_1T_single_ply.md`: один слой ткани;
-- `experiments/EXP_1T-A_fabric_front.md`: ткань спереди, Al сзади;
-- `experiments/EXP_A-1T_metal_front.md`: Al спереди, ткань сзади (там же данные одиночной пластины A);
+- `Gia/EXP_1T_single_ply.md`: один слой ткани;
+- `Gia/EXP_1T-A_fabric_front.md`: ткань спереди, Al сзади;
+- `Gia/EXP_A-1T_metal_front.md`: Al спереди, ткань сзади (там же данные одиночной пластины A);
 - `ARTICLE_GUO2019_SUMMARY.md`: сводка статьи;
 - `TZ_CLAMP_SOLID_FIBER.md`, `CLAMP_TESTS.md`: механизм закрепления и его тесты; в коде — `include/interactions/clamp.hpp`, сцены-образцы `tests/clamp_e2e_*.hpp`;
 - `E2E_EXPERIMENT_CONTEXT.md`, `E2E_CONTEXT_CODE_MAP.md`: состояние кода и шаблон e2e на `2b67fd6`. Их §6 (дефекты контакта нитей) и номера строк `time_integration.cpp`, `fiber_contact.hpp`, `fiber_solid_contact.hpp` устарели: актуальное состояние контакта — `fiber/FRICTION_REPORT.md`.

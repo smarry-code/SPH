@@ -1,5 +1,7 @@
 # Постановка задачи: демонстрационная визуализация «снаряд пробивает сеть из нитей»
 
+> **Статус (2026-11-14):** реализовано. Демо — `experiments/2026-09-26-fiber-net-demo/` (цель CMake `demo_fiber_net`, `SPH_DIM=3`, продовый `time_integration`, рендер `scripts/animate.py`); есть вариант со слоями — `experiments/2026-09-27-fiber-layers-demo/`. Отличия от плана: `fiber::fiber_output` теперь вызывается из `src/time_integration.cpp` (строка 792) рядом с `output()`; в демо концы нитей закреплены утяжелением концевых бусин (`anchor_mass_factor = 50` в `demo_fiber_net.cpp`), как предлагал план, хотя в коде уже есть кинематическое закрепление Clamp (`include/interactions/clamp.hpp`); трение нить–нить и нить–Solid в коде есть (`include/interactions/fiber_friction.hpp`), п. 8 «Вне скоупа» устарел. Актуальное описание — [механика нитей](../docs/04-explanation/models/04-fiber-mechanics.md), [контакт нитей](../docs/04-explanation/models/05-fiber-contact.md).
+
 Написано для: разработчика, который будет реализовывать демо-сценарий и визуализацию поверх
 готовой системы нитей (см. `fiber/IMPLEMENTATION_REPORT.md`, `fiber/SPH.md`).
 

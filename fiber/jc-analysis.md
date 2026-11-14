@@ -1,5 +1,7 @@
 # Модель Джонсона-Кука: анализ кода SPH и константы
 
+> **Примечание (2026-11-14):** разд. 1–2 описывают состояние кода до внедрения («Модели Джонсона-Кука в коде НЕТ»). Модель реализована: `include/strength/johnson_cook.hpp`, `include/interactions/jc_strength.hpp`, `itype` 12–15. Разд. 3–4 (формулы, константы) остаются справочными. Актуальное описание — [02-constitutive.md](../docs/04-explanation/models/02-constitutive.md) (разд. 6), [ADR-009](../docs/04-explanation/decisions/adr-009-johnson-cook.md).
+
 ## 1. Что в коде (ветка main, smarry-code/SPH)
 Модели Джонсона-Кука в коде НЕТ. Поиск по johnson/jc/yield/plastic/damage/adiabat даёт только src/ppochnost.cpp.
 - `prochnost_mises` (itype 3–9: Ta, Al, LiF, полиуретаны, PMMA): идеальная пластичность, постоянный предел текучести `sigy` из include/materials.hpp (Al: G=26 ГПа, sigy=240 МПа). Девиатор масштабируется радиальным возвратом: s *= (Y/√3)/√J2. Нет упрочнения, скоростной и температурной зависимости, нет ε_p, нет повреждения.

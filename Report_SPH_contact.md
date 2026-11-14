@@ -1,5 +1,7 @@
 # План внедрения контактных сил из part_0.md в проект SPH
 
+> **Статус (2026-11-14):** реализовано. Типы силы 1–3 выбираются ключом `contact_force_type` (`include/simulation_config.hpp`, `include/contact_force.hpp`); продовый контакт Solid–Solid теперь в `include/interactions/solid_contact.hpp` (`src/ext_force.cpp` — только тестовый стенд); в отличие от плана («тип 0 = Wang») значение `0` означает «контакт выключен». Актуальное описание — [Контакт Solid–Solid](docs/04-explanation/models/03-solid-contact.md), [ADR-007](docs/04-explanation/decisions/adr-007-contact-force-types.md).
+
 **Проект:** SPH (d:/Clang/SPH)
 **Режим:** Архитектурное проектирование
 **Дата:** 2026-08-28

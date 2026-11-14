@@ -1,6 +1,7 @@
 # Инструкция по внедрению трения между нитями
 
-> **Заменено.** Закон без ограничения импульса давал дребезг трения, см. `friction_chattering_analysis.md` и `fiber_friction_projection.md`. Действующий подход — проекция на уровне скоростей (ограничение импульса) в отдельной стадии шага между вычислением $\Delta t$ и `ODESolver::advance()`.
+> **Статус (2026-11-14):** заменено. Закон Кулона в kernel без ограничения импульса давал дребезг (см. `friction_chattering_analysis.md`); в коде его нет, действует проекция на уровне скоростей (`include/interactions/fiber_friction.hpp`, см. `fiber_friction_projection.md`). Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
+
 
 ## Цель
 

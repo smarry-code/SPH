@@ -1,5 +1,7 @@
 # Изменения ветки `contact` относительно `master`
 
+> **Примечание (2026-11-14):** снимок ветки `contact` на момент слияния (диапазон `a4147b9..contact`). Описанные `src/ext_force.cpp`, `src/virt_part.cpp`, `src/density.cpp`, `test_flat_grid`/`test_pair_graph` и номера строк устарели: старый путь RHS удалён в a4ce0b9, продовый контакт — `include/interactions/solid_contact.hpp`. Относительные ссылки пересчитаны на корень репозитория; ссылки на удалённые файлы сняты.
+
 **Точка ветвления:** `a4147b99aa9d3a8127441866ff06b44f1d53801f`
 **Диапазон отчёта:** `a4147b9..contact` — 27 коммитов, 54 файла, +14 573 / −96 (правки
 сборочных флагов под конкретный компилятор в отчёт не включены).
@@ -78,22 +80,22 @@
 типа, без ограничителя шага, диагностики и конфигурации.
 
 **Файлы:**
-[include/contact_force.hpp](include/contact_force.hpp) — новый файл, 119 строк (коммит `1bc3420`).
+[include/contact_force.hpp](../include/contact_force.hpp) — новый файл, 119 строк (коммит `1bc3420`).
 
 Namespace `contact`, три чистые скалярные функции без зависимости от `dim` и от
 `ParticleSystem`:
 
 | Тип | Функция | Формула |
 |---|---|---|
-| 1 — пинбол Белицко | [`pinball_force()`](include/contact_force.hpp#L47) | $F = K_p\min(F_1,F_2)$, вязкая ветка $F_1 = m_{ij}\dot p/\Delta t_{\mathrm{ref}}$, ветка Герца $F_2 = G_{\mathrm{eff}}\sqrt{R_{\mathrm{eff}}}\,p^{3/2}$ |
-| 2 — Свигл | [`swegle_force()`](include/contact_force.hpp#L81) | $F = K_p\min\bigl(\max(F_1,F_2),\,F_{\mathrm{cap}}\bigr)$, $F_1 = m_{ij}p/\Delta t_{\mathrm{ref}}^2$, $F_2 = 2m_{ij}c_{\mathrm{pair}}p/(\Delta t_{\mathrm{ref}}r)$, потолок $F_{\mathrm{cap}} = m_{ij}\dot p/\Delta t_{\mathrm{ref}}$ (**fix** 2.8) |
-| 3 — импульсный | [`impulse_force()`](include/contact_force.hpp#L125) | $F = m_{ij}\lVert v_{ij}\rVert/\Delta t_{\mathrm{applied}}$ |
+| 1 — пинбол Белицко | [`pinball_force()`](../include/contact_force.hpp#L47) | $F = K_p\min(F_1,F_2)$, вязкая ветка $F_1 = m_{ij}\dot p/\Delta t_{\mathrm{ref}}$, ветка Герца $F_2 = G_{\mathrm{eff}}\sqrt{R_{\mathrm{eff}}}\,p^{3/2}$ |
+| 2 — Свигл | [`swegle_force()`](../include/contact_force.hpp#L81) | $F = K_p\min\bigl(\max(F_1,F_2),\,F_{\mathrm{cap}}\bigr)$, $F_1 = m_{ij}p/\Delta t_{\mathrm{ref}}^2$, $F_2 = 2m_{ij}c_{\mathrm{pair}}p/(\Delta t_{\mathrm{ref}}r)$, потолок $F_{\mathrm{cap}} = m_{ij}\dot p/\Delta t_{\mathrm{ref}}$ (**fix** 2.8) |
+| 3 — импульсный | [`impulse_force()`](../include/contact_force.hpp#L125) | $F = m_{ij}\lVert v_{ij}\rVert/\Delta t_{\mathrm{applied}}$ |
 
-Диспетчер — [`penalty_force(type, ...)`](include/contact_force.hpp#L133); тип `0` и любое
+Диспетчер — [`penalty_force(type, ...)`](../include/contact_force.hpp#L133); тип `0` и любое
 неизвестное значение дают нулевую силу без ограничителя.
 
 Отклонения от первоисточника, зафиксированные в
-[ADR-007](docs/04-explanation/decisions/adr-007-contact-force-types.md):
+[ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md):
 
 - множитель $p$ из буквальной (2.3) опущен — иначе размерность выходит Н·м, а не Н;
 - вместо $\varrho R^3$ используется приведённая масса $m_{ij} = m_im_j/(m_i+m_j)$: тождество
@@ -111,30 +113,30 @@ CFL-шага пары** `dt_ref`, а не от применяемого шага
 ### 1.2. Контактные силы: оркестратор в парном цикле
 
 **Файлы:**
-[src/ext_force.cpp](src/ext_force.cpp) (+103 строки в `16832d0`),
-[include/ext_force.hpp](include/ext_force.hpp),
-[src/single_step.cpp:219](src/single_step.cpp#L219) — вызов с новой сигнатурой.
+[src/ext_force.cpp](../src/ext_force.cpp) (+103 строки в `16832d0`),
+[include/ext_force.hpp](../include/ext_force.hpp),
+[src/single_step.cpp:219](../src/single_step.cpp#L219) — вызов с новой сигнатурой.
 
-- [`is_contact_material_pair()`](src/ext_force.cpp#L28) — критерий контактной пары: обе
+- [`is_contact_material_pair()`](../src/ext_force.cpp#L28) — критерий контактной пары: обе
   частицы реальные, оба `itype > 0` и **разные**. Ограничение: два тела из одного материала
   контакта не увидят (идентификатора тела в проекте нет).
-- [`particle_radius()`](src/ext_force.cpp#L61) — радиус частицы как дискретного тела
+- [`particle_radius()`](../src/ext_force.cpp#L61) — радиус частицы как дискретного тела
   (добавлен в `0f04c93`, см. **fix** [2.4](#24-порог-контакта-считался-от-длины-сглаживания)).
-- [`pair_dt_ref()`](src/ext_force.cpp#L81) — тот же критерий Куранта, что
+- [`pair_dt_ref()`](../src/ext_force.cpp#L81) — тот же критерий Куранта, что
   `compute_cfl_timestep()`, суженный на пару.
-- Контактная ветка парного цикла — [src/ext_force.cpp:209-265](src/ext_force.cpp#L209):
+- Контактная ветка парного цикла — [src/ext_force.cpp:209-265](../src/ext_force.cpp#L209):
   геометрия пары ($r$, $p$, $\dot p$, $v_{rel}$), свойства ($m_{red}$, $c_{pair}$, $G_{eff}$,
   $R_{eff}$, $dt_{ref}$), вызов `penalty_force`, раскладка силы по осям вдоль
   $n = (x_i-x_j)/r$ с делением на массу (`dvxdt` — ускорения) и точным балансом импульса.
 
 Сигнатура `ext_force` изменена: добавлены `cfg`, `dt`, `nreal` и `wb`
-([include/ext_force.hpp:20-27](include/ext_force.hpp#L20)).
+([include/ext_force.hpp:20-27](../include/ext_force.hpp#L20)).
 
 ### 1.3. Реестр модуля сдвига
 
-**Файлы:** [include/materials.hpp:42-60](include/materials.hpp#L42) (+20 строк, коммит `ee86308`).
+**Файлы:** [include/materials.hpp:42-60](../include/materials.hpp#L42) (+20 строк, коммит `ee86308`).
 
-[`shear_modulus_by_itype()`](include/materials.hpp#L47) — диспетчер `itype → G`,
+[`shear_modulus_by_itype()`](../include/materials.hpp#L47) — диспетчер `itype → G`,
 воспроизводящий логику `int_force.cpp:636-652`. Возвращает `0.0` для материалов без $G$
 (газ/вода, виртуальные частицы); вызывающая сторона обязана трактовать 0 как
 «$G$ неизвестен», а не как нулевую жёсткость.
@@ -142,10 +144,10 @@ CFL-шага пары** `dt_ref`, а не от применяемого шага
 ### 1.4. Диагностика контакта и ограничитель шага в интеграторе
 
 **Файлы:**
-[include/buffers.hpp:35-47](include/buffers.hpp#L35) — поля и `reset_contact()`;
-[src/ext_force.cpp:158](src/ext_force.cpp#L158) — сброс в начале шага;
-[src/time_integration.cpp:161](src/time_integration.cpp#L161) — применение предела;
-[src/time_integration.cpp:98-106](src/time_integration.cpp#L98) — печать диагностики.
+[include/buffers.hpp:35-47](../include/buffers.hpp#L35) — поля и `reset_contact()`;
+[src/ext_force.cpp:158](../src/ext_force.cpp#L158) — сброс в начале шага;
+[src/time_integration.cpp:161](../src/time_integration.cpp#L161) — применение предела;
+[src/time_integration.cpp:98-106](../src/time_integration.cpp#L98) — печать диагностики.
 
 В `WorkBuffers` добавлены `min_dt_contact`, `contact_pair_count`, `contact_max_delta`.
 Потребление:
@@ -158,41 +160,41 @@ CFL-шага пары** `dt_ref`, а не от применяемого шага
 ### 1.5. Конфигурация контакта (точка входа)
 
 **Файлы:**
-[include/simulation_config.hpp:35-39](include/simulation_config.hpp#L35) — поля,
-[include/simulation_config.hpp:77](include/simulation_config.hpp#L77) — умолчания;
-[src/input.cpp:332-349](src/input.cpp#L332) — разбор ключей;
-[Initial_Conditions.txt:24-28](Initial_Conditions.txt#L24) — ключи в боевом конфиге.
+[include/simulation_config.hpp:35-39](../include/simulation_config.hpp#L35) — поля,
+[include/simulation_config.hpp:77](../include/simulation_config.hpp#L77) — умолчания;
+[src/input.cpp:332-349](../src/input.cpp#L332) — разбор ключей;
+[Initial_Conditions.txt:24-28](../Initial_Conditions.txt#L24) — ключи в боевом конфиге.
 
 | Ключ `Initial_Conditions.txt` | Поле `SimulationConfig` | По умолчанию |
 |---|---|---|
-| `contact_force_type` | [`contact_force_type`](include/simulation_config.hpp#L37) | `0` (выключен) |
-| `contact_penalty_scale` | [`contact_penalty_scale`](include/simulation_config.hpp#L38) | `1.0` |
+| `contact_force_type` | [`contact_force_type`](../include/simulation_config.hpp#L37) | `0` (выключен) |
+| `contact_penalty_scale` | [`contact_penalty_scale`](../include/simulation_config.hpp#L38) | `1.0` |
 
 Значение `contact_force_type` вне диапазона 0..3 откатывается к 0 с сообщением в `stderr`.
 
 ### 1.6. Документация подсистемы контакта
 
 **Файлы** (коммит `3171f84`, дополнено в `aed9e2f` и `0f04c93`):
-[docs/04-explanation/decisions/adr-007-contact-force-types.md](docs/04-explanation/decisions/adr-007-contact-force-types.md) — новый, 159 строк (+40 в `0f04c93`);
-[docs/04-explanation/architecture/contact-particle-particle.md](docs/04-explanation/architecture/contact-particle-particle.md) — новый, 163 строки (+16 в `0f04c93`);
-[docs/03-reference/config/initial-conditions.md](docs/03-reference/config/initial-conditions.md);
-[docs/03-reference/config/simulation-config.md](docs/03-reference/config/simulation-config.md);
-[docs/02-how-to/01-run-tests.md](docs/02-how-to/01-run-tests.md);
-[docs/_internal/changelog.md](docs/_internal/changelog.md);
-[mkdocs.yml](mkdocs.yml).
+[docs/04-explanation/decisions/adr-007-contact-force-types.md](../docs/04-explanation/decisions/adr-007-contact-force-types.md) — новый, 159 строк (+40 в `0f04c93`);
+[docs/04-explanation/architecture/contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md) — новый, 163 строки (+16 в `0f04c93`);
+[docs/03-reference/config/initial-conditions.md](../docs/03-reference/config/initial-conditions.md);
+[docs/03-reference/config/simulation-config.md](../docs/03-reference/config/simulation-config.md);
+[docs/02-how-to/01-run-tests.md](../docs/02-how-to/01-run-tests.md);
+[docs/_internal/changelog.md](../docs/_internal/changelog.md);
+[mkdocs.yml](../mkdocs.yml).
 
 ADR-007 — решения и обоснования (включая раздел
-[«Радиус тела»](docs/04-explanation/decisions/adr-007-contact-force-types.md#L125));
+[«Радиус тела»](../docs/04-explanation/decisions/adr-007-contact-force-types.md#L125));
 страница архитектуры — устройство и применение, раздел «как выбирать $K_p$» и перечень
 ограничений (нет нормалей к свободной поверхности, нет трения, нет идентификатора тела).
 
 ### 1.7. Сторож времени и застоя расчёта
 
 **Файлы:**
-[include/run_guard.hpp](include/run_guard.hpp) — новый файл, 195 строк (коммит `ba8470a`);
-[include/time_integration.hpp:16-24](include/time_integration.hpp#L16) — необязательный параметр;
-[src/time_integration.cpp:325-329](src/time_integration.cpp#L325) — проверка в цикле;
-[CMakeLists.txt](CMakeLists.txt), [tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) — потребитель (см. **tests** [3.4](#34-запуск-тестов)).
+[include/run_guard.hpp](../include/run_guard.hpp) — новый файл, 195 строк (коммит `ba8470a`);
+[include/time_integration.hpp:16-24](../include/time_integration.hpp#L16) — необязательный параметр;
+[src/time_integration.cpp:325-329](../src/time_integration.cpp#L325) — проверка в цикле;
+[CMakeLists.txt](../CMakeLists.txt), [tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) — потребитель (см. **tests** [3.4](#34-запуск-тестов)).
 
 Решаемая задача: `time_integration()` — монолитный `while (time < t_total)`. При коллапсе
 шага цикл не зависает в смысле ОС — он продолжает считать, но модельное время практически
@@ -205,7 +207,7 @@ ADR-007 — решения и обоснования (включая разде�
 - `Reason::Stalled` — оценка «сколько шагов осталось при текущем `dt`» превысила потолок
   и держится там `patience` шагов подряд: это коллапс шага, бюджет не поможет.
 
-[`message()`](include/run_guard.hpp#L129) выдаёт готовую диагностику: причина, процент
+[`message()`](../include/run_guard.hpp#L129) выдаёт готовую диагностику: причина, процент
 пройденного времени задачи, число шагов, стартовый/последний/минимальный `dt`.
 
 Подключение — `RunGuard* guard = nullptr`. По умолчанию `nullptr`: поведение не меняется,
@@ -216,10 +218,10 @@ ADR-007 — решения и обоснования (включая разде�
 ### 1.8. `dim` задаётся макросом сборки `SPH_DIM`
 
 **Файлы:**
-[include/param.hpp:8-16](include/param.hpp#L8);
-[CMakeLists.txt:54-55](CMakeLists.txt#L54) — `SPH_PIPELINE_SOURCES`;
-[CMakeLists.txt:104-107](CMakeLists.txt#L104) — `SPH_DIM=2` для цели `test_e2e_bc2`;
-[docs/04-explanation/decisions/adr-002-dim-constexpr.md:51-79](docs/04-explanation/decisions/adr-002-dim-constexpr.md#L51) — приписка к ADR.
+[include/param.hpp:8-16](../include/param.hpp#L8);
+[CMakeLists.txt:54-55](../CMakeLists.txt#L54) — `SPH_PIPELINE_SOURCES`;
+[CMakeLists.txt:104-107](../CMakeLists.txt#L104) — `SPH_DIM=2` для цели `test_e2e_bc2`;
+[docs/04-explanation/decisions/adr-002-dim-constexpr.md:51-79](../docs/04-explanation/decisions/adr-002-dim-constexpr.md#L51) — приписка к ADR.
 
 ```cpp
 #ifndef SPH_DIM
@@ -246,7 +248,7 @@ constexpr size_t dim = SPH_DIM;
 
 ### 2.1. Осесимметричный член уравнения неразрывности
 
-**Файлы:** [src/density.cpp:238-268](src/density.cpp#L238) — новый пер-частичный блок;
+**Файлы:** src/density.cpp:238-268 — новый пер-частичный блок;
 удалён блок внутри парной лямбды `con_density` (коммиты `8e5c854`, защита от `r == 0` —
 `69d06dd`).
 
@@ -294,16 +296,16 @@ if (axis_sim == true && dim == 2)
 ### 2.2. Восстановлена генерация зеркальных частиц у оси
 
 **Файлы:**
-[src/single_step.cpp:93-119](src/single_step.cpp#L93) — вызов `virt_part` и размеры рабочих массивов;
-[src/time_integration.cpp:43-64](src/time_integration.cpp#L43) — размеры массивов производных;
-[src/virt_part.cpp:14](src/virt_part.cpp#L14), [src/virt_part.cpp:22-37](src/virt_part.cpp#L22) — проверка вместимости;
-[include/virt_part.hpp:8-10](include/virt_part.hpp#L8) — параметр `maxn`
+[src/single_step.cpp:93-119](../src/single_step.cpp#L93) — вызов `virt_part` и размеры рабочих массивов;
+[src/time_integration.cpp:43-64](../src/time_integration.cpp#L43) — размеры массивов производных;
+src/virt_part.cpp:14, src/virt_part.cpp:22-37 — проверка вместимости;
+include/virt_part.hpp:8-10 — параметр `maxn`
 (коммиты `832c07b`, уточнение вместимости — `69d06dd`).
 
 **Дефект.** В `master` вызов `virt_part()` в `single_step` был **закомментирован** (две
 закомментированные строки подряд), при том что `constexpr bool virtual_part = true` и
-`axis_sim = true` в [include/param.hpp:260](include/param.hpp#L260),
-[include/param.hpp:268](include/param.hpp#L268).
+`axis_sim = true` в [include/param.hpp:260](../include/param.hpp#L260),
+[include/param.hpp:268](../include/param.hpp#L268).
 
 **Последствия.** Приосевой столбец частиц считался с неполным носителем ядра: соседей со
 стороны $r < 0$ нет, SPH-суммы у оси систематически занижены, и осевой член $\rho v_r/r$
@@ -330,12 +332,12 @@ if (axis_sim == true && dim == 2)
 ### 2.3. Зеркальные частицы исключены из контактных пар
 
 **Файлы** (коммит `6260128`):
-[src/ext_force.cpp:28-34](src/ext_force.cpp#L28) — критерий пары,
-[src/ext_force.cpp:139-142](src/ext_force.cpp#L139) — защита от `nreal > ntotal`;
-[include/ext_force.hpp:20-27](include/ext_force.hpp#L20) — параметр `nreal`;
-[src/single_step.cpp:219](src/single_step.cpp#L219) — передача `ntotal + nvirt` и `ntotal`;
-[tests/test_contact.cpp:381-455](tests/test_contact.cpp#L381) — тест O10;
-[tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) — согласование вызова.
+[src/ext_force.cpp:28-34](../src/ext_force.cpp#L28) — критерий пары,
+[src/ext_force.cpp:139-142](../src/ext_force.cpp#L139) — защита от `nreal > ntotal`;
+[include/ext_force.hpp:20-27](../include/ext_force.hpp#L20) — параметр `nreal`;
+[src/single_step.cpp:219](../src/single_step.cpp#L219) — передача `ntotal + nvirt` и `ntotal`;
+[tests/test_contact.cpp:381-455](../tests/test_contact.cpp#L381) — тест O10;
+[tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) — согласование вызова.
 
 **Дефект.** После восстановления `virt_part` (п. 2.2) зеркальные частицы попали в списки пар.
 Первая версия критерия контактной пары отсеивала виртуальные частицы по `itype > 0`, но
@@ -358,13 +360,13 @@ if (axis_sim == true && dim == 2)
 ### 2.4. Порог контакта считался от длины сглаживания
 
 **Файлы** (коммит `0f04c93`):
-[src/ext_force.cpp:34-77](src/ext_force.cpp#L34) — новая функция `particle_radius()`,
-[src/ext_force.cpp:215-219](src/ext_force.cpp#L215) — расчёт `p` от суммы радиусов,
-[src/ext_force.cpp:242-243](src/ext_force.cpp#L242) — тот же радиус в `r_eff` ветки Герца;
-[tests/test_contact.cpp:266-276](tests/test_contact.cpp#L266) — `rho` в `make_pair`,
-[tests/test_contact.cpp:457-544](tests/test_contact.cpp#L457) — тест O11;
-[docs/04-explanation/architecture/contact-particle-particle.md:22-44](docs/04-explanation/architecture/contact-particle-particle.md#L22);
-[docs/04-explanation/decisions/adr-007-contact-force-types.md:125-164](docs/04-explanation/decisions/adr-007-contact-force-types.md#L125) — раздел «Радиус тела».
+[src/ext_force.cpp:34-77](../src/ext_force.cpp#L34) — новая функция `particle_radius()`,
+[src/ext_force.cpp:215-219](../src/ext_force.cpp#L215) — расчёт `p` от суммы радиусов,
+[src/ext_force.cpp:242-243](../src/ext_force.cpp#L242) — тот же радиус в `r_eff` ветки Герца;
+[tests/test_contact.cpp:266-276](../tests/test_contact.cpp#L266) — `rho` в `make_pair`,
+[tests/test_contact.cpp:457-544](../tests/test_contact.cpp#L457) — тест O11;
+[docs/04-explanation/architecture/contact-particle-particle.md:22-44](../docs/04-explanation/architecture/contact-particle-particle.md#L22);
+[docs/04-explanation/decisions/adr-007-contact-force-types.md:125-164](../docs/04-explanation/decisions/adr-007-contact-force-types.md#L125) — раздел «Радиус тела».
 
 **Дефект.** Первоисточник задаёт проникание как $p = (h_i+h_j)/2 - r$, но $h$ — это носитель
 ядра, а не размер тела. В кейсах проекта $h = 2\Delta x$, поэтому $R = h/2 = \Delta x$ при том,
@@ -409,9 +411,9 @@ $p$ снова означает накопленное за шаг перекр�
 ### 2.5. В `log.txt` писалась радиальная скорость вместо осевой
 
 **Файлы** (коммит `5357558`):
-[src/time_integration.cpp:312-319](src/time_integration.cpp#L312);
-[tests/data/bc2_reference.txt:21-24](tests/data/bc2_reference.txt#L21) — предупреждение в шапке эталона;
-[tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) — чтение второй колонки как осевой скорости.
+[src/time_integration.cpp:312-319](../src/time_integration.cpp#L312);
+[tests/data/bc2_reference.txt:21-24](../tests/data/bc2_reference.txt#L21) — предупреждение в шапке эталона;
+[tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) — чтение второй колонки как осевой скорости.
 
 **Дефект.** Мониторинговый лог писал `sys.vx[0][moni_particle]` — **радиальную** компоненту.
 
@@ -427,8 +429,8 @@ $p$ снова означает накопленное за шаг перекр�
 
 ### 2.6. `dt_drop()` сторожа считался по последнему шагу
 
-**Файлы:** [include/run_guard.hpp:114](include/run_guard.hpp#L114) и формулировки сообщений
-в [include/run_guard.hpp:129-160](include/run_guard.hpp#L129) (правка внутри коммита
+**Файлы:** [include/run_guard.hpp:114](../include/run_guard.hpp#L114) и формулировки сообщений
+в [include/run_guard.hpp:129-160](../include/run_guard.hpp#L129) (правка внутри коммита
 `69d06dd`; дефект в коде, добавленном этой же веткой в `ba8470a`).
 
 **Дефект.** `dt_drop()` возвращал `dt_first_ / dt_last_`.
@@ -443,7 +445,7 @@ $p$ снова означает накопленное за шаг перекр�
 
 ### 2.7. Жёсткий рубеж CTest срабатывал раньше сторожа
 
-**Файлы:** [CMakeLists.txt:134-141](CMakeLists.txt#L134) (коммит `69d06dd`).
+**Файлы:** [CMakeLists.txt:134-141](../CMakeLists.txt#L134) (коммит `69d06dd`).
 
 **Дефект.** `--full` делает **четыре** прогона (базовый плюс три контактных сценария §6), а
 `--time-limit` задаёт бюджет на **один**. При `4 × 600 с` против `TIMEOUT 900` первым
@@ -459,8 +461,8 @@ $p$ снова означает накопленное за шаг перекр�
 
 ### 2.8. Сила Свигла без потолка, ограничитель шага к ней слеп
 
-**Файлы:** [include/contact_force.hpp:81-124](include/contact_force.hpp#L81) — потолок и
-ветвление `dt_limit`; [tests/test_contact.cpp](tests/test_contact.cpp) — M8 переведён в
+**Файлы:** [include/contact_force.hpp:81-124](../include/contact_force.hpp#L81) — потолок и
+ветвление `dt_limit`; [tests/test_contact.cpp](../tests/test_contact.cpp) — M8 переведён в
 область применимости, добавлены M8c и M8d.
 
 **Дефект — две независимые половины.**
@@ -490,7 +492,7 @@ $$\Delta t_{\mathrm{limit}} = 0{,}8\,\Delta t_{\mathrm{ref}}/\sqrt{K_p} = \mathr
 \approx 2{,}7\cdot10^{-8}$ м — завышение $\approx 6\cdot10^{3}$ раз: $4{,}5\cdot10^{8}$ Н
 вместо гасящих $7{,}3\cdot10^{4}$ Н и $3{,}5\cdot10^{4}$ м/с приращения за шаг. Вентиль
 $\dot p > 0$ превращал это в храповик: сила только расталкивала и никогда не возвращала.
-Разбор по кадрам — [contact/10-debug-handoff.md](contact/10-debug-handoff.md).
+Разбор по кадрам — [contact/10-debug-handoff.md](10-debug-handoff.md).
 
 **Исправление.** Потолок $F_{\mathrm{cap}} = m_{red}\dot p/\Delta t_{\mathrm{ref}}$ — та самая
 сила, что гасит сближение за опорный шаг. В области применимости (2.6) он тождественно
@@ -513,7 +515,7 @@ $\dot p > 0$ превращал это в храповик: сила тольк�
 
 ### 2.9. Радиус тела рос без предела при разгрузке материала
 
-**Файлы:** [src/ext_force.cpp:61-77](src/ext_force.cpp#L61).
+**Файлы:** [src/ext_force.cpp:61-77](../src/ext_force.cpp#L61).
 
 **Дефект.** `particle_radius` возвращает $R = \tfrac12(m/\varrho)^{1/\mathrm{dim}}$
 (**fix** 2.4). При разгрузке $\varrho \to 0^{+}$ это растёт неограниченно. Обработан был
@@ -545,38 +547,38 @@ $R$ шёл $9{,}99\cdot10^{-5} \to 1{,}43\cdot10^{-4} \to 2{,}41\cdot10^{-4} \to
 
 | Было | Стало |
 |---|---|
-| `test_flat_grid.cpp` | [tests/test_flat_grid.cpp](tests/test_flat_grid.cpp) |
-| `test_pair_graph.cpp` | [tests/test_pair_graph.cpp](tests/test_pair_graph.cpp) |
-| `test_particle_system.cpp` | [tests/test_particle_system.cpp](tests/test_particle_system.cpp) |
-| `test_contact.cpp` | [tests/test_contact.cpp](tests/test_contact.cpp) |
-| `test_e2e_bc1.cpp` | [tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) (переименован в `5357558`, сходство 89 %) |
-| `contact/e2e/bc1_reference*.txt` | `tests/data/` → заменены на [tests/data/bc2_reference.txt](tests/data/bc2_reference.txt) |
+| `test_flat_grid.cpp` | tests/test_flat_grid.cpp |
+| `test_pair_graph.cpp` | tests/test_pair_graph.cpp |
+| `test_particle_system.cpp` | [tests/test_particle_system.cpp](../tests/test_particle_system.cpp) |
+| `test_contact.cpp` | [tests/test_contact.cpp](../tests/test_contact.cpp) |
+| `test_e2e_bc1.cpp` | [tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) (переименован в `5357558`, сходство 89 %) |
+| `contact/e2e/bc1_reference*.txt` | `tests/data/` → заменены на [tests/data/bc2_reference.txt](../tests/data/bc2_reference.txt) |
 
 Сопутствующие правки:
-[CMakeLists.txt:60-92](CMakeLists.txt#L60) — пути к исходникам тестов;
-[docs/04-explanation/architecture/flat-grid.md](docs/04-explanation/architecture/flat-grid.md),
-[docs/04-explanation/decisions/adr-005-eos-dependency-break.md](docs/04-explanation/decisions/adr-005-eos-dependency-break.md),
-[docs/04-explanation/decisions/adr-007-contact-force-types.md](docs/04-explanation/decisions/adr-007-contact-force-types.md),
-[docs/_internal/changelog.md](docs/_internal/changelog.md),
-[docs/02-how-to/01-run-tests.md](docs/02-how-to/01-run-tests.md),
-[contact/04-e2e-test-brief.md](contact/04-e2e-test-brief.md) — обновлённые ссылки.
+[CMakeLists.txt:60-92](../CMakeLists.txt#L60) — пути к исходникам тестов;
+docs/04-explanation/architecture/flat-grid.md,
+[docs/04-explanation/decisions/adr-005-eos-dependency-break.md](../docs/04-explanation/decisions/adr-005-eos-dependency-break.md),
+[docs/04-explanation/decisions/adr-007-contact-force-types.md](../docs/04-explanation/decisions/adr-007-contact-force-types.md),
+[docs/_internal/changelog.md](../docs/_internal/changelog.md),
+[docs/02-how-to/01-run-tests.md](../docs/02-how-to/01-run-tests.md),
+[contact/04-e2e-test-brief.md](04-e2e-test-brief.md) — обновлённые ссылки.
 
 Эталонные данные — в `tests/data/`. Путь передаётся макросом `SPH_TEST_DATA_DIR` из CMake
-**абсолютным** ([CMakeLists.txt:103-107](CMakeLists.txt#L103)): тест запускается и из каталога
+**абсолютным** ([CMakeLists.txt:103-107](../CMakeLists.txt#L103)): тест запускается и из каталога
 сборки (ctest), и из временного каталога прогона, поэтому относительный путь не годится.
 
 ### 3.2. `tests/test_contact.cpp` — unit-тест контактных сил
 
-**Файлы:** [tests/test_contact.cpp](tests/test_contact.cpp) — 703 строки
+**Файлы:** [tests/test_contact.cpp](../tests/test_contact.cpp) — 703 строки
 (коммиты `1bc3420` — 215 строк математики, `d63847c` — 267 строк оркестратора,
 `6260128` — тест O10, `0f04c93` — тест O11 и `rho` в `make_pair`, последний коммит —
 M8c/M8d и перевод M8 в область применимости);
-[CMakeLists.txt:87-92](CMakeLists.txt#L87) — цель `test_contact` и тест `contact_test`.
+[CMakeLists.txt:87-92](../CMakeLists.txt#L87) — цель `test_contact` и тест `contact_test`.
 
 Цель линкуется с `src/ext_force.cpp`, чтобы покрыть и оркестратор. Относительный допуск
 аналитики `1e-12`.
 
-**Математическая часть (M1-M12)** — [tests/test_contact.cpp:34-245](tests/test_contact.cpp#L34):
+**Математическая часть (M1-M12)** — [tests/test_contact.cpp:34-245](../tests/test_contact.cpp#L34):
 
 - M1/M2 — реестр `shear_modulus_by_itype`: известные материалы (`itype` 4, 10, 11) и возврат 0
   для газа/воды, неизвестных и отрицательных `itype`;
@@ -593,42 +595,42 @@ M8c/M8d и перевод M8 в область применимости);
 - M10, M11 — тип 3: точное значение $m_{red}v_{rel}/\Delta t$ и `dt_limit == kNoLimit`;
 - M12 — тип `Off` и неизвестный тип дают нулевой результат.
 
-**Оркестратор (O1-O11)** — [tests/test_contact.cpp:247-674](tests/test_contact.cpp#L247).
-Пары строятся вручную функцией [`make_pair()`](tests/test_contact.cpp#L252), без поиска
+**Оркестратор (O1-O11)** — [tests/test_contact.cpp:247-674](../tests/test_contact.cpp#L247).
+Пары строятся вручную функцией [`make_pair()`](../tests/test_contact.cpp#L252), без поиска
 соседей (`niac`/`pair_i`/`pair_j` задаются напрямую):
 
 | Тест | Строки | Что проверяет |
 |---|---|---|
-| O1 | [306](tests/test_contact.cpp#L306) | Баланс импульса: $m_i a_i + m_j a_j = 0$ с допуском `1e-12` |
-| O2 | [324](tests/test_contact.cpp#L324) | Знак ускорений — отталкивание, а не притяжение |
-| O3 | [343](tests/test_contact.cpp#L343) | Фильтры: одинаковый материал, виртуальная частица, `itype == 0` → пара не контактная |
-| O10 | [381](tests/test_contact.cpp#L381) | Зеркальные частицы не образуют контактных пар (см. **fix** 2.3), исключение при `nreal > ntotal` |
-| O11 | [457](tests/test_contact.cpp#L457) | Радиус тела берётся из объёма, а не из `hsml` (см. **fix** 2.4) |
-| O4 | [546](tests/test_contact.cpp#L546) | $p \le 0$ → `pair_count == 0`, шаг не ограничивается |
-| O5 | [560](tests/test_contact.cpp#L560) | `contact_force_type = 0` → `dvxdt == 0` **бит-в-бит** (инвариант обратной совместимости) |
-| O6 | [575](tests/test_contact.cpp#L575) | `min_dt_contact` для типов 1-2 совпадает с аналитикой |
-| O7 | [617](tests/test_contact.cpp#L617) | Тип 3 не ограничивает шаг |
-| O8 | [629](tests/test_contact.cpp#L629) | `contact_max_delta` равен фактическому $p$ |
-| O9 | [643](tests/test_contact.cpp#L643) | Регрессия на коллапс шага: итеративное применение `dt ← min(dt, min_dt_contact)` выходит на плато, ускорения конечны |
+| O1 | [306](../tests/test_contact.cpp#L306) | Баланс импульса: $m_i a_i + m_j a_j = 0$ с допуском `1e-12` |
+| O2 | [324](../tests/test_contact.cpp#L324) | Знак ускорений — отталкивание, а не притяжение |
+| O3 | [343](../tests/test_contact.cpp#L343) | Фильтры: одинаковый материал, виртуальная частица, `itype == 0` → пара не контактная |
+| O10 | [381](../tests/test_contact.cpp#L381) | Зеркальные частицы не образуют контактных пар (см. **fix** 2.3), исключение при `nreal > ntotal` |
+| O11 | [457](../tests/test_contact.cpp#L457) | Радиус тела берётся из объёма, а не из `hsml` (см. **fix** 2.4) |
+| O4 | [546](../tests/test_contact.cpp#L546) | $p \le 0$ → `pair_count == 0`, шаг не ограничивается |
+| O5 | [560](../tests/test_contact.cpp#L560) | `contact_force_type = 0` → `dvxdt == 0` **бит-в-бит** (инвариант обратной совместимости) |
+| O6 | [575](../tests/test_contact.cpp#L575) | `min_dt_contact` для типов 1-2 совпадает с аналитикой |
+| O7 | [617](../tests/test_contact.cpp#L617) | Тип 3 не ограничивает шаг |
+| O8 | [629](../tests/test_contact.cpp#L629) | `contact_max_delta` равен фактическому $p$ |
+| O9 | [643](../tests/test_contact.cpp#L643) | Регрессия на коллапс шага: итеративное применение `dt ← min(dt, min_dt_contact)` выходит на плато, ускорения конечны |
 
 O11 закрепляет договорённость о радиусе: `hsml` намеренно задан в 10 раз больше размера тела,
 проверяются отсутствие контакта при $r > R_i+R_j$ и при точном касании, наличие при сближении,
 отсчёт $p$ от суммы радиусов, уменьшение радиуса при сжатии и устойчивость к $\varrho \le 0$.
 В `make_pair` добавлена строка `rho = mass/h^dim`
-([tests/test_contact.cpp:266-276](tests/test_contact.cpp#L266)): она даёт $R = h/2$, то есть
+([tests/test_contact.cpp:266-276](../tests/test_contact.cpp#L266)): она даёт $R = h/2$, то есть
 прежний порог, поэтому ожидаемые значения тестов M и O сохраняются. Без неё `rho = 0`
 (`obnul_index`), радиус вырождается в нуль и контакт не возникал бы нигде.
 
 ### 3.3. `tests/test_e2e_bc2.cpp` — сквозной тест на кейсе BC2
 
 **Файлы:**
-[tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) — 1321 строка в коммитах ветки
+[tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) — 1321 строка в коммитах ветки
 (`5536800` — 1093 строки, `41bbe0b` +75, `40ff8e6` +58, `ba8470a` +43, `5357558` +91,
 `69d06dd` +28, `6260128` +2);
-[tests/data/bc2_initial_conditions.txt](tests/data/bc2_initial_conditions.txt) — 52 строки;
-[tests/data/bc2_reference.txt](tests/data/bc2_reference.txt) — 1757 строк;
-[CMakeLists.txt:94-141](CMakeLists.txt#L94) — цель и два теста CTest;
-[contact/04-e2e-test-brief.md](contact/04-e2e-test-brief.md) — ТЗ (433 строки, коммит `40ff8e6`).
+[tests/data/bc2_initial_conditions.txt](../tests/data/bc2_initial_conditions.txt) — 52 строки;
+[tests/data/bc2_reference.txt](../tests/data/bc2_reference.txt) — 1757 строк;
+[CMakeLists.txt:94-141](../CMakeLists.txt#L94) — цель и два теста CTest;
+[contact/04-e2e-test-brief.md](04-e2e-test-brief.md) — ТЗ (433 строки, коммит `40ff8e6`).
 
 Автоматизирует шаг 6 плана: интеграционная проверка **всего конвейера** на реальной
 осесимметричной геометрии (удар по карбиду бора) со сверкой с эталонной кривой.
@@ -638,7 +640,7 @@ O11 закрепляет договорённость о радиусе: `hsml` 
 
 **Что проверяется:**
 
-1. **Геометрия** ([tests/test_e2e_bc2.cpp:107-243](tests/test_e2e_bc2.cpp#L107)) — четыре слоя
+1. **Геометрия** ([tests/test_e2e_bc2.cpp:107-243](../tests/test_e2e_bc2.cpp#L107)) — четыре слоя
    (ударник из полиуретана, летящая керамика B4C, покоящаяся керамика B4C, окно LiF),
    ожидаемое число частиц по слоям. Геометрия перенесена из **закомментированного** блока
    `src/input.cpp:490-596`; сам `input.cpp` намеренно не изменялся. При переносе исправлены
@@ -646,15 +648,15 @@ O11 закрепляет договорённость о радиусе: `hsml` 
    шла в контейнер нулевого размера — UB); накопление `r += delta_x` в условии цикла заменено
    на целочисленные счётчики (число частиц перестало зависеть от накопленной ошибки
    округления); литерал `moni_particle = 12973` заменён геометрическим правилом
-   [`pick_moni_particle()`](tests/test_e2e_bc2.cpp#L165). Подтверждено прогоном:
+   [`pick_moni_particle()`](../tests/test_e2e_bc2.cpp#L165). Подтверждено прогоном:
    `6789 + 3287 + 7958 + 16129 = 34163` частиц и `moni_particle = 12973` — точное совпадение
    с оригиналом.
-2. **Живучесть конвейера** ([`check_run_health`](tests/test_e2e_bc2.cpp#L782)) — достижение
+2. **Живучесть конвейера** ([`check_run_health`](../tests/test_e2e_bc2.cpp#L782)) — достижение
    `t_total`, отсутствие коллапса шага, исход сторожа.
-3. **Качество кадров** ([`check_frames`](tests/test_e2e_bc2.cpp#L483)) — ни одного NaN/Inf в
+3. **Качество кадров** ([`check_frames`](../tests/test_e2e_bc2.cpp#L483)) — ни одного NaN/Inf в
    `x`, `vx`, `rho`, `p`; `rho > 0`, `mass > 0`. Кадры читаются из `sph_output_*.txt`, которые
    пишет сам конвейер.
-4. **Сверка с эталоном по ФОРМЕ** ([`check_against_reference`](tests/test_e2e_bc2.cpp)) —
+4. **Сверка с эталоном по ФОРМЕ** ([`check_against_reference`](../tests/test_e2e_bc2.cpp)) —
    признаки кривой (пик, фронт 10/50/90 %, спад до 70 %), совмещение по `t50` переднего
    фронта и безразмерные отношения расчёт/эталон: амплитуда, фронт 10-90 %, спад до 70 %.
    Прежняя схема (интерполяция на 200 узлов, `rel_l2` и `max_abs_dev` в общем абсолютном
@@ -662,10 +664,10 @@ O11 закрепляет договорённость о радиусе: `hsml` 
    моменту удара, поэтому любой сдвиг триггера прибора трактовался как ошибка расчёта.
    Делается **только при `contact_force_type = 0`** — для контактных сценариев ТЗ §6
    требует лишь устойчивости.
-5. **Известное ограничение D2=A** ([`test_known_limitation_b4c_b4c`](tests/test_e2e_bc2.cpp#L907))
+5. **Известное ограничение D2=A** ([`test_known_limitation_b4c_b4c`](../tests/test_e2e_bc2.cpp#L907))
    — контакт не различает два тела одного материала (слои 2 и 3 целиком `itype = 10`). Это
    **тест-документация**: когда появится идентификатор тела, ожидания инвертируются.
-6. **Отсутствие побочных эффектов** ([`check_no_side_effects`](tests/test_e2e_bc2.cpp#L1001)) —
+6. **Отсутствие побочных эффектов** ([`check_no_side_effects`](../tests/test_e2e_bc2.cpp#L1001)) —
    `time_integration()` пишет `log.txt` жёстко зашитым именем в текущий каталог, поэтому каждый
    прогон уходит в собственный временный каталог (`ScopedWorkDir`), а после — снимок рабочего
    каталога. Снимок берётся **только** по именам, которые пишет конвейер: сравнение всего
@@ -676,14 +678,14 @@ O11 закрепляет договорённость о радиусе: `hsml` 
    `--contact-type=N`, а перебор делает набор тестов — по одному на тип, чтобы обрыв
    одного не скрывал результат остальных.
 
-**Конфигурация теста** — [tests/data/bc2_initial_conditions.txt](tests/data/bc2_initial_conditions.txt).
+**Конфигурация теста** — [tests/data/bc2_initial_conditions.txt](../tests/data/bc2_initial_conditions.txt).
 Разбирается **той же** `parse_sph_config()`, что и боевой `Initial_Conditions.txt` — тест
 проходит через реальный путь загрузки конфигурации, а не выставляет поля в обход него.
 Отсутствие файла — ошибка, а не молчаливый откат к умолчаниям. `t_total = 3.5e-6` вместо
 архивных `3e-6`: приборный эталон записан до 3.4926e-6 с, и при 3e-6 расчёт обрывался на
 половине окна эталона.
 
-**Эталон** — [tests/data/bc2_reference.txt](tests/data/bc2_reference.txt). Важно: это **не
+**Эталон** — [tests/data/bc2_reference.txt](../tests/data/bc2_reference.txt). Важно: это **не
 регрессионный эталон** — он снят интерферометром (`contact/e2e/gold_standart.txt`, 1714 точек,
 км/с → м/с), а не нашим кодом. Сверка с ним измеряет близость модели к физике, а не
 стабильность кода, поэтому точные регрессионные допуски к нему неприменимы — отсюда и
@@ -692,7 +694,7 @@ O11 закрепляет договорённость о радиусе: `hsml` 
 contact_force_type, окно эталона).
 
 **Проверка коллапса шага — исправление самой проверки** (коммит `40ff8e6`,
-[tests/test_e2e_bc2.cpp:813-860](tests/test_e2e_bc2.cpp#L813)). Первая версия брала опорным
+[tests/test_e2e_bc2.cpp:813-860](../tests/test_e2e_bc2.cpp#L813)). Первая версия брала опорным
 **последний** принятый `dt`: при коллапсе он сам крошечный, оценка `t_total/dt_last`
 раздувается, и потолок числа шагов перестаёт что-либо ограничивать. Проверка пропустила бы
 ровно тот случай, ради которого написана. Переписана на **первый** принятый `dt` плюс прямая
@@ -700,8 +702,8 @@ contact_force_type, окно эталона).
 
 ### 3.4. Запуск тестов
 
-**Файлы:** [CMakeLists.txt:60-141](CMakeLists.txt#L60) — цели и регистрация тестов;
-[docs/02-how-to/01-run-tests.md](docs/02-how-to/01-run-tests.md) — инструкция.
+**Файлы:** [CMakeLists.txt:60-141](../CMakeLists.txt#L60) — цели и регистрация тестов;
+[docs/02-how-to/01-run-tests.md](../docs/02-how-to/01-run-tests.md) — инструкция.
 
 ```bash
 # всё, что быстро (smoke-режим e2e включён по умолчанию)
@@ -738,7 +740,7 @@ ctest --test-dir build -L slow --output-on-failure
 ослабляет.
 
 Опция `SPH_E2E_SLOW_TESTS` (по умолчанию `OFF`,
-[CMakeLists.txt:99](CMakeLists.txt#L99)) гейтит **регистрацию** полного теста: голая метка
+[CMakeLists.txt:99](../CMakeLists.txt#L99)) гейтит **регистрацию** полного теста: голая метка
 `slow` не исключает тест из прогона по умолчанию, а CTest не умеет «зарегистрирован, но по
 умолчанию не запускается».
 
@@ -750,18 +752,18 @@ ctest --test-dir build -L slow --output-on-failure
   одного шага, куда он не заглядывает).
 
 Потолок застоя в тесте — `2.0e6` шагов при терпении 200 шагов
-([tests/test_e2e_bc2.cpp:673](tests/test_e2e_bc2.cpp#L673)): BC2 при `dx = 2e-4` финиширует за
+([tests/test_e2e_bc2.cpp:673](../tests/test_e2e_bc2.cpp#L673)): BC2 при `dx = 2e-4` финиширует за
 ~1.5e3 шагов, а при `dt ~ 1e-12` остаток оценивается в ~2.6e6 шагов.
 
-**Ключи CLI теста** ([tests/test_e2e_bc2.cpp:1444](tests/test_e2e_bc2.cpp#L1444)):
+**Ключи CLI теста** ([tests/test_e2e_bc2.cpp:1444](../tests/test_e2e_bc2.cpp#L1444)):
 `--full`, `--emit-reference` (напечатать эталон текущего режима в stdout), `--verbose` (не
 глушить вывод конвейера), `--keep-workdir` (не удалять временный каталог с `log.txt` и кадрами,
 коммит `41bbe0b`), `--time-limit=СЕК` (по умолчанию 600).
 
 ### 3.5. Неинициализированный `sys.c` в геометрии теста
 
-**Файлы:** [tests/test_e2e_bc2.cpp:246-252](tests/test_e2e_bc2.cpp#L246) — `init_eos_state()`,
-[tests/test_e2e_bc2.cpp:664](tests/test_e2e_bc2.cpp#L664) — вызов перед расчётом стартового
+**Файлы:** [tests/test_e2e_bc2.cpp:246-252](../tests/test_e2e_bc2.cpp#L246) — `init_eos_state()`,
+[tests/test_e2e_bc2.cpp:664](../tests/test_e2e_bc2.cpp#L664) — вызов перед расчётом стартового
 шага (коммит `69d06dd`, находка 1).
 
 **Дефект.** `build_bc2_geometry` не заполняла `sys.c`, поэтому самый первый
@@ -784,7 +786,7 @@ ctest --test-dir build -L slow --output-on-failure
 
 ### 3.6. Устаревшие строки справки теста
 
-**Файлы:** [tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) — шапка `--emit-reference` и
+**Файлы:** [tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) — шапка `--emit-reference` и
 `print_usage()` (коммит `69d06dd`, находка 6).
 
 Обе обещали `vx[0]` и `t_total = 3e-6` вместо осевой `vx[1]` и значения из конфига. Приведены
@@ -792,7 +794,7 @@ ctest --test-dir build -L slow --output-on-failure
 
 ### 3.7. Документация по запуску тестов
 
-**Файлы:** [docs/02-how-to/01-run-tests.md](docs/02-how-to/01-run-tests.md) (+22 строки,
+**Файлы:** [docs/02-how-to/01-run-tests.md](../docs/02-how-to/01-run-tests.md) (+22 строки,
 коммиты `3171f84`, `41e6bc7`, `aed9e2f`, `5357558`).
 
 Таблица тестов дополнена `contact_test` и наборами `e2e_bc2_smoke_contact0..3`,
@@ -813,37 +815,37 @@ ctest --test-dir build -L slow --output-on-failure
 
 | Файл | Состояние | Суть |
 |---|---|---|
-| [tests/test_e2e_bc2.cpp](tests/test_e2e_bc2.cpp) | закоммичено (`2b5bc23`, далее развито) | Флаги `--emit-plot=<файл>`, `--emit-curve=<файл>`, `--plot-from=<каталог>`, генератор SVG на C++ |
-| [CMakeLists.txt](CMakeLists.txt) | закоммичено (`2b5bc23`) | Цель `bc2_plot` |
-| [cmake/bc2_plot.cmake](cmake/bc2_plot.cmake) | закоммичено (`2b5bc23`) | Скрипт цели `bc2_plot`: четыре прогона с выгрузкой кривых и сборка сводного SVG |
+| [tests/test_e2e_bc2.cpp](../tests/test_e2e_bc2.cpp) | закоммичено (`2b5bc23`, далее развито) | Флаги `--emit-plot=<файл>`, `--emit-curve=<файл>`, `--plot-from=<каталог>`, генератор SVG на C++ |
+| [CMakeLists.txt](../CMakeLists.txt) | закоммичено (`2b5bc23`) | Цель `bc2_plot` |
+| [cmake/bc2_plot.cmake](../cmake/bc2_plot.cmake) | закоммичено (`2b5bc23`) | Скрипт цели `bc2_plot`: четыре прогона с выгрузкой кривых и сборка сводного SVG |
 
 ### 4.2. Проектная документация каталога `contact/`
 
 Вопрос «добавлять ли эти файлы в репозиторий» закрыт: каталог закоммичен целиком
 (`a25acff` и далее), поэтому ссылки на него из
-[contact/04-e2e-test-brief.md](contact/04-e2e-test-brief.md) и из
-[ADR-007](docs/04-explanation/decisions/adr-007-contact-force-types.md) рабочие, а не битые.
+[contact/04-e2e-test-brief.md](04-e2e-test-brief.md) и из
+[ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md) рабочие, а не битые.
 Файл `contact/.DS_Store` (мусор macOS) в репозиторий не попал и в рабочем дереве больше
 не лежит.
 
 | Файл | Коммит | Содержание |
 |---|---|---|
-| [contact/00-audit.md](contact/00-audit.md) | `a25acff` | Аудит `Report_SPH_contact.md` против кодовой базы; вердикт — документ не соответствует репозиторию и недостаточен для внедрения |
-| [contact/01-plan.md](contact/01-plan.md) | `a25acff` | Основной план внедрения: шаги 0-6, код, тесты, чек-лист приёмки |
-| [contact/02-decisions.md](contact/02-decisions.md) | `a25acff` | Шесть решений, требующих подтверждения владельцем (D1-D6); все приняты в варианте A |
-| [contact/03-review-brief.md](contact/03-review-brief.md) | `a25acff` | ТЗ на код-ревью реализации контакта |
-| [contact/04-e2e-test-brief.md](contact/04-e2e-test-brief.md) | `5357558` | ТЗ на e2e-тест, §1-§8 + раздел «Статус реализации» |
-| [contact/05-e2e-math.md](contact/05-e2e-math.md) | `a25acff` | Математическое описание того, что считает `test_e2e_bc2`, со ссылками на реализацию |
-| [contact/06-e2e-case.md](contact/06-e2e-case.md) | `0534c4e` | Физическая постановка BC2: геометрия сборки, НУ/ГУ, регистрируемая величина |
-| [contact/07-changes.md](contact/07-changes.md) | `a25acff` | Этот документ |
-| [contact/08-phase-shift.md](contact/08-phase-shift.md) | `a25acff` | Разбор расхождения с эталоном по кадрам |
-| [contact/09-article-conformance.md](contact/09-article-conformance.md) | `a25acff` | Сверка реализации со статьёй-источником эталона |
-| [contact/10-debug-handoff.md](contact/10-debug-handoff.md) | `48997cd` | Передача отладки обрыва при `contact_force_type = 2`. Обрыв закрыт (**fix** 2.8, 2.9); документ сохранён как разбор, по которому механизм устанавливался |
-| [contact/README.md](contact/README.md) | `a25acff` | Оглавление каталога |
-| [contact/e2e/gold_standart.txt](contact/e2e/gold_standart.txt) | `a25acff` | Приборный профиль скорости — источник `tests/data/bc2_reference.txt` |
-| [contact/e2e/BC2_velocity_profile_raw.csv](contact/e2e/BC2_velocity_profile_raw.csv) | `a25acff` | Тот же набор в исходном виде (км/с) |
+| [contact/00-audit.md](00-audit.md) | `a25acff` | Аудит `Report_SPH_contact.md` против кодовой базы; вердикт — документ не соответствует репозиторию и недостаточен для внедрения |
+| [contact/01-plan.md](01-plan.md) | `a25acff` | Основной план внедрения: шаги 0-6, код, тесты, чек-лист приёмки |
+| [contact/02-decisions.md](02-decisions.md) | `a25acff` | Шесть решений, требующих подтверждения владельцем (D1-D6); все приняты в варианте A |
+| [contact/03-review-brief.md](03-review-brief.md) | `a25acff` | ТЗ на код-ревью реализации контакта |
+| [contact/04-e2e-test-brief.md](04-e2e-test-brief.md) | `5357558` | ТЗ на e2e-тест, §1-§8 + раздел «Статус реализации» |
+| [contact/05-e2e-math.md](05-e2e-math.md) | `a25acff` | Математическое описание того, что считает `test_e2e_bc2`, со ссылками на реализацию |
+| [contact/06-e2e-case.md](06-e2e-case.md) | `0534c4e` | Физическая постановка BC2: геометрия сборки, НУ/ГУ, регистрируемая величина |
+| [contact/07-changes.md](07-changes.md) | `a25acff` | Этот документ |
+| [contact/08-phase-shift.md](08-phase-shift.md) | `a25acff` | Разбор расхождения с эталоном по кадрам |
+| [contact/09-article-conformance.md](09-article-conformance.md) | `a25acff` | Сверка реализации со статьёй-источником эталона |
+| [contact/10-debug-handoff.md](10-debug-handoff.md) | `48997cd` | Передача отладки обрыва при `contact_force_type = 2`. Обрыв закрыт (**fix** 2.8, 2.9); документ сохранён как разбор, по которому механизм устанавливался |
+| [contact/README.md](README.md) | `a25acff` | Оглавление каталога |
+| [contact/e2e/gold_standart.txt](e2e/gold_standart.txt) | `a25acff` | Приборный профиль скорости — источник `tests/data/bc2_reference.txt` |
+| [contact/e2e/BC2_velocity_profile_raw.csv](e2e/BC2_velocity_profile_raw.csv) | `a25acff` | Тот же набор в исходном виде (км/с) |
 | `contact/e2e/bc2_geometry.svg`, `bc2_monitor_velocity.svg` | `0534c4e` | Иллюстрации к 05/06 |
-| [Report_SPH_contact.md](Report_SPH_contact.md) | `a25acff` | Исходная заявка на внедрение. Описывает другое состояние кодовой базы (модель Wang, ADR-011, готовый `test_contact.cpp`) и планом для этого репозитория служить не может — см. `contact/00-audit.md` |
+| [Report_SPH_contact.md](../Report_SPH_contact.md) | `a25acff` | Исходная заявка на внедрение. Описывает другое состояние кодовой базы (модель Wang, ADR-011, готовый `test_contact.cpp`) и планом для этого репозитория служить не может — см. `contact/00-audit.md` |
 
 ---
 
@@ -851,7 +853,7 @@ ctest --test-dir build -L slow --output-on-failure
 
 ### Закрыто: полный режим e2e больше не падает
 
-Ранее (раздел «Статус реализации» [contact/04-e2e-test-brief.md](contact/04-e2e-test-brief.md),
+Ранее (раздел «Статус реализации» [contact/04-e2e-test-brief.md](04-e2e-test-brief.md),
 коммит `40ff8e6`) полный режим ни разу не доходил до `t_total`: три прогона обрывались на
 отрицательной плотности у частиц на оси и в соседнем столбце, четвёртый — на коллапсе шага
 в 110 раз. Гипотезы о причинах закрыты исправлениями **fix** 2.1 (осевой член неразрывности),
@@ -870,7 +872,7 @@ ctest --test-dir build -L slow --output-on-failure
 
 Во всех четырёх сценариях `rho > 0`, `mass > 0`, без NaN/Inf на всех 140 кадрах. Тип 2 стал
 доходить до конца после **fix** 2.8 и 2.9; до них он обрывался на шаге 1666 (94,2 %) —
-разбор в [contact/10-debug-handoff.md](contact/10-debug-handoff.md).
+разбор в [contact/10-debug-handoff.md](10-debug-handoff.md).
 
 ### Открыто: невоспроизводимость расчёта от прогона к прогону
 
@@ -886,7 +888,7 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 начало отсчёта времени эталона не привязано к моменту удара (Grady & Moody, SAND96-0551),
 поэтому сверка в общем абсолютном времени измеряла бессмысленную величину. С `c0619c7`
 сравнивается форма кривой после совмещения по `t50` переднего фронта, а ворота намеренно
-грубые (см. [contact/08-phase-shift.md](contact/08-phase-shift.md)).
+грубые (см. [contact/08-phase-shift.md](08-phase-shift.md)).
 
 Текущие отношения расчёт/эталон (базовый прогон): амплитуда **0,659**, фронт 10-90 %
 **1,017**, спад до 70 % **2,516**. Контактные сценарии картину не меняют: 0,659 / 0,669 /
@@ -894,7 +896,7 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 контактной подсистеме отношения не имеет. Ворота по амплитуде `[0,5; 2,0]` и по фронту `[0,333; 3,0]` проходят, то есть
 §4.3 больше не провален. Но содержательно расхождение осталось: фронт воспроизводится точно,
 а пик занижен в полтора раза и спад затянут вдвое.
-[tests/data/bc2_reference.txt](tests/data/bc2_reference.txt) снят прибором, а не нашим кодом,
+[tests/data/bc2_reference.txt](../tests/data/bc2_reference.txt) снят прибором, а не нашим кодом,
 то есть измеряет близость модели к физике, а не стабильность кода. Решение о том, что считать
 приёмочным критерием для полного режима, остаётся за владельцем.
 
@@ -907,7 +909,7 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 ограничителя) и **fix** 2.9 (потолок радиуса по $\varrho_0$); весь набор проходит.
 
 Разбор, по которому механизм устанавливался, — в
-[contact/10-debug-handoff.md](contact/10-debug-handoff.md). Гипотезы H1 (осевой член
+[contact/10-debug-handoff.md](10-debug-handoff.md). Гипотезы H1 (осевой член
 неразрывности) и H2 (несимметричный контакт у оси) из того документа **опровергнуты числами**
 и исправлений не потребовали: осевой член давал 0,57 % от наблюдавшегося `drho`, радиальная
 составляющая контакта — около 3 % от осевой и направлена от оси. Подтвердилась H3 (жёсткость
@@ -919,6 +921,6 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 «свободная поверхность + контакт», нет трения и тепловыделения, нет доли гашения $\gamma$ для
 типа 3, нет идентификатора тела (два тела из одного материала контакта не видят). Перечислены
 в
-[docs/04-explanation/architecture/contact-particle-particle.md](docs/04-explanation/architecture/contact-particle-particle.md)
+[docs/04-explanation/architecture/contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md)
 §8 и обоснованы в
-[ADR-007](docs/04-explanation/decisions/adr-007-contact-force-types.md).
+[ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md).

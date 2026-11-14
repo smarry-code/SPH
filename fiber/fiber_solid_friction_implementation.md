@@ -1,5 +1,7 @@
 # Инструкция по внедрению трения Fiber–Solid
 
+> **Статус (2026-11-14):** реализовано. Трение нить–Solid как проекция на уровне скоростей в общей стадии с трением нить–нить: `FiberSolidFrictionContact`, `fiber_solid_friction_impulse` в `include/interactions/fiber_friction.hpp`, `SolidVelocityUpdate` в `include/ode/ode_solver.hpp`, коэффициент `mu_fs` в `MATERIAL` (`src/fiber_input.cpp`); тесты `tests/test_fiber_friction.cpp`. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
+
 Задача 4 из 4.
 
 ## Предусловия и порядок

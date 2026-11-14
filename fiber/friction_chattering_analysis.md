@@ -1,5 +1,7 @@
 # Дребезг силы трения в Fiber-Fiber-Contact
 
+> **Примечание (2026-11-14):** описанный здесь явный закон Кулона внутри kernel нормального контакта удалён; дребезг устранён проекцией трения на уровне скоростей (`include/interactions/fiber_friction.hpp`, `fiber_friction_projection.md`). Разбор остаётся историческим объяснением причины. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
+
 Разбор явления, замеченного в диагностическом прогоне (c) сценарного теста
 `test_e2e_cross_friction` после внедрения трения Кулона
 (`fiber/fiber_friction_implementation.md`, код в

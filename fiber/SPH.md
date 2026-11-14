@@ -1,5 +1,7 @@
 # Постановка задачи
 
+> **Статус (2026-11-14):** реализовано частично. Постановка (Fiber-Bond, Fiber-Fiber/Fiber-Solid-Contact, Clamp, Solid-SPH/Solid-Solid-Contact, pipeline RHS, ODESolver, Postprocessing) реализована в `include/rhs/`, `include/interactions/`, `include/fiber/`, `include/ode/ode_solver.hpp`, `src/time_integration.cpp`. Не реализовано: изгибающие моменты и кручение нити (в коде только осевая связь, разрыв по расстоянию), веса и виды контакта Meyer (Surface-End/End-End) заменены схемой «пара сегментов»; `LocalInteractionPrimitive` — понятие постановки, одноимённого типа в коде нет (primitives — отдельные структуры в `include/interactions/*`). Актуальное описание — [механика нитей](../docs/04-explanation/models/04-fiber-mechanics.md), [контакт нитей](../docs/04-explanation/models/05-fiber-contact.md), [шаг по времени](../docs/04-explanation/models/06-time-integration.md), [конвейер RHS](../docs/04-explanation/architecture/pipeline-overview.md), [ADR-008](../docs/04-explanation/decisions/adr-008-rhs-architecture-fiber.md).
+
 Рассматривается сложная SPH модель. В модель входят несколько compute структур. На данный момент требуется поддержки взаимодействия следующих структур:
 * Solid;
 * Fiber.
