@@ -506,10 +506,10 @@ static void test_parallel_build()
     // Огромное смещение (+-1e15: шаг double ~0.1-0.2, min/max/floor на грани точности) и вырожденная ось.
     for (double shift : {1e15, -1e15})
     {
-        Cloud<Dim> far = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
+        Cloud<Dim> shifted = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
         for (std::size_t d = 0; d < Dim; ++d)
-            for (std::size_t i = 0; i < far.n; ++i) far.coord[d][i] += shift;
-        clouds.push_back(far);
+            for (std::size_t i = 0; i < shifted.n; ++i) shifted.coord[d][i] += shift;
+        clouds.push_back(shifted);
     }
     {
         Cloud<Dim> flat = random_cloud<Dim>(Dim == 3 ? 900 : 700, 1.0, rng);
