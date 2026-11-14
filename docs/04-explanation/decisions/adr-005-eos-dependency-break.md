@@ -30,7 +30,7 @@ void eos_mi_grunaizen(const Materials& mats, size_t nmat,
 
 **Положительные:**
 
-- Изолируемое тестирование УРС (см. [`test_particle_system`](../../../tests/test_particle_system.cpp));
+- Изолируемое тестирование УРС (см. [`test_jc_eos`](../../../tests/test_jc_eos.cpp));
 - Чёткое разделение: плотность — в `density.hpp`, УРС — в `eos.hpp`;
 - Возможность подстановки моделей состояния без изменения остального конвейера.
 
@@ -43,4 +43,16 @@ void eos_mi_grunaizen(const Materials& mats, size_t nmat,
 
 - [`eos.hpp`](../../../include/eos.hpp): объявления УРС.
 - [`eos.cpp`](../../../src/eos.cpp): реализации.
-- [`materials.hpp`](../../../include/materials.hpp:20): источник констант.
+- [`materials.hpp`](../../../include/materials.hpp:124): источник констант.
+
+## Актуальное состояние (2026-11)
+
+- Сигнатуры `eos_mi_grunaizen`, `eos_ua_teta`, `urs_cem_JH2` не менялись
+  ([`eos.hpp`](../../../include/eos.hpp)). Добавлена `eos_jc(const JcMaterial&, ...)`,
+  принимающая запись материала, а не `Materials` + индекс (учитывает `p_min` и `D`).
+- Диспетчер по `itype` существует в двух копиях: `urs()`
+  ([`int_force.cpp`](../../../src/int_force.cpp)) и `solid_eos()`
+  ([`solid_sph.hpp`](../../../include/interactions/solid_sph.hpp)); их согласованность
+  для JC проверяет `test_jc_urs_consistency`.
+- Изолированно УРС проверяют [`test_jc_eos`](../../../tests/test_jc_eos.cpp) и
+  `test_jc_integration`; `test_particle_system` проверяет только `ParticleSystem`.

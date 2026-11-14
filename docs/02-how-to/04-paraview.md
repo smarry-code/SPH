@@ -19,6 +19,10 @@ python tools/paraview/sph2vtk.py --run-dir <каталог прогона> --out
 | `combined` | только `sph_output_<N>.txt` с колонками `... fiber i j eps eps_pl tension alive` | связь `i -> j` из строки бусины с `alive = 1` |
 | `solid` | только `sph_output_<N>.txt` ([`src/output.cpp`](../../src/output.cpp)) | нет |
 
+Вид `combined` — формат кадров, который конвертер разбирает по набору колонок `fiber i j alive`;
+текущие `src/output.cpp` и `src/fiber_output.cpp` такие колонки не пишут (источник таких кадров в репозитории не найден), поэтому
+для свежих прогонов подходят `pair` и `solid`.
+
 Если рядом лежат `monitor.csv` и `guo2019_fabric_layout.txt`, они тоже используются: время кадра
 и величины монитора (`v_z`, `w_f`, `n_broken_v`, ...) берутся из строки с номером шага кадра,
 а направление нити и зажатые бусины — из раскладки.

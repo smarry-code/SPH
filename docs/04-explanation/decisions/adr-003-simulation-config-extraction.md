@@ -18,9 +18,9 @@
 ## Решение
 
 Параметры собраны в один конфиг-объект
-[`SimulationConfig`](../../../include/simulation_config.hpp:25):
+[`SimulationConfig`](../../../include/simulation_config.hpp:26):
 
-- создаётся в [`main()`](../../../src/main.cpp:27);
+- создаётся в [`run_sph()`](../../../src/main.cpp:65) (вызывается из `main()`);
 - наполняется значениями по умолчанию (`apply_defaults()`) и из
   [`Initial_Conditions.txt`](../../03-reference/config/initial-conditions.md)
   (`parse_sph_config()`);
@@ -45,5 +45,18 @@
 
 ## Связанные файлы
 
-- [`simulation_config.hpp`](../../../include/simulation_config.hpp:25): определение структуры.
-- [`input.cpp`](../../../src/input.cpp:245): `parse_sph_config()`.
+- [`simulation_config.hpp`](../../../include/simulation_config.hpp:26): определение структуры.
+- [`input.cpp`](../../../src/input.cpp:110): `parse_sph_config()`.
+
+## Актуальное состояние (2026-11)
+
+- Конфиг создаётся в `run_sph()` ([`main.cpp:65`](../../../src/main.cpp:65)); `main()`
+  только вызывает её и перехватывает исключения импорта. `apply_defaults()` вызывается
+  до `parse_sph_config()` ([`input.cpp:110`](../../../src/input.cpp:110)).
+- Структура сильно выросла: помимо исходных полей в ней типы контактов и их параметры,
+  `ode_solver`, ключи импорта `.k`, `fiber_file`, `jc_heating`/`jc_chi`, `xsph_mode`,
+  `energy_log_*` и др. Полный перечень — в
+  [справке по `SimulationConfig`](../../03-reference/config/simulation-config.md) и
+  [`Initial_Conditions.txt`](../../03-reference/config/initial-conditions.md).
+- Часть констант метода (`visc`, `axis_sim`, `summation_density` и др.) остаётся
+  `constexpr` в [`param.hpp`](../../../include/param.hpp) (см. ADR-002).

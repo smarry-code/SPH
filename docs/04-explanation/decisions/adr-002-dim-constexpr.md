@@ -45,7 +45,7 @@ constexpr size_t dim = 1; // Размерность задачи (1, 2 или 3)
 
 ## Связанные файлы
 
-- [`param.hpp`](../../../include/param.hpp:8): объявление `dim`.
+- [`param.hpp`](../../../include/param.hpp:16): объявление `dim`.
 - [`particle_system.hpp`](../../../include/particle_system.hpp:38): C-массивы `x[dim]`, `vx[dim]`.
 
 ## Приписка: значение задаётся при сборке (решение E1)
@@ -77,3 +77,15 @@ constexpr size_t dim = SPH_DIM;
 цель с `SPH_DIM=2` обязана компилировать *свои* копии `src/*.cpp`, а не линковаться
 с объектниками цели `SPH`. В CMake это выражено тем, что `test_e2e_bc2` получает
 полный список исходников конвейера в своей команде `add_executable`.
+
+## Актуальное состояние (2026-11)
+
+- Значение `dim` берётся из макроса `SPH_DIM` ([`param.hpp:16`](../../../include/param.hpp:16)).
+  Основной исполняемый файл `SPH` получает его из кеш-переменной CMake `SPH_DIM`
+  (1, 2 или 3; по умолчанию 1, [`CMakeLists.txt:46`](../../../CMakeLists.txt:46);
+  `target_compile_definitions(SPH PRIVATE SPH_DIM=...)`).
+- Тестовых целей с собственным `SPH_DIM` стало несколько (`test_axisym` — 2,
+  `test_kinematics_3d`, `test_fiber_model` — 3 и др.); все они, как и `test_e2e_bc2`,
+  компилируют собственные копии исходников конвейера (`SPH_PIPELINE_SOURCES`).
+- Нити и режим `solid_fiber` требуют `SPH_DIM=3`; при иной размерности разбор ключей
+  `fiber_file` и `k_mode=solid_fiber` завершается ошибкой.

@@ -236,3 +236,39 @@ $p = 0$, контакт включается только при настоящ�
 - `tests/test_contact.cpp`: аналитические тесты M1-M12,
   тесты оркестратора O1-O9.
 - [Архитектура: контакт «частица-частица»](../architecture/contact-particle-particle.md).
+
+## Актуальное состояние (2026-11)
+
+Решение принято и остаётся в силе (`contact_force_type`, формулы типов 1-3,
+$m_{ij}$, радиус из объёма, откат $F_2$). Отличия реализации от текста выше:
+
+- **Оркестрация.** `src/ext_force.cpp` в продовом шаге не вызывается; контакт
+  считает [`compute_solid_contact_contributions`](../../../include/interactions/solid_contact.hpp)
+  (kernel + `ContributionWriter`, reduce по шардам, см. [ADR-008](adr-008-rhs-architecture-fiber.md)),
+  а диагностику и `min_dt_contact` — `compute_solid_contact_diagnostics` каждый шаг
+  (`src/single_step.cpp`). `ext_force.cpp` линкуется только в `test_contact`
+  (тесты M1-M12, O1-O12).
+- **Критерий пары.** Вместо `itype[i] != itype[j]` (решение D2) продовый путь берёт
+  `body[i] != body[j]` (`ParticleSystem::body`, PID детали для k-файла, `itype` для
+  встроенных генераторов). Ограничение «два тела одного материала контакта не видят»
+  снято; в тестовом стенде `ext_force.cpp` остаётся прежний критерий, дополненный
+  условием `i, j < nreal` (зеркальные частицы осесимметрии контакта не образуют).
+  Ключ `sph_same_body_only` (по умолчанию `0`) изолирует SPH-суммы по телам.
+- **Радиус тела.** Объём берётся по $\max(\varrho,\varrho_0)$: при разрежении радиус
+  не растёт (иначе порог $R_i+R_j$ давал «проникание» у расходящихся частиц).
+- **Тип 2.** Добавлен потолок силы $F_{\mathrm{cap}}=m_{ij}\dot p/\Delta t_{\mathrm{ref}}$
+  (`swegle_force()`, тесты M8c/M8d); на потолке предел шага — вязкая ветка
+  $0{,}8\cdot2\Delta t_{\mathrm{ref}}/K_p$.
+- **Тип 3.** Доля гашения $\gamma$ и нормальная составляющая — как описано выше;
+  разбор ключа предупреждает при $\gamma\le0$ и $\gamma>1{,}6$ (`input.cpp`).
+  Отложенный пункт «доля гашения $\gamma<1$» реализован.
+- **Шаг.** Помимо `min_dt_contact` в `time_integration.cpp` действуют предел связей
+  нитей `fiber_dt_limit` и множитель `dt_scale`.
+- **Те же законы у нитей.** `contact::penalty_force()` переиспользуется контактами
+  Fiber-Solid и Fiber-Fiber через `fiber_penalty_force()`
+  ([`fiber_contact_law.hpp`](../../../include/interactions/fiber_contact_law.hpp));
+  там ключ типа 0 означает Герц, а не «выключено», и есть тип 4 «Герц + демпфер».
+  Трение, отложенное здесь, реализовано только для нитей (проекция на уровне
+  скоростей, `fiber_friction.hpp`); для Solid-Solid-контакта трения по-прежнему нет.
+- Комментарии в `contact_force.hpp` у `PairGeom::p` и `PairProps::r_eff` ещё
+  упоминают $h/2$ — устарели относительно «Радиус тела» выше.

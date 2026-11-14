@@ -13,7 +13,7 @@
 compile-time константа, необходимая для новой 3D-цели сборки нитей).
 
 Текущая параллельная схема расчёта Solid построена вокруг `PairGraph`
-(раскраска графа пар, [ADR-006](adr-006-pair-graph-coloring.md)) и двух
+(раскраска графа пар, ADR-006) и двух
 аккумуляторов, `AccAtomic`/`AccPlain`, переключаемых порогом `niac`. Эта
 схема была спроектирована для одной compute-структуры с симметричными
 парными взаимодействиями внутри одного массива частиц. Она не рассчитана
@@ -95,17 +95,11 @@ Rigidbody одной иерархией) предшествовал этому �
 а фиксирует архитектурное решение, в рамках которого они будут
 реализованы.
 
-**ADR-006 заменено (этап Ф4 завершён).** [ADR-006](adr-006-pair-graph-coloring.md)
-описывал `PairGraph` и раскраску графа пар как решение проблемы
-`#pragma omp atomic` в парных циклах Solid. После переноса Solid на новую
-схему RHS (этап Ф4 плана: `Solid-SPH` и `Solid-Solid-Contact` как
-primitives с `ContributionWriter` и reduce по шардам) эта проблема снята
-другим механизмом — thread-local contributions вместо атомарных
-инкрементов, — и `PairGraph`, `AccAtomic`/`AccPlain` вместе со старым путём
-(`direct_find`, `linked_list`, `density.cpp`, `int_force()`, `art_visc.cpp`,
-`av_vel.cpp`, `virt_part.cpp`) удалены (`fiber/PLAN.md`, раздел «Ф4»,
-этап Ф4-B2). ADR-006 помечен «Заменено на ADR-008» и фиксирует упразднённую
-схему как исторический контекст.
+**ADR-006 заменено (этап Ф4 завершён).** После переноса Solid на новую схему
+RHS проблема `#pragma omp atomic` в парных циклах снята thread-local
+contributions вместо атомарных инкрементов; `PairGraph`, `AccAtomic`/`AccPlain`
+и старый путь удалены (этап Ф4-B2), ADR-006 убран из документации (текст — в
+истории git).
 
 ## Последствия
 
@@ -132,8 +126,6 @@ primitives с `ContributionWriter` и reduce по шардам) эта проб�
   Ф4-B1) в проекте временно сосуществовали старая (`PairGraph`) и новая
   схемы, старый путь удалён на Ф4-B2 после независимой проверки
   эквивалентности (`test_rhs_equivalence`, регрессия, e2e BC2/BC6);
-- ADR-006 актуализирован по факту переноса (см. выше) — висел как описание
-  кода, который будет удалён, до завершения Ф4-B2.
 
 ## Связанные файлы
 
@@ -143,9 +135,53 @@ primitives с `ContributionWriter` и reduce по шардам) эта проб�
   взаимодействий Fiber/Solid, описание pipeline RHS и CPU backend.
 - [ADR-002](adr-002-dim-constexpr.md): `dim` как compile-time константа —
   нужна 3D-цель сборки (`SPH_DIM=3`) для нитей (Р9).
-- [ADR-006](adr-006-pair-graph-coloring.md): `PairGraph`/раскраска —
-  заменяется после Ф4, когда Solid перейдёт на схему contributions + reduce
-  по шардам.
 - [ADR-007](adr-007-contact-force-types.md): типы контактных сил
   «частица-частица» — переиспользуются как `Solid-Solid-Contact` внутри
   новой схемы RHS без изменения формул.
+
+## Актуальное состояние (2026-11)
+
+Статус «Принято» сохраняется: схема `CpuExecutor` + primitives + contributions +
+reduce по шардам реализована ([`include/rhs/`](../../../include/rhs/contributions.hpp):
+`contributions.hpp`, `cpu_executor.hpp`, `rhs_workspace.hpp`, `spatial_index.hpp`,
+`types.hpp`), `PairGraph` и старый путь удалены, `particle_system_new.hpp`
+отсутствует. Что ушло дальше исходного текста решений:
+
+- **ODESolver реализован (Р2-Р4).** [`include/ode/ode_solver.hpp`](../../../include/ode/ode_solver.hpp):
+  `PredictorCorrectorSolver` (по умолчанию) и `EulerSolver`, выбор ключом
+  `ode_solver = 0 | 1`; цикл `time_integration` строится на них. Тест
+  `test_fiber_time_integration_equivalence`. `test_rhs_equivalence`, упомянутый
+  выше, в дереве тестов больше нет (его роль — `regression_*`, e2e BC2/BC6).
+- **Fiber-Fiber-Contact не «буквально по Meyer» (Р8).** Primitive — пара
+  сегментов осей нитей (параметры $s,t$, правило владения узлом, радиус поиска
+  $d_{\max}+2L_{\max}$, $L_{\max}$ — текущая длина связи), а не пара бусин с
+  весами Meyer; эффективные $E^*, R^*$ — по обобщённой формуле Герца для разных
+  материалов ([`fiber_contact.hpp`](../../../include/interactions/fiber_contact.hpp),
+  `fiber/fiber_contact_segment_pairs.md`). Fiber-Solid-Contact использует
+  `SpatialIndex::find_pairs_cross`, свой радиус поиска и правило владения узлом
+  ([`fiber_solid_contact.hpp`](../../../include/interactions/fiber_solid_contact.hpp)).
+- **Законы нормальной силы контактов нитей.** Ключи `fiber_solid_contact_type`,
+  `fiber_fiber_contact_type` (0..4): 0 — Герц (не «выключено»), 1-3 — те же
+  pinball/Swegle/импульсный, что у Solid-Solid (ADR-007), 4 — Герц + демпфер
+  ([`fiber_contact_law.hpp`](../../../include/interactions/fiber_contact_law.hpp)).
+  Для типа 3 есть «push» — выталкивание при глубоком проникании
+  (`fiber_*_contact_impulse_push_tau`, `push_depth`, `push_vmax`); по решению
+  владельца 2026-10-21 в расчётах не используется (источник энергии), ключи
+  сохранены для воспроизведения серий. Опорный шаг нити — предел шага связи.
+- **Трение нитей.** Не внутри RHS, а единая стадия проекции на уровне скоростей
+  между вычислением `dt` и `advance()` (`fiber_friction.hpp`): коэффициенты
+  `mu_ff`, `mu_fs` в материале нити, mass splitting по числу контактов на бусину,
+  точное прилипание. Нормальный kernel лишь заполняет слоты трения.
+- **Зажимы (Clamp).** [`clamp.hpp`](../../../include/interactions/clamp.hpp):
+  кинематическая проекция ускорений Solid/Fiber в трёх точках шага и нулевая
+  обратная масса в проекции трения; реакция опоры суммируется детерминированно.
+- **Связи нитей.** По-прежнему только растяжение и разрыв по расстоянию в
+  `Postprocessing`; поверх добавлены упруго-пластика, вязкоупругость и
+  повреждённость связи ([`fiber/fiber_plasticity.hpp`](../../../include/fiber/fiber_plasticity.hpp)).
+- **Шаг по времени.** $\Delta t=\min(\text{CFL},\ \text{контакт Solid},\ \text{предел связей/контактов нитей})\cdot\text{dt\_scale}$
+  (`time_integration.cpp`).
+- **Признак тела.** Solid-Solid-Contact отбирает пары по `body[i] != body[j]`,
+  а не по `itype` (см. «Актуальное состояние» в ADR-007).
+- **Диагностика.** При сборке с `SPH_CONTACT_STATS` и `SPH_ENERGY_LOG`
+  доступны статистика контактов нитей ([`fiber_contact_stats.hpp`](../../../include/interactions/fiber_contact_stats.hpp))
+  и лог энергии ([`energy_log.hpp`](../../../include/energy_log.hpp)).

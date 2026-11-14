@@ -127,6 +127,8 @@ sub
 | Условие | Сообщение |
 |---|---|
 | `MASS = 0` у SPH-элемента | `MASS = 0 у узла <n>` |
+| `k_mode=solid_fiber` без `k_parts_file` | `k_mode=solid_fiber требует таблицу деталей (k_parts_file)` |
+| PID SPH-элемента (или `*ELEMENT_SOLID`) без `SOLID_PART` | `PID <n> из <файл>:<строка> не описан в SOLID_PART` |
 | Масса-объём без таблицы деталей | `MASS-объём (<0 или _VOLUME) требует таблицы деталей (нужна плотность)` |
 | Ненулевая координата вне `dim` | `узел NID <n>: \|z\|=… > допуска … при dim=…` |
 | `k_monitor_nid` не среди SPH-частиц | `k_monitor_nid=<n> не среди SPH-частиц` |

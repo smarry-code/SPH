@@ -42,3 +42,18 @@
 - [`param.hpp`](../../../include/param.hpp): константы метода, размерность `dim`.
 - [`kernel.hpp`](../../../include/kernel.hpp): ядра сглаживания.
 - [`single_step.cpp`](../../../src/single_step.cpp): шаг расчёта.
+
+## Актуальное состояние (2026-11)
+
+Решение остаётся в силе. Отличия реализации от момента принятия:
+
+- Прежние модели прочности (Мизес, JH-2) дополнены моделью Джонсона-Кука для
+  металлов ([ADR-009](adr-009-johnson-cook.md),
+  [`johnson_cook.hpp`](../../../include/strength/johnson_cook.hpp)).
+- К SPH-частицам (Solid) добавлены нити из бусин (Fiber) с собственными контактами;
+  архитектура правых частей описана в [ADR-008](adr-008-rhs-architecture-fiber.md).
+- Контактные силы между частицами разных тел: [ADR-007](adr-007-contact-force-types.md).
+- Шаг расчёта теперь собирается в
+  [`single_step.cpp`](../../../src/single_step.cpp) и
+  [`time_integration.cpp`](../../../src/time_integration.cpp) поверх
+  [`include/rhs/`](../../../include/rhs/) и [`include/ode/ode_solver.hpp`](../../../include/ode/ode_solver.hpp).

@@ -1,8 +1,10 @@
 # Выходные файлы расчёта
 
-При каждом сохранении кадра функция [`output()`](../../../src/output.cpp:15)
+При каждом сохранении кадра функция [`output()`](../../../src/output.cpp:16)
 формирует два файла: текстовый кадр состояния и накопительный CSV координат.
-Также ведётся журнал расчёта.
+Также ведётся журнал расчёта. Если в модели есть нити, на тех же шагах пишется
+`fiber_output_NNNNN.txt` (см. [`.fib`](fib-file.md#выходной-файл-нитей-fiber_output_nnnnntxt)).
+Кадры выводятся, когда `time >= next_output_time` (период `save_t`).
 
 ## `sph_output_NNNNN.txt` — кадр состояния частиц
 
@@ -15,7 +17,7 @@ sph_output_00050.txt
 ```
 
 !!! note "Расширение файлов"
-    В коде ([`output.cpp`](../../../src/output.cpp:22)) создаётся `.txt`. В
+    В коде ([`output.cpp`](../../../src/output.cpp:23)) создаётся `.txt`. В
     подкаталогах сценариев (`Ударная труба/...`) эталонные файлы переименованы
     в `.dat` вручную — содержимое одинаково. Структура колонок ниже едина.
 
@@ -26,7 +28,7 @@ sph_output_00050.txt
 При `dim == 1`:
 
 ```text
-N Nmat M x vx rho p u c sigma_i e_pl D hsml sxx syy szz sxy syz sxz
+N Nmat M x vx rho p u c sigma_i e_pl D hsml sxx syy szz sxy syz sxz T edot
 ```
 
 При `dim == 2` добавляются колонки `y`, `vy`; при `dim == 3` — `y z` и `vy vz`.
@@ -50,7 +52,9 @@ N Nmat M x vx rho p u c sigma_i e_pl D hsml sxx syy szz sxy syz sxz
 | `e_pl` | $\varepsilon^{pl}$ | — | Интенсивность пластических деформаций |
 | `D` | $D$ | — | Параметр повреждённости |
 | `hsml` | $h$ | м | Длина сглаживания |
-| `sxx`…`sxz` | $s_{ij}$ | Па | Компоненты девиатора напряжений |
+| `sxx`…`sxz` | $s_{ij}$ | Па | Компоненты девиатора напряжений (порядок `sxx syy szz sxy syz sxz`) |
+| `T` | $T$ | К | Температура (модель Джонсона–Кука; у остальных материалов 0) |
+| `edot` | $\dot{\varepsilon}$ | 1/с | Скорость деформации (Джонсон–Кук; у остальных 0) |
 
 Интенсивность напряжений вычисляется как:
 
@@ -58,7 +62,7 @@ $$
 \sigma_i = \frac{1}{\sqrt{2}} \sqrt{(s_{xx}-s_{yy})^2 + (s_{xx}-s_{zz})^2 + (s_{yy}-s_{zz})^2 + 6(s_{xy}^2 + s_{yz}^2 + s_{xz}^2)}
 $$
 
-(см. [`Particle::vuvod()`](../../../include/param.hpp:233)).
+(см. [`Particle::vuvod()`](../../../include/particle_system.hpp:139)).
 
 ## `sph_gp.csv` — накопительный дамп кинематики
 
@@ -77,13 +81,35 @@ $$
 
 ## `log.txt` — журнал расчёта
 
-Текстовый файл с UTF-8 BOM (создаётся в [`main()`](../../../src/main.cpp:30)).
+Текстовый файл с UTF-8 BOM (создаётся в [`run_sph()`](../../../src/main.cpp:68)).
 Содержит диагностические сообщения, в том числе:
 
-- индекс и координаты мониториируемой частицы (из `input()`);
-- сообщения об ошибках инициализации.
+- сообщения об ошибках инициализации;
+- строку мониторинга на каждом шаге цикла (дозапись из
+  [`time_integration.cpp`](../../../src/time_integration.cpp:208)):
+  `<time> <v> <itype>` — время, осевая компонента скорости мониторной частицы
+  (`vx[dim-1]`) и её материал.
 
-Исключён из контроля версий ([`.gitignore`](../../../.gitignore:46)).
+Исключён из контроля версий ([`.gitignore`](../../../.gitignore:67)).
+
+## Другие журналы
+
+- `energy_log.csv` (имя — `energy_log_file`, период — `energy_log_every`) — CSV
+  энергетического баланса, только в сборке `-DSPH_ENERGY_LOG=ON`
+  ([`energy_log.hpp`](../../../include/energy_log.hpp:426)). Колонки:
+  `step,time,dt,KE_solid,KE_fiber,U_int,U_shear_el,U_bond,U_hertz_ff,U_hertz_fs,E_mech,D_friction,D_xsph,D_contact_ss,D_break,S_u_clamp,Q_av,W_plastic,residual,W_p_fiber,W_v_fiber,D_break_contact,clip_loss,D_contact_fiber`,
+  затем диагностические каналы мощности `P_*` (по механизмам; вариант с массой кольца
+  и вариант `_flat`) и `closure`. При рестарте файл дописывается без заголовка.
+- `monitor.csv` — построчный монитор сценария Guo 2019 (тестовый харнесс,
+  [`guo2019_monitor.hpp`](../../../tests/guo2019_monitor.hpp:250)):
+  `step,t,dt,z_c,v_z,KE_s,KE_p,KE_f,U_b,U_int,E_tot,Fs_x,Fs_y,Fs_z,Ff_x,Ff_y,Ff_z,n_bonds,n_broken_v,n_broken_h,w_f,w_p`
+  (для многослойной ткани добавляются `n_broken_v_pK`, `n_broken_h_pK`, `w_f_pK`);
+  рядом пишется `guo2019_fabric_layout.txt` — раскладка нитей.
+- `checkpoint.ckpt` и `checkpoint.ckpt.prev` — бинарный чекпоинт (сигнатура `SPHCKPT`,
+  версия формата 3, [`checkpoint.cpp`](../../../src/checkpoint.cpp:35));
+  см. [рестарт](../../02-how-to/05-restart-checkpoints.md).
+- `contact_stats.csv`, `contact_stats_summary.txt` — диагностика контактов нитей, только
+  при `-DSPH_CONTACT_STATS=ON` (ключи `contact_stats_*`).
 
 ## Ручная визуализация
 
