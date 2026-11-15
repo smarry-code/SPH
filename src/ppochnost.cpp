@@ -113,11 +113,20 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
     double smizm = sqrt(pow(sigt, 2) / 3.0);
     double sxx = sys.sxx[i];
     double syy = sys.syy[i];
-    double szz = sys.szz[i];
     double sxy = sys.sxy[i];
     double sxz = sys.sxz[i];
     double syz = sys.syz[i];
+    // Пробное (до радиального возврата) напряжение: sys.sxx..sxz -- девиатор.
+    // ripl = sqrt(J2_пробное), seq_tr = sqrt(3*J2_пробное) -- эквивалентное
+    // напряжение (в 1D seq = 1.5*|sxx|); sigt -- предел текучести в тех же
+    // единицах (sigma_eq), возврат при seq_tr > sigt (sqrt(J2) > sigt/sqrt(3)).
     double ripl = sqrt(sigma_i(sxx, syy, sxy, syz, sxz));
+    const double seq_tr = sqrt(3.0) * ripl;
+    const double D_old = sys.D[i];
+    // drho (скорость изменения плотности) JH-2 больше не использует:
+    // приращение пластической деформации находится из радиального возврата.
+    (void)drho;
+    (void)dt;
     bool flag_e = true;
     if (ripl > smizm)
     {
@@ -146,45 +155,17 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
             }
         }
     }
-    if ((flag_e == false) && (sys.D[i] < 1))
+    if (flag_e == false && D_old < 1)
     {
-        double dsx = (sys.sxx[i] - sxx) / dt;
-        double dsy = (sys.syy[i] - syy) / dt;
-        double dsz = (sys.szz[i] - szz) / dt;
-        double dsxy = (sys.sxy[i] - sxy) / dt;
-        double dsyz = (sys.syz[i] - syz) / dt;
-        double dsxz = (sys.sxz[i] - sxz) / dt;
-        double eps_e_x = 0.0, eps_e_y = 0.0, eps_e_z = 0.0, eps_e_xy = 0.0, eps_e_yz = 0.0, eps_e_xz = 0.0;
-        //double eps_vol = (sys.exx[i] + sys.eyy[i] + sys.ezz[i]) / 3.0;
-        double eps_vol = drho / (3.0 * sys.rho[i]);
-        if (dim > 1)
-        {
-            eps_e_x = ((dsx - 2 * (sys.sxy[i] * sys.rxy[i] + sys.sxz[i] * sys.rxz[i])) / gem) + eps_vol;
-            eps_e_y = ((dsy - 2 * (sys.syz[i] * sys.ryz[i] - sys.sxy[i] * sys.rxy[i])) / gem) + eps_vol;
-            // Поворотная часть — та же, что у dszz в int_force (−2(sxz·rxz +
-            // syz·ryz)); знак при syz·ryz исправлен вместе с ней.
-            eps_e_z = ((dsz - (-2 * (sys.sxz[i] * sys.rxz[i] + sys.syz[i] * sys.ryz[i]))) / gem) + eps_vol;
-            eps_e_xy = (dsxy - (sys.rxy[i] * (sys.syy[i] - sys.sxx[i]) + sys.sxz[i] * sys.ryz[i] + sys.syz[i] * sys.rxz[i])) / gem;
-            eps_e_yz = (dsyz - (-sys.sxy[i] * sys.rxz[i] - sys.sxz[i] * sys.rxy[i] + sys.ryz[i] * (sys.szz[i] - sys.syy[i]))) / gem;
-            eps_e_xz = (dsxz - (sys.rxz[i] * (sys.szz[i] - sys.sxx[i]) - sys.sxy[i] * sys.ryz[i] + sys.syz[i] * sys.rxy[i])) / gem;
-        }
-        else if (dim == 1)
-        {
-            eps_e_x = (dsx / gem) + eps_vol;
-        }
-        double eps_p_x = sys.exx[i] - eps_e_x;
-        double eps_p_y = sys.eyy[i] - eps_e_y;
-        double eps_p_z = sys.ezz[i] - eps_e_z;
-        double eps_p_xy = sys.exy[i] - eps_e_xy;
-        double eps_p_yz = sys.eyz[i] - eps_e_yz;
-        double eps_p_xz = sys.exz[i] - eps_e_xz;
-        double eps_i_f = (sqrt(2) * sqrt((eps_p_x - eps_p_y) * (eps_p_x - eps_p_y) + (eps_p_y - eps_p_z) * (eps_p_y - eps_p_z) +
-                                         (eps_p_z - eps_p_x) * (eps_p_z - eps_p_x) + 6 * (eps_p_xy * eps_p_xy + eps_p_xz * eps_p_xz + eps_p_yz * eps_p_yz))) / 3;
+        // Радиальный возврат (Wilkins): приращение эквивалентной пластической
+        // деформации за шаг d_ep = (sigma_eq_пробное - sigma_y)/(3G), без
+        // тензорных компонент и вращательных членов (jh2/jh2-code-review.md, п. 1).
+        double d_ep = (seq_tr - sigt) / (3.0 * gem);
         if ((P_n + T_n) > 0)
         {
             double znam = D1 * pow(P_n + T_n, D2);
-            sys.e_pl[i] += eps_i_f * dt;
-            sys.D[i] += ((eps_i_f * dt) / znam);
+            sys.e_pl[i] += d_ep;
+            sys.D[i] += d_ep / znam;
             if (sys.D[i] > 1)
             {
                 sys.D[i] = 1.0;
