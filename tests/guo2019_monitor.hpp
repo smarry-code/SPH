@@ -934,15 +934,19 @@ private:
             }
         }
         double slip = 0.0, gap = 0.0;
+        std::size_t npairs = 0;
         for (std::size_t q = 0; q < sc_.stitch_pairs.size(); ++q)
         {
+            // мозаика: сдвиг и зазор слоёв -- только по сквозным стежкам (стежки через шов в слое не в счёт)
+            if (!sc_.stitch_through.empty() && !sc_.stitch_through[q]) continue;
+            ++npairs;
             const std::size_t i = sc_.stitch_pairs[q].first, j = sc_.stitch_pairs[q].second;
             const auto& r0 = stitch_r0_[q];
             const double rx = fb.x[0][j] - fb.x[0][i], ry = fb.x[1][j] - fb.x[1][i], rz = fb.x[2][j] - fb.x[2][i];
             slip += std::sqrt((rx - r0[0]) * (rx - r0[0]) + (ry - r0[1]) * (ry - r0[1]));
             gap += std::sqrt(rx * rx + ry * ry + rz * rz) - std::sqrt(r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2]);
         }
-        const double np = static_cast<double>(sc_.stitch_pairs.size());
+        const double np = npairs > 0 ? static_cast<double>(npairs) : 1.0;
         r.n_stitch = intact;
         r.n_stitch_broken = n_stitch_ - intact;
         r.F_stitch_max = fmax;
@@ -1107,6 +1111,20 @@ private:
         // вершинные бусины пересечений (как в ply_vertex_gaps): у основы j вершина i, у утка i вершина j
         const int nx = sc_.W.params.nx, ny = sc_.W.params.ny;
         vb_.assign(N, {});
+        if (sc_.mosaic)
+        {
+            // Мозаика: сетки пересечений нет. При одной раскройке на весь пакет слои -- копии со сдвигом по z,
+            // бусина b слоя k и бусина b слоя k+1 стоят в одной точке плана: порядок слоёв проверяется по всем
+            // бусинам (пара (b, b) -- среднее равно z бусины). При нескольких раскройках проверки нет.
+            if (sc_.mosaic_cuts == 1)
+                for (std::size_t k = 0; k < N; ++k)
+                    for (std::size_t b = sc_.ply_layout[k].bead_begin; b < sc_.ply_layout[k].bead_end; ++b)
+                    {
+                        vb_[k].push_back(b);
+                        vb_[k].push_back(b);
+                    }
+        }
+        else
         for (std::size_t k = 0; k < N; ++k)
         {
             vb_[k].reserve(2 * static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny));

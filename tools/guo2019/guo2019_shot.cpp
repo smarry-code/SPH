@@ -14,6 +14,15 @@
 //                [--checkpoint] [--checkpoint-every=<N шагов>] [--restart [--force]]
 //                [--stitch=none|grid|seam] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]
 //                [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]
+//                [--random-cut=N [--cut-seed=S] [--layers-per-cut=k] [--cut-gap=<м>] [--cut-rot-max=<град>]
+//                 [--cut-stitch-step=<м>]]
+//   --random-cut=N -- мозаичная ткань (случайная раскройка Вороного на N фрагментов, plain_weave_random_cut.hpp)
+//   вместо сплошного полотна; поле -- габарит сплошной ткани уровня, зажим |y| >= c_e для всех бусин; слои группы
+//   --layers-per-cut делят одну раскройку (по умолчанию -- весь пакет); стежки через швы в слоях и сквозные между
+//   соседними слоями, шаг вдоль шва --cut-stitch-step (по умолчанию шаг нитей p), материал -- --stitch-E/-d/-eps-break
+//   (умолчания стёжки). Несовместим с --stitch=grid|seam. К имени каталога добавляется _rc<N>s<S>k<k>.
+//   --cut-size=WxH (м) и --cut-clamp-edge=c_e (м) -- своё поле мозаики по центру (0, 0) и граница зажима |y| >= c_e
+//   (по умолчанию -- габарит и c_e уровня); к имени каталога добавляется _f<W>x<H>c<c_e> в мм (L -- значение уровня).
 //   --stitch=grid -- стёжка слоёв пакета (2T, 4T, kT при k >= 2) связями-стежками на линиях шва сетки патчей N x N (--stitch-tile,
 //   по умолчанию 3; nx и ny уровня делятся на N); --stitch-lines -- какие линии шва; --stitch-every=N -- прокол на
 //   каждой N-й нити; материал стежка: E (8,5e10 Па), d (0,2e-3 м), eps_break (0,03), nu = 0,3. Ключи --stitch-*
@@ -167,6 +176,14 @@ struct Options
     bool stitch_lines_x = true, stitch_lines_y = true;
     int stitch_every = 1;
     double stitch_E = 8.5e10, stitch_d = 0.2e-3, stitch_eps_break = 0.03;
+    // Мозаика (--random-cut)
+    bool mosaic = false;
+    bool mosaic_param_given = false; // задан --cut-* или --layers-per-cut
+    int cut_n = 0;
+    long long cut_seed = 1;
+    int layers_per_cut = 0; // 0 -- весь пакет
+    double cut_gap = -1.0, cut_rot_max = 25.0, cut_stitch_step = -1.0;
+    double cut_size_x = -1.0, cut_size_y = -1.0, cut_clamp_edge = -1.0; // своё поле и c_e; < 0 -- уровня
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -218,6 +235,11 @@ void print_usage()
                 "                   [--checkpoint] [--checkpoint-every=<N>] [--restart [--force]]\n"
                 "                   [--stitch=none|grid|seam] [--stitch-tile=N] [--stitch-lines=x|y|xy] [--stitch-every=N]\n"
                 "                   [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]  (стёжка слоёв; grid: >= 2 слоя)\n"
+                "                   [--random-cut=N [--cut-seed=S] [--layers-per-cut=k] [--cut-gap=<м>] [--cut-rot-max=<град>]\n"
+                "                    [--cut-stitch-step=<м>] [--cut-size=WxH] [--cut-clamp-edge=<м>]]  (мозаичная ткань;\n"
+                "                    материал стежка -- --stitch-E/-d/-eps-break; поле и c_e по умолчанию -- уровня)\n"
+                "  --random-cut=N: случайная раскройка на N фрагментов, зажим |y| >= c_e для всех бусин; k слоёв на раскройку\n"
+                "  (по умолчанию весь пакет); стежки через швы в слоях и сквозные, шаг вдоль шва по умолчанию p. Без --stitch.\n"
                 "  --stitch=grid: связи-стежки между соседними слоями на линиях шва сетки патчей N x N (--stitch-tile, по\n"
                 "  умолчанию 3; nx и ny уровня делятся на N); --stitch-every=N -- прокол на каждой N-й нити; по умолчанию\n"
                 "  E = 8.5e10 Па, d = 0.2e-3 м, eps_break = 0.03. --stitch-* без --stitch=grid|seam -- ошибка.\n"
@@ -426,6 +448,57 @@ int parse_args(int argc, char** argv, Options& o)
             }
 #endif
         }
+        else if (a.rfind("--random-cut=", 0) == 0)
+        {
+            if (!parse_ll(val("--random-cut="), n) || n < 1 || n > 10000) return bad("--random-cut");
+            o.mosaic = true;
+            o.cut_n = static_cast<int>(n);
+        }
+        else if (a.rfind("--cut-seed=", 0) == 0)
+        {
+            if (!parse_ll(val("--cut-seed="), n) || n < 0) return bad("--cut-seed");
+            o.cut_seed = n;
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--layers-per-cut=", 0) == 0)
+        {
+            if (!parse_ll(val("--layers-per-cut="), n) || n < 1 || n > kMaxPlies) return bad("--layers-per-cut");
+            o.layers_per_cut = static_cast<int>(n);
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--cut-gap=", 0) == 0)
+        {
+            if (!parse_double(val("--cut-gap="), d) || !(d > 0.0)) return bad("--cut-gap");
+            o.cut_gap = d;
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--cut-rot-max=", 0) == 0)
+        {
+            if (!parse_double(val("--cut-rot-max="), d) || d < 0.0 || d > 90.0) return bad("--cut-rot-max");
+            o.cut_rot_max = d;
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--cut-stitch-step=", 0) == 0)
+        {
+            if (!parse_double(val("--cut-stitch-step="), d) || d < 0.0) return bad("--cut-stitch-step");
+            o.cut_stitch_step = d;
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--cut-size=", 0) == 0)
+        {
+            const std::string v = val("--cut-size=");
+            const auto xpos = v.find('x');
+            if (xpos == std::string::npos || !parse_double(v.substr(0, xpos), o.cut_size_x) ||
+                !parse_double(v.substr(xpos + 1), o.cut_size_y) || !(o.cut_size_x > 0.0) || !(o.cut_size_y > 0.0))
+                return bad("--cut-size (ожидается WxH, м)");
+            o.mosaic_param_given = true;
+        }
+        else if (a.rfind("--cut-clamp-edge=", 0) == 0)
+        {
+            if (!parse_double(val("--cut-clamp-edge="), d) || !(d > 0.0)) return bad("--cut-clamp-edge");
+            o.cut_clamp_edge = d;
+            o.mosaic_param_given = true;
+        }
         else if (a.rfind("--fiber-inelastic=", 0) == 0)
         {
             o.fiber_inelastic = val("--fiber-inelastic=");
@@ -536,9 +609,27 @@ int parse_args(int argc, char** argv, Options& o)
         std::fprintf(stderr, "Нужно ровно одно из --v0=, --paper-shots, --v0-list=\n");
         return 2;
     }
-    if (o.stitch_param_given && !o.stitch)
+    if (o.mosaic_param_given && !o.mosaic)
     {
-        std::fprintf(stderr, "Ключи --stitch-* допустимы только вместе с --stitch=grid|seam\n");
+        std::fprintf(stderr, "Ключи --cut-* и --layers-per-cut допустимы только вместе с --random-cut=N\n");
+        return 2;
+    }
+    if (o.mosaic)
+    {
+        if (o.stitch)
+        {
+            std::fprintf(stderr, "--random-cut несовместим с --stitch=grid|seam (стежки мозаики -- по швам раскройки)\n");
+            return 2;
+        }
+        if (!config_has_fabric(o.config))
+        {
+            std::fprintf(stderr, "--random-cut требует конфигурации с тканью (не --config=A)\n");
+            return 2;
+        }
+    }
+    if (o.stitch_param_given && !o.stitch && !o.mosaic)
+    {
+        std::fprintf(stderr, "Ключи --stitch-* допустимы только вместе с --stitch=grid|seam или --random-cut=N\n");
         return 2;
     }
     if (o.stitch)
@@ -738,8 +829,20 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                      bx = opt.ball_dx > 0.0 ? opt.ball_dx : L0.dx_s;
         ball_tag = "_bD" + fmtg(bd * 1e3, 6) + "m" + fmtg(bm * 1e3, 6) + "dx" + fmtg(bx * 1e3, 6);
     }
-    const fs::path sub =
-        fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + ball_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
+    // Мозаика -- свой каталог: _rc<N>s<seed>k<k> (k = 0 -- одна раскройка на весь пакет)
+    const std::string cut_tag = opt.mosaic ? "_rc" + std::to_string(opt.cut_n) + "s" + std::to_string(opt.cut_seed) + "k" +
+                                                 std::to_string(opt.layers_per_cut) +
+                                                 // своё поле: _f<W>x<H>c<c_e>, мм
+                                                 (opt.cut_size_x > 0.0 || opt.cut_clamp_edge > 0.0
+                                                      ? "_f" + (opt.cut_size_x > 0.0 ? fmtg(opt.cut_size_x * 1e3, 6) + "x" +
+                                                                                           fmtg(opt.cut_size_y * 1e3, 6)
+                                                                                     : std::string("L")) +
+                                                            "c" + (opt.cut_clamp_edge > 0.0 ? fmtg(opt.cut_clamp_edge * 1e3, 6)
+                                                                                            : std::string("L"))
+                                                      : std::string())
+                                           : std::string();
+    const fs::path sub = fs::absolute(opt.out) /
+                         (cname + "_" + lname + nz_tag + ball_tag + cut_tag + "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
     rec.dir = sub;
     try
     {
@@ -761,8 +864,19 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             ss.E = opt.stitch_E;
             ss.d = opt.stitch_d;
             ss.eps_break = opt.stitch_eps_break;
+            MosaicSpec ms;
+            ms.enabled = opt.mosaic;
+            ms.n_frag = opt.cut_n;
+            ms.seed = static_cast<std::uint64_t>(opt.cut_seed);
+            ms.layers_per_cut = opt.layers_per_cut;
+            ms.gap = opt.cut_gap;
+            ms.rot_max_deg = opt.cut_rot_max;
+            ms.stitch_step = opt.cut_stitch_step;
+            ms.size_x = opt.cut_size_x;
+            ms.size_y = opt.cut_size_y;
+            ms.clamp_edge = opt.cut_clamp_edge;
             sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz,
-                                  opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx, ss);
+                                  opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx, ss, ms);
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
@@ -847,9 +961,19 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                              " d=" + fmtg(opt.stitch_d, 17) + " eps_break=" + fmtg(opt.stitch_eps_break, 17) +
                              " n_stitch=" + std::to_string(sc.n_stitch)
                        : std::string();
+        const std::string mosaic_id =
+            opt.mosaic ? " random_cut=" + std::to_string(opt.cut_n) + " seed=" + std::to_string(opt.cut_seed) +
+                             " layers_per_cut=" + std::to_string(opt.layers_per_cut) + " gap=" + fmtg(sc.mosaic_gap, 17) +
+                             " rot_max=" + fmtg(opt.cut_rot_max, 17) + " step=" + fmtg(sc.mosaic_stitch_step, 17) +
+                             " E=" + fmtg(opt.stitch_E, 17) + " d=" + fmtg(opt.stitch_d, 17) +
+                             " eps_break=" + fmtg(opt.stitch_eps_break, 17) + " n_stitch=" + std::to_string(sc.n_stitch) +
+                             (sc.mosaic_own_field ? " field=" + fmtg(sc.mosaic_size_x, 17) + "x" + fmtg(sc.mosaic_size_y, 17) +
+                                                        " clamp_edge=" + fmtg(sc.W.params.clamp_edge, 17)
+                                                  : std::string())
+                       : std::string();
         const std::string scene_id = "config=" + config_name_str(opt.config, sc.n_plies) + " plies=" + std::to_string(sc.n_plies) +
                                      " ball_D=" + fmtg(sc.spec.D_s, 17) + " ball_m=" + fmtg(sc.spec.m_s, 17) +
-                                     " ball_dx=" + fmtg(sc.spec.dx_s, 17) + stitch_id + "\n";
+                                     " ball_dx=" + fmtg(sc.spec.dx_s, 17) + stitch_id + mosaic_id + "\n";
         const fs::path id_path = sub / "scene_id.txt";
         if (opt.checkpoint && !opt.restart)
         {
@@ -1000,6 +1124,25 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             add("stitch_d", fmtg(opt.stitch_d));
             add("stitch_eps_break", fmtg(opt.stitch_eps_break));
             add("n_stitch", std::to_string(sc.n_stitch));
+        }
+        if (opt.mosaic)
+        {
+            add("random_cut", std::to_string(opt.cut_n));
+            add("cut_seed", std::to_string(opt.cut_seed));
+            add("layers_per_cut", std::to_string(opt.layers_per_cut));
+            add("cut_count", std::to_string(sc.mosaic_cuts));
+            add("cut_size", fmtg(sc.mosaic_size_x) + "x" + fmtg(sc.mosaic_size_y));
+            add("cut_clamp_edge", fmtg(sc.W.params.clamp_edge));
+            add("cut_gap", fmtg(sc.mosaic_gap));
+            add("cut_rot_max", fmtg(opt.cut_rot_max));
+            add("cut_stitch_step", fmtg(sc.mosaic_stitch_step));
+            add("cut_min_cross_dist", fmtg(sc.mosaic_min_cross_dist));
+            add("stitch_E", fmtg(opt.stitch_E));
+            add("stitch_d", fmtg(opt.stitch_d));
+            add("stitch_eps_break", fmtg(opt.stitch_eps_break));
+            add("n_stitch", std::to_string(sc.n_stitch));
+            add("n_stitch_in", std::to_string(sc.n_stitch_in));
+            add("n_stitch_through", std::to_string(sc.n_stitch_through));
         }
         if (opt.ball_d > 0.0 || opt.ball_m > 0.0 || opt.ball_dx > 0.0) // шар не по умолчанию
         {

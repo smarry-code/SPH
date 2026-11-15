@@ -886,6 +886,11 @@ set_tests_properties(checkpoint_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVI
 add_test(NAME stitch_kt_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/stitch_kt_cli_test.sh $<TARGET_FILE:guo2019_shot>)
 set_tests_properties(stitch_kt_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
 
+# --- Мозаичная ткань (--random-cut) в пакете 2T через guo2019_shot: стежки в слоях и сквозные, рестарт из
+#     чекпоинта, scene_id с раскройкой, ошибки разбора (tests/mosaic_kt_cli_test.sh).
+add_test(NAME mosaic_kt_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/mosaic_kt_cli_test.sh $<TARGET_FILE:guo2019_shot>)
+set_tests_properties(mosaic_kt_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
+
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
 add_executable(fabric_checks tools/fabric_checks/fabric_checks.cpp ${SPH_PIPELINE_SOURCES})
