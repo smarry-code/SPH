@@ -47,9 +47,11 @@ struct JcMaterial
 // Библиотека материалов JC (fiber/jc-implementation-plan.md §3.2).
 // Источники:
 //   - значения Autodyn: скриншоты Mary от 27.10.2026 (G, A, B, n, C, m, T_m,
-//     T_r, c_p, K; в Autodyn разрушение у всех None, D1-D5 = 1.01e20);
+//     T_r, c_p, K; на тех скриншотах разрушение у всех None, D1-D5 = 1.01e20);
+//   - STEEL 4340 целиком, включая Failure JC: fiber/steel-4340-autodyn-constants.md
+//     (скриншоты Mary 15.11.2026; приоритет над литературой);
 //   - Johnson & Cook 1983 (плотность Al 7039, T_r и c_p стали 1006);
-//   - Johnson & Cook 1985 (D1-D5 стали 4340);
+//   - Johnson & Cook 1985 (D1-D5 стали 4340, совпадают с Autodyn);
 //   - Grytten et al. 2006 (D1-D5 Al 5083-H116, критерий Борвика);
 //   - параметры Shock для 1006 и 7039 -- ориентир из литературы (Steinberg).
 // Общее: edot0 = 1 1/с, форма скорости 1st Order, скорость по полной
@@ -98,13 +100,15 @@ inline std::vector<JcMaterial> make_jc_library()
 
     std::vector<JcMaterial> v;
     // 12: STEEL 4340, Linear.
-    // TODO(verify): D1-D5 (Johnson & Cook 1985) не сверены с первоисточником.
+    // Все константы, включая D1-D5, Tm_f = 1793 К и edot0_f = 1 1/с, сверены с библиотекой
+    // Autodyn (fiber/steel-4340-autodyn-constants.md, 15.11.2026); D1-D5 совпадают с JC 1985.
     v.push_back({"STEEL 4340", 7830.0, EosKind::Linear, LinearEos{159e9}, ShockEos{},
                  strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
                  damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0),
                  // TODO(verify): p_min = -4 ГПа -- середина окна -2..-6 ГПа, в котором E3 даёт
-                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md). Данных Autodyn не будет:
-                 // заменить на литературную откольную прочность 4340 (с источником).
+                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md). В библиотеке Autodyn
+                 // для 4340 Pmin не задан (Linear EOS, Failure JC): заменить на литературную
+                 // откольную прочность 4340 (с источником).
                  -4.0e9});
     // 13: STEEL 1006, Shock.
     // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- литературные, не проверены.
