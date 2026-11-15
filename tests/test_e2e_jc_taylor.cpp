@@ -102,6 +102,7 @@ struct RunSettings
     double cfl = -1.0;         // число Куранта cfg.CFL; <= 0 — по умолчанию кейса
     int xsph_mode = -1;        // 0 velocity, 1 position; < 0 — по умолчанию кейса
     double art_eps = -1.0;     // искусственное напряжение; < 0 — по умолчанию (выключено)
+    double save_t = -1.0;      // шаг записи кадров, с; <= 0 — по умолчанию кейса (кадры не пишутся)
     fs::path outdir;
 };
 
@@ -210,6 +211,11 @@ RunResult run_case(const RunSettings& rs)
             cfg.art_stress_eps = rs.art_eps;
             note("art_stress_eps = " + std::to_string(cfg.art_stress_eps) + ", n = " +
                  std::to_string(cfg.art_stress_n) + " (ключ --art-eps; по умолчанию 0 — выключено)");
+        }
+        if (rs.save_t > 0.0)
+        {
+            cfg.save_t = rs.save_t;
+            note("save_t = " + std::to_string(cfg.save_t) + " с (ключ --save-t; диагностика, кадры в рабочем каталоге)");
         }
         if (rs.cfl > 0.0)
         {
@@ -557,6 +563,7 @@ void print_usage()
         "  --xsph=E            константа XSPH epsilon (диагностика; по умолчанию 0.25)\n"
         "  --xsph-mode=M       velocity | position: куда входит XSPH-поправка (по умолчанию velocity)\n"
         "  --art-eps=E         искусственное напряжение Монагана eps (0 — выкл., по умолчанию; типично 0.3)\n"
+        "  --save-t=СЕК        шаг записи кадров sph_output_* (диагностика, вместе с --keep-workdir)\n"
         "  --cfl=X           число Куранта cfg.CFL (диагностика; по умолчанию 0.1): dt ~ CFL\n"
         "  --energy-tol=X      допуск баланса энергии, доля E_mech0 (по умолчанию 0.02)\n"
         "  --energy-warn-only  невязка энергии выше допуска — WARN, а не FAIL\n"
@@ -570,7 +577,7 @@ int main(int argc, char** argv)
     size_t n_r = 0;
     double t_max = jct::kTMax, wall_limit = 0.0, epsilon = -1.0, cfl = -1.0;
     int xsph_mode = -1;
-    double art_eps = -1.0;
+    double art_eps = -1.0, save_t = -1.0;
     bool verbose = false, keep = false;
     fs::path outdir = fs::current_path() / "jc_taylor_out";
 
@@ -604,6 +611,7 @@ int main(int argc, char** argv)
                 art_eps = std::stod(val("--art-eps="));
                 if (!(art_eps >= 0.0)) throw std::invalid_argument("art-eps");
             }
+            else if (a.rfind("--save-t=", 0) == 0) save_t = std::stod(val("--save-t="));
             else if (a.rfind("--cfl=", 0) == 0)
             {
                 cfl = std::stod(val("--cfl="));
@@ -655,6 +663,7 @@ int main(int argc, char** argv)
     rs.cfl = cfl;
     rs.xsph_mode = xsph_mode;
     rs.art_eps = art_eps;
+    rs.save_t = save_t;
     rs.outdir = outdir;
 
     if (mode == "smoke")
