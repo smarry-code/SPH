@@ -2,6 +2,7 @@
 // Определения моделей прочности (Мизес, JH-2) и интенсивности напряжений.
 // Объявления — в ppochnost.hpp.
 #include "ppochnost.hpp"
+#include <stdexcept>
 
 double sigma_i(double &sxx, double &syy, double &sxy, double &syz, double &sxz)
 {
@@ -25,13 +26,18 @@ double sigma_i_general(int dim_, bool axis_, double sxx, double syy, double sxy,
         }
         else
         {
-            return (sxx * sxx + sxy * sxy); // плоский случай
+            // Плоский случай: szz = -(sxx + syy) (след девиатора равен нулю),
+            // J2 = (sxx^2 + syy^2 + szz^2)/2 + sxy^2 -- та же формула, что и
+            // для осесимметричного случая. Прежнее sxx^2 + sxy^2 верно лишь
+            // при syy = -sxx (чистый сдвиг).
+            return (sxx * sxx + sxx * syy + syy * syy + sxy * sxy);
         }
     }
     else if (dim_ == 3) // трехмерный случай
     {
         return (sxx * sxx + sxx * syy + syy * syy + sxy * sxy + sxz * sxz + syz * syz);
     }
+    throw std::logic_error("sigma_i_general: неподдерживаемая размерность dim_");
 }
 void prochnost_mises(const Materials& mats, size_t nmat, double &sxx, double &syy, double &szz, double &sxy, double &syz, double &sxz)
 {
