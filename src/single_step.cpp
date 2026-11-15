@@ -126,6 +126,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
 
     interactions::SolidExtended& ext = ws.ext;
     interactions::build_solid_extended(sys, ntotal, derived, ghosts, ext);
+    interactions::build_art_stress(exec, cfg, sys, ghosts, ext);
 
     // --- Поиск пар Solid-SPH (общий для Solid-SPH и Solid-Solid-Contact,
     // fiber/SPH.md: "Одна и та же построенная spatial structure может

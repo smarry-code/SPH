@@ -317,6 +317,8 @@ void visit_cfg(C& c, F&& f)
     f("jc_heating", c.jc_heating, false);
     f("jc_chi", c.jc_chi, false);
     f("xsph_mode", c.xsph_mode, false);
+    f("art_stress_eps", c.art_stress_eps, false);
+    f("art_stress_n", c.art_stress_n, false);
 #ifdef SPH_ENERGY_LOG
     f("energy_log_every", c.energy_log_every, true);
     f("energy_log_file", c.energy_log_file, true);

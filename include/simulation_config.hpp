@@ -149,6 +149,13 @@ struct SimulationConfig
     // x += dt*(v + av); кинетическая энергия не меняется, D_xsph = 0). Только PC-решатель.
     int xsph_mode = 0;
 
+    // --- Искусственное напряжение Монагана (interactions/artificial_stress.hpp) ---
+    // Против неустойчивости SPH при растяжении (Monaghan 2000; Gray, Monaghan,
+    // Swift 2001). art_stress_eps <= 0 -- выключено, поведение побитово прежнее;
+    // типичное значение 0.3. art_stress_n -- показатель в f^n, f = W(r)/W(dp).
+    double art_stress_eps = 0.0;
+    double art_stress_n = 4.0;
+
 #ifdef SPH_CONTACT_STATS
     // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
     // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
@@ -190,6 +197,7 @@ inline void SimulationConfig::apply_defaults()
     k_solid_elements = "skip";
     jc_heating = 0;  jc_chi = 0.9;
     xsph_mode = 0;
+    art_stress_eps = 0.0;  art_stress_n = 4.0;
 #ifdef SPH_ENERGY_LOG
     energy_log_every = 0;  energy_log_file = "energy_log.csv";
 #endif
