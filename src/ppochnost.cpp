@@ -5,16 +5,21 @@
 
 double sigma_i(double &sxx, double &syy, double &sxy, double &syz, double &sxz)
 {
-    if (dim == 1) // одномерная деформация
+    return sigma_i_general(static_cast<int>(dim), axis_sim, sxx, syy, sxy, syz, sxz);
+}
+
+double sigma_i_general(int dim_, bool axis_, double sxx, double syy, double sxy, double syz, double sxz)
+{
+    if (dim_ == 1) // одномерная деформация
     {
         return 0.75 * sxx * sxx;
         // return (sxx * sxx + syy * syy + sxx * syy);
         // return (sxx - syy) * (sxx - syy) / 3.0;
     }
-    else if (dim == 2)
+    else if (dim_ == 2)
     {
-        
-        if (axis_sim == true)
+
+        if (axis_ == true)
         {
             return (sxx * sxx + sxx * syy + syy * syy + sxy * sxy); // осесимметричный случай
         }
@@ -23,7 +28,7 @@ double sigma_i(double &sxx, double &syy, double &sxy, double &syz, double &sxz)
             return (sxx * sxx + sxy * sxy); // плоский случай
         }
     }
-    else if (dim == 3) // трехмерный случай
+    else if (dim_ == 3) // трехмерный случай
     {
         return (sxx * sxx + sxx * syy + syy * syy + sxy * sxy + sxz * sxz + syz * syz);
     }

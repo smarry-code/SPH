@@ -145,6 +145,26 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME axisym_test COMMAND test_axisym)
 
+# --- Тест модели керамики JH-2 (src/ppochnost.cpp) --------------------------
+# Приращение пластической деформации, sigma_i (плоский случай), разрыхление dp
+# и повреждение D при одномерной деформации (SPH_DIM=1). Эталоны -- из формул
+# J&H 1999 (jh2/jh2-code-review.md). Свои объектники конвейера, по образцу
+# test_axisym (ADR-002).
+add_executable(test_jh2 tests/test_jh2.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_jh2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_jh2 PRIVATE SPH_DIM=1)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jh2 PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_jh2 PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_jh2 PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jh2 PRIVATE -fopenmp)
+    target_link_options(test_jh2 PRIVATE -fopenmp)
+endif()
+add_test(NAME jh2_test COMMAND test_jh2)
+
 # --- Тест трёхмерной ветки силового расчёта (dim == 3) ----------------------
 # По образцу test_axisym, но для ветки dim == 3, которую не проверяет ни
 # один сквозной тест: простой сдвиг, сжатие, жёсткое вращение (производная
