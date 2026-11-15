@@ -11,7 +11,7 @@
 //   A5  pair_factor: f(r = dp) = 1, f^n, W(dp) <= 0 -> 0.
 // Конвейер (облако частиц STEEL 4340, растяжение p < 0, случайный девиатор):
 //   P1  art_stress_eps = 0: результат побитово равен расчёту без build_art_stress;
-//   P2  eps = 0.3: член сохраняет импульс  sum m_i (dv_on - dv_off) = 0 (в осесимметрии -- по z);
+//   P2  eps = 0.3: член сохраняет импульс  sum m_i (dv_on - dv_off) = 0 (кроме осесимметрии);
 //   P3  ... и энергию  sum m_i v_i.(dv_on - dv_off) + sum m_i (du_on - du_off) = 0;
 //   P4  сжатие (p > 0, s = 0): R = 0 у всех, результат побитово равен eps = 0;
 //   P5  член ненулевой при растяжении (иначе P2-P3 проверяли бы пустоту).
@@ -255,16 +255,16 @@ void test_pipeline()
         en += m * ddu;
         en_scale += std::fabs(m * ddu);
     }
-    // В осесимметрии осевой член (R_rr - R_tt)/r радиальный импульс не сохраняет
-    // (как и у s): проверяется только осевая компонента z.
-    const std::size_t d_mom0 = (axis_sim && dim == 2) ? 1 : 0;
+    // В осесимметрии осевые члены (R_rr - R_tt)/r и R_rz/r импульс не сохраняют
+    // (как и у s): там проверяется только энергия.
+    const bool check_mom = !(axis_sim && dim == 2);
     double mom_err = 0.0;
-    for (std::size_t d = d_mom0; d < dim; ++d) mom_err = std::max(mom_err, std::fabs(mom[d]));
+    for (std::size_t d = 0; d < dim; ++d) mom_err = std::max(mom_err, std::fabs(mom[d]));
     std::printf("P: max|ddv| = %.3e м/с^2, импульс %.3e / %.3e, энергия %.3e / %.3e\n", ddv_max, mom_err, mom_scale,
                 std::fabs(en), en_scale);
     check(ddv_max > 0.0, "P5 член меняет ускорения");
     // Разность on - off содержит округление основного члена (~1e-16 от |dv|): допуск 1e-9.
-    check(mom_err <= 1e-9 * mom_scale, "P2 импульс сохраняется");
+    if (check_mom) check(mom_err <= 1e-9 * mom_scale, "P2 импульс сохраняется");
     check(std::fabs(en) <= 1e-9 * en_scale, "P3 энергия сохраняется");
 
     // P4: сжатие
