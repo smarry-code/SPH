@@ -419,6 +419,8 @@ inline void build_art_stress(const rhs::CpuExecutor& exec, const SimulationConfi
         {
             art_stress::r_2d(eps, ext.sxx[k] - p, ext.syy[k] - p, ext.sxy[k],
                              ext.art_rxx[k], ext.art_ryy[k], ext.art_rxy[k]);
+            // Осесимметрия: окружное направление -- главное, sigma_tt = szz - p.
+            if constexpr (axis_sim) ext.art_rzz[k] = art_stress::principal_r(eps, ext.szz[k] - p);
         }
         else
         {
@@ -984,6 +986,24 @@ inline void compute_solid_sph_contributions(
                 }
                 di.du += ext.mass[j] * he_art;
                 dj.du += ext.mass[i] * he_art;
+
+                if constexpr (axis_sim && dim == 2)
+                {
+                    // Осевая часть дивергенции R (как у s в импульсе выше):
+                    // a_r += (R_rr - R_tt)/r, a_z += R_rz/r, по соседу, с тем же f^n.
+                    // Работа этих членов радиального импульса не сохраняет; чтобы
+                    // KE + U сохранялась, частица получает du = -v.a_hoop (здесь
+                    // с множителем 2: finalize берёт 0.5*du).
+                    const double rhoij_a = 1.0 / (ext.rho[i] * ext.rho[j]);
+                    const double hi0 = fn * rhoij_a * ext.mass[j] * ((ext.art_rxx[j] - ext.art_rzz[j]) / ext.x[0][j]) * w;
+                    const double hi1 = fn * rhoij_a * ext.mass[j] * (ext.art_rxy[j] / ext.x[0][j]) * w;
+                    const double hj0 = fn * rhoij_a * ext.mass[i] * ((ext.art_rxx[i] - ext.art_rzz[i]) / ext.x[0][i]) * w;
+                    const double hj1 = fn * rhoij_a * ext.mass[i] * (ext.art_rxy[i] / ext.x[0][i]) * w;
+                    di.dv[0] += hi0; di.dv[1] += hi1;
+                    dj.dv[0] += hj0; dj.dv[1] += hj1;
+                    di.du += -2.0 * (ext.vx[0][i] * hi0 + ext.vx[1][i] * hi1);
+                    dj.du += -2.0 * (ext.vx[0][j] * hj0 + ext.vx[1][j] * hj1);
+                }
             }
         }
 
