@@ -174,6 +174,76 @@ int main()
         check(dp_ref > 0.0 && close_rel(sys.dp[0], dp_ref, 1e-5), "T5 dp при малом D", sys.dp[0], dp_ref);
     }
 
+    // --- T6 (D1): ограничение eps* = max(eps*, 1) за флагом jh2_clamp_low_rate ---
+    {
+        const double eps_low = 0.5; // eps* < 1: множитель 1 + C ln(eps*) < 1
+        const double s_off = jh2_strength(c, 1.0, 0.0, eps_low, false);
+        const double s_on = jh2_strength(c, 1.0, 0.0, eps_low, true);
+        const double s_1 = ref_strength(c, 1.0, 0.0, 0.0); // без множителя скорости
+        check(!mats.jh2_clamp_low_rate, "T6 флаг по умолчанию выключен", 0.0, 0.0);
+        check(close_rel(s_off, ref_strength(c, 1.0, 0.0, eps_low), 1e-12) && s_off < s_1,
+              "T6 флаг off, eps*<1: множитель < 1", s_off, ref_strength(c, 1.0, 0.0, eps_low));
+        check(close_rel(s_on, s_1, 1e-12), "T6 флаг on, eps*<1: множитель = 1", s_on, s_1);
+        const double s_hi = jh2_strength(c, 1.0, 0.0, 3.0, true);
+        check(close_rel(s_hi, ref_strength(c, 1.0, 0.0, 3.0), 1e-12), "T6 флаг on, eps*>1: без изменений", s_hi,
+              ref_strength(c, 1.0, 0.0, 3.0));
+    }
+
+    // --- T7 (D2): нижняя граница eps_f (jh2_efmin) ---
+    {
+        Materials m2;
+        const double ef = D1 * std::pow(1.0 + T_n, D2);
+        m2.jh2_efmin = 10.0 * ef;
+        ParticleSystem sys;
+        setup(sys, m2, 1.0, 0.01, rate);
+        const double d_ep = 0.1 * ef;
+        const double s_old = ref_strength(c, 1.0, 0.0, eps_i);
+        sys.sxx[0] = (s_old + 3.0 * G * d_ep) / 1.5;
+        prochnost_cem_JH2(m2, sys, 0, dt, 0.0);
+        check(close_rel(sys.D[0], d_ep / m2.jh2_efmin, 1e-9), "T7 D при efmin = 10 ef", sys.D[0], d_ep / m2.jh2_efmin);
+        // efmin = 0 (по умолчанию): D = d_ep / ef, как в оригинале
+        ParticleSystem s0;
+        setup(s0, mats, 1.0, 0.01, rate);
+        s0.sxx[0] = (s_old + 3.0 * G * d_ep) / 1.5;
+        prochnost_cem_JH2(mats, s0, 0, dt, 0.0);
+        check(close_rel(s0.D[0], 0.1, 1e-9), "T7 D при efmin = 0", s0.D[0], 0.1);
+    }
+
+    // --- T6 (D1): ограничение eps* = max(eps*, 1) за флагом jh2_clamp_low_rate ---
+    {
+        const double eps_low = 0.5; // eps* < 1: множитель 1 + C ln(eps*) < 1
+        const double s_off = jh2_strength(c, 1.0, 0.0, eps_low, false);
+        const double s_on = jh2_strength(c, 1.0, 0.0, eps_low, true);
+        const double s_1 = ref_strength(c, 1.0, 0.0, 0.0); // без множителя скорости
+        check(!mats.jh2_clamp_low_rate, "T6 флаг по умолчанию выключен", 0.0, 0.0);
+        check(close_rel(s_off, ref_strength(c, 1.0, 0.0, eps_low), 1e-12) && s_off < s_1,
+              "T6 флаг off, eps*<1: множитель < 1", s_off, ref_strength(c, 1.0, 0.0, eps_low));
+        check(close_rel(s_on, s_1, 1e-12), "T6 флаг on, eps*<1: множитель = 1", s_on, s_1);
+        const double s_hi = jh2_strength(c, 1.0, 0.0, 3.0, true);
+        check(close_rel(s_hi, ref_strength(c, 1.0, 0.0, 3.0), 1e-12), "T6 флаг on, eps*>1: без изменений", s_hi,
+              ref_strength(c, 1.0, 0.0, 3.0));
+    }
+
+    // --- T7 (D2): нижняя граница eps_f (jh2_efmin) ---
+    {
+        Materials m2;
+        const double ef = D1 * std::pow(1.0 + T_n, D2);
+        m2.jh2_efmin = 10.0 * ef;
+        ParticleSystem sys;
+        setup(sys, m2, 1.0, 0.01, rate);
+        const double d_ep = 0.1 * ef;
+        const double s_old = ref_strength(c, 1.0, 0.0, eps_i);
+        sys.sxx[0] = (s_old + 3.0 * G * d_ep) / 1.5;
+        prochnost_cem_JH2(m2, sys, 0, dt, 0.0);
+        check(close_rel(sys.D[0], d_ep / m2.jh2_efmin, 1e-9), "T7 D при efmin = 10 ef", sys.D[0], d_ep / m2.jh2_efmin);
+        // efmin = 0 (по умолчанию): D = d_ep / ef, как в оригинале
+        ParticleSystem s0;
+        setup(s0, mats, 1.0, 0.01, rate);
+        s0.sxx[0] = (s_old + 3.0 * G * d_ep) / 1.5;
+        prochnost_cem_JH2(mats, s0, 0, dt, 0.0);
+        check(close_rel(s0.D[0], 0.1, 1e-9), "T7 D при efmin = 0", s0.D[0], 0.1);
+    }
+
     std::printf("%s (failures=%d)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
     return failures != 0;
 }

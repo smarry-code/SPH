@@ -67,7 +67,7 @@ void prochnost_mises(const Materials& mats, size_t nmat, double &sxx, double &sy
 // и эквивалентной скорости деформации eps_rate (формулы (3)-(6) J&H 1999 и
 // множитель скорости 1 + C*ln(eps_rate), как в прочности prochnost_cem_JH2).
 // c -- строка const_JH_2[nmat]. Ограничения до текучести нет (это sigma_y).
-double jh2_strength(const std::vector<double>& c, double P_n, double D, double eps_rate)
+double jh2_strength(const std::vector<double>& c, double P_n, double D, double eps_rate, bool clamp_low_rate)
 {
     const double s_hel = c[3], T_n = c[4], A = c[5], N = c[6], B = c[7], M = c[8], s_f_max = c[9], C = c[10];
     double sigt0 = 0.0;
@@ -90,6 +90,12 @@ double jh2_strength(const std::vector<double>& c, double P_n, double D, double e
         sigtf = s_f_max * s_hel;
     }
     double sigt = (sigt0 - D * (sigt0 - sigtf));
+    // clamp_low_rate (Materials::jh2_clamp_low_rate): eps* = max(eps*, 1), множитель
+    // не опускается ниже 1 при скорости меньше eps_0 (по умолчанию выключено).
+    if (clamp_low_rate && eps_rate < 1.0)
+    {
+        eps_rate = 1.0;
+    }
     if (eps_rate > 0)
     {
         sigt *= (1 + C * log(eps_rate));
@@ -112,7 +118,7 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
     double P_n = sys.p[i] / P_hel;
     double eps_i = (sqrt(2) * sqrt((sys.exx[i] - sys.eyy[i]) * (sys.exx[i] - sys.eyy[i]) + (sys.eyy[i] - sys.ezz[i]) * (sys.eyy[i] - sys.ezz[i]) +
                                    (sys.ezz[i] - sys.exx[i]) * (sys.ezz[i] - sys.exx[i]) + 6 * (sys.exy[i] * sys.exy[i] + sys.exz[i] * sys.exz[i] + sys.eyz[i] * sys.eyz[i]))) / 3;
-    double sigt = jh2_strength(const_JH_2[nmat], P_n, sys.D[i], eps_i);
+    double sigt = jh2_strength(const_JH_2[nmat], P_n, sys.D[i], eps_i, mats.jh2_clamp_low_rate);
     double smizm = sqrt(pow(sigt, 2) / 3.0);
     double sxx = sys.sxx[i];
     double syy = sys.syy[i];
@@ -151,7 +157,13 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
         double d_ep = (seq_tr - sigt) / (3.0 * gem);
         if ((P_n + T_n) > 0)
         {
+            // Деформация разрушения eps_f = D1*(P*+T*)^D2, не ниже jh2_efmin
+            // (по умолчанию 0 -- поведение оригинала J&H 1999).
             double znam = D1 * pow(P_n + T_n, D2);
+            if (znam < mats.jh2_efmin)
+            {
+                znam = mats.jh2_efmin;
+            }
             sys.e_pl[i] += d_ep;
             sys.D[i] += d_ep / znam;
             if (sys.D[i] > 1)
@@ -171,8 +183,8 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
     const double D_new = sys.D[i];
     if (D_new > D_old && mu >= 0)
     {
-        const double s_old = jh2_strength(const_JH_2[nmat], P_n, D_old, eps_i);
-        const double s_new = jh2_strength(const_JH_2[nmat], P_n, D_new, eps_i);
+        const double s_old = jh2_strength(const_JH_2[nmat], P_n, D_old, eps_i, mats.jh2_clamp_low_rate);
+        const double s_new = jh2_strength(const_JH_2[nmat], P_n, D_new, eps_i, mats.jh2_clamp_low_rate);
         const double dU = (s_old - s_new) * (s_old + s_new) / (6.0 * gem); // >= 0
         const double K1mu = K1 * mu;
         sys.dp[i] = -K1mu + sqrt((K1mu + sys.dp[i]) * (K1mu + sys.dp[i]) + 2.0 * beta_JH * K1 * dU);
