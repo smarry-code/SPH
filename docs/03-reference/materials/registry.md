@@ -79,7 +79,8 @@ JC-материалы (itype 12–15) хранятся в отдельном в�
 | 15 | AL5083H116 | 2700 | Linear, K = 58,33 ГПа | 26,92 | 167 | 596 | 0,551 | 0,001 | 0,859 | 893 | 293 | 910 | Børvik: 0,178; 0,389; −2,25; 0,147; 0 |
 
 - Для всех материалов: ε̇0 = 1 с⁻¹, форма скорости «1st Order».
-- STEEL 4340: p_min = −4 ГПа (нижний предел давления, аналог Autodyn Hydro Pmin).
+- STEEL 4340: p_min = −5,5 ГПа (нижний предел давления, аналог Autodyn Hydro Pmin) —
+  откольная прочность 4340 RC30 по Bless 1981 (AFWAL-TR-81-4040, DTIC ADA112445).
 
 Источники:
 
@@ -94,7 +95,6 @@ JC-материалы (itype 12–15) хранятся в отдельном в�
 
 Не сверено (`TODO(verify)` в [`include/materials.hpp`](../../../include/materials.hpp)):
 
-- p_min STEEL 4340 (в Autodyn не задан; из перебора, [`johnson-cook/03-pmin-energy.md`](../../../johnson-cook/03-pmin-energy.md));
 - T_r и c_p STEEL 1006 (JC 1983);
 - Γ0, c0, S1 для STEEL 1006 и AL 7039 (Steinberg, литературные);
 - плотность AL 7039 (JC 1983).

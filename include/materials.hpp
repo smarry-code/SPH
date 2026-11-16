@@ -105,11 +105,13 @@ inline std::vector<JcMaterial> make_jc_library()
     v.push_back({"STEEL 4340", 7830.0, EosKind::Linear, LinearEos{159e9}, ShockEos{},
                  strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
                  damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0),
-                 // TODO(verify): p_min = -4 ГПа -- середина окна -2..-6 ГПа, в котором E3 даёт
-                 // откол в нужной плоскости (johnson-cook/03-pmin-energy.md). В библиотеке Autodyn
-                 // для 4340 Pmin не задан (Linear EOS, Failure JC): заменить на литературную
-                 // откольную прочность 4340 (с источником).
-                 -4.0e9});
+                 // p_min = -5.5 ГПа: откольная прочность 4340 RC30 +- 2, критерий sigma_s = -55 кбар
+                 // (S.J. Bless, Spall Criteria for Several Metals, AFWAL-TR-81-4040, 1981,
+                 // DTIC ADA112445), без скоростной зависимости. Взята напрямую как предел
+                 // давления (как Hydro Pmin в гидрокодах); sigma_s задан по нормальному
+                 // напряжению, в пересчёте на давление при пластическом течении ~ -4.8 ГПа.
+                 // Прежнее подобранное значение -4 ГПа -- johnson-cook/03-pmin-energy.md.
+                 -5.5e9});
     // 13: STEEL 1006, Shock.
     // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- литературные, не проверены.
     v.push_back({"STEEL 1006", 7896.0, EosKind::Shock, LinearEos{}, ShockEos{2.17, 4569.0, 1.49},

@@ -47,6 +47,16 @@
 - Лог энергии (`SPH_ENERGY_LOG`): диагностические каналы мощности `P_pair_*`, `P_hoop_v`, `P_av_*`,
   `P_dev_u`, `P_pdv_u`, `P_szz_u` и `closure` (только чтение состояния).
 - Тесты `e2e_clamp_*_pc_full`: бюджет `--time-limit` 12000 с, TIMEOUT 14400 с (ES2 — 10 568 с).
+- Ключи `art_stress_eps`, `art_stress_n` — искусственное напряжение Монагана (Monaghan 2000; Gray,
+  Monaghan, Swift 2001), в осесимметрии с окружной компонентой; по умолчанию выключено, поведение
+  прежнее. Неустойчивость у оси в тесте Тейлора не устраняет (`johnson-cook/06-artificial-stress.md`).
+  Тест `art_stress_{1,2,3}d_test`; ключи e2e Тейлора `--art-eps`, `--save-t`, `--no-damage`, `--pmin`.
+
+### Изменено
+
+- STEEL 4340: `p_min` = −5,5 ГПа (было подобранное −4 ГПа) — откольная прочность 4340 RC30 по
+  Bless 1981 (AFWAL-TR-81-4040); пометка `TODO(verify)` снята. Константы 4340 сверены с библиотекой
+  Autodyn (`fiber/steel-4340-autodyn-constants.md`).
 
 ### Исправлено
 
