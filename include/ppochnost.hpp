@@ -11,7 +11,7 @@
 double sigma_i_general(int dim_, bool axis_, double sxx, double syy, double sxy, double syz, double sxz);
 
 // Предел текучести JH-2 sigma_eq для P*, D, eps (c -- строка const_JH_2[nmat]).
-double jh2_strength(const std::vector<double>& c, double P_n, double D, double eps_rate);
+double jh2_strength(const std::vector<double>& c, double P_n, double D, double eps_rate, bool clamp_low_rate = false);
 
 double sigma_i(double &sxx, double &syy, double &sxy, double &syz, double &sxz);
 

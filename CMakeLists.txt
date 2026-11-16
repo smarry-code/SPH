@@ -165,6 +165,24 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME jh2_test COMMAND test_jh2)
 
+# --- Одноэлементный приёмочный расчёт JH-2 (B4C, 1D-сжатие + разгрузка) ------
+# Без SPH-соседей: те же формулы девиатора и давления, что в коде; ключ
+# --csv=<файл> пишет кривую (jh2/jh2-fix-plan.md, этап E, п. 2).
+add_executable(test_jh2_element tests/test_jh2_element.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_jh2_element PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_jh2_element PRIVATE SPH_DIM=1)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jh2_element PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_jh2_element PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_jh2_element PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_jh2_element PRIVATE -fopenmp)
+    target_link_options(test_jh2_element PRIVATE -fopenmp)
+endif()
+add_test(NAME jh2_element_test COMMAND test_jh2_element)
+
 # --- Тест трёхмерной ветки силового расчёта (dim == 3) ----------------------
 # По образцу test_axisym, но для ветки dim == 3, которую не проверяет ни
 # один сквозной тест: простой сдвиг, сжатие, жёсткое вращение (производная
