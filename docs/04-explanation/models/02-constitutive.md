@@ -244,7 +244,7 @@ $s^{xx}\dot\varepsilon^{xx}+s^{yy}\dot\varepsilon^{yy}+s^{zz}\dot\varepsilon^{zz
 |---|---|
 | $d=1$ | $\tfrac34(s^{xx})^2$ |
 | $d=2$, осесимметрия | $(s^{xx})^2+s^{xx}s^{yy}+(s^{yy})^2+(s^{xy})^2$ |
-| $d=2$, плоскость | $(s^{xx})^2+(s^{xy})^2$ |
+| $d=2$, плоскость | $(s^{xx})^2+s^{xx}s^{yy}+(s^{yy})^2+(s^{xy})^2$ (как в осесимметрии, $s^{zz}=-(s^{xx}+s^{yy})$) |
 | $d=3$ | $(s^{xx})^2+s^{xx}s^{yy}+(s^{yy})^2+(s^{xy})^2+(s^{xz})^2+(s^{yz})^2$ |
 
 (для бесследового девиатора $J_2=\tfrac12 s:s$, эквивалентное напряжение $\sigma_{eq}=\sqrt{3J_2}$).
@@ -258,11 +258,10 @@ $$
 не накапливается; в `sys.e_pl` Мизес ничего не пишет. Под `SPH_ENERGY_LOG` упругая энергия
 сдвига $(s{:}s)_{\rm до}-(s{:}s)_{\rm после})/(4G\rho)$ учитывается как диссипация (справочная величина).
 
-Замечание о плоском случае: выражение $J_2=(s^{xx})^2+(s^{xy})^2$ верно при
-$s^{yy}=-s^{xx}$, $s^{zz}=0$. В плоской деформации код ведёт $s^{zz}=-(s^{xx}+s^{yy})$,
-для которой $J_2=(s^{xx})^2+s^{xx}s^{yy}+(s^{yy})^2+(s^{xy})^2$; т.е. форма «плоскость»
-в `sigma_i` (и в `jc::j2_of_deviator`, `Geom::D2Plane`) не совпадает с точным $J_2$ и
-занижает его.
+Замечание о плоском случае: в `sigma_i` плоская форма исправлена (этап A исправления JH-2,
+`jh2/jh2-fix-plan.md`). В `jc::j2_of_deviator` (`Geom::D2Plane`) осталась прежняя
+$J_2=(s^{xx})^2+(s^{xy})^2$, верная лишь при $s^{yy}=-s^{xx}$; ветка недостижима, пока
+`axis_sim` — `constexpr true`.
 
 ### 4.2. Параметры (Мизес, УА Тэта, Ми–Грюнайзен)
 
@@ -310,53 +309,49 @@ $$
 $$
 
 где $\dot\varepsilon_{eq}=\frac{\sqrt2}{3}\sqrt{(\dot\varepsilon^{xx}-\dot\varepsilon^{yy})^2+(\dot\varepsilon^{yy}-\dot\varepsilon^{zz})^2+(\dot\varepsilon^{zz}-\dot\varepsilon^{xx})^2+6(\dot\varepsilon_{xy}^2+\dot\varepsilon_{xz}^2+\dot\varepsilon_{yz}^2)}$
-из `sys.exx..eyz` (скорости, записанные `finalize_solid`; нормировка на $\dot\varepsilon_0=1$ с$^{-1}$ неявная; при $\dot\varepsilon_{eq}<1$ множитель $<1$, нижней отсечки нет).
+из `sys.exx..eyz` (скорости, записанные `finalize_solid`; нормировка на $\dot\varepsilon_0=1$ с$^{-1}$ неявная).
+При $\dot\varepsilon_{eq}<1$ множитель $<1$, как в оригинале J&H 1999; флаг `Materials::jh2_clamp_low_rate`
+(по умолчанию `false`) включает отсечку $\dot\varepsilon^*=\max(\dot\varepsilon_{eq},1)$.
+Предел считает функция `jh2_strength`.
 Возврат: если $\sqrt{J_2}>\sigma_Y/\sqrt3$, все компоненты $s$ умножаются на
 $\sigma_Y/(\sqrt3\sqrt{J_2})$ (флаг `flag_e = false`).
 
 ### 5.3. Накопление повреждения
 
-Если возврат сработал и $D<1$: пластическая скорость деформации
-$\dot\varepsilon^p$ определяется как разность полной и упругой скоростей деформации
+Если возврат сработал и $D<1$, приращение эквивалентной пластической деформации берётся
+из радиального возврата (Wilkins):
 
 $$
-\dot\varepsilon_e^{\alpha\beta}=\frac{(\Delta s^{\alpha\beta}/\Delta t)-\text{(поворотная часть)}}{G}+\ldots,\quad
-\dot\varepsilon_p^{\alpha\beta}=\dot\varepsilon^{\alpha\beta}-\dot\varepsilon_e^{\alpha\beta},
+\Delta\varepsilon^p=\frac{\sigma_{eq}^{tr}-\sigma_Y}{3G},\qquad \sigma_{eq}^{tr}=\sqrt{3J_2^{tr}},
 $$
 
-где $\Delta s=s_{\rm после}-s_{\rm до}$ — изменение девиатора возвратом (поворотные члены
-те же, что в разд. 3.2), далее эквивалентная скорость
-$\dot\varepsilon^p_{eq}=\frac{\sqrt2}{3}\sqrt{\ldots}$ (та же форма, что для $\dot\varepsilon_{eq}$).
-Затем
+где $J_2^{tr}$ — пробный (до возврата) второй инвариант. Затем
 
 $$
-\Delta D=\frac{\dot\varepsilon^p_{eq}\,\Delta t}{\varepsilon_f^p},\quad \varepsilon_f^p=D_1\,(P_n+T_n)^{D_2},\quad e_{pl}\mathrel{+}=\dot\varepsilon^p_{eq}\Delta t,\quad D\leftarrow\min(D+\Delta D,1).
+\Delta D=\frac{\Delta\varepsilon^p}{\varepsilon_f^p},\quad \varepsilon_f^p=\max\bigl(D_1\,(P_n+T_n)^{D_2},\ \varepsilon_{f,\min}\bigr),\quad e_{pl}\mathrel{+}=\Delta\varepsilon^p,\quad D\leftarrow\min(D+\Delta D,1),
 $$
 
+$\varepsilon_{f,\min}$ — `Materials::jh2_efmin` (по умолчанию 0, как в оригинале).
 Если $P_n+T_n\le0$ (всестороннее растяжение при текучести) — $D=1$ сразу.
-Объёмная добавка $\dot\varepsilon_{vol}=\dot\rho/(3\rho)$ входит в $\dot\varepsilon_e$ изотропно и сокращается
-в разностях $\dot\varepsilon_p^{\alpha\alpha}-\dot\varepsilon_p^{\beta\beta}$.
 
-### 5.4. Булкинг
+### 5.4. Разрыхление (булкинг)
 
-При $\mu\ge0$ и текущем возврате считаются «упругие энергии» $u_0$, $u_1$ (до и после
-возврата) и $\Delta u=u_0-u_1$; если $\Delta u>0$:
+Добавка давления растёт только если повреждение выросло за шаг ($D_{\rm new}>D_{\rm old}$) и $\mu\ge0$.
+Потеря упругой энергии сдвига при том же $P_n$ и $\dot\varepsilon_{eq}$ (J&H 1999, (11)–(14);
+Cronin и др., 2003):
 
 $$
-\Delta p_{\rm new}=-K_1\mu+\sqrt{(K_1\mu+\Delta p)^{2}+2\beta K_1\,\Delta u},\quad\beta=1,
+\Delta U=\frac{\sigma_Y(D_{\rm old})^2-\sigma_Y(D_{\rm new})^2}{6G}\ \ge 0,\qquad
+\Delta p_{\rm new}=-K_1\mu+\sqrt{(K_1\mu+\Delta p)^{2}+2\beta K_1\,\Delta U},\quad\beta=1.
 $$
 
-но только если $|(K_1\mu+\Delta p)^2|\ge|2\beta K_1\Delta u|$. Результат записывается в `sys.dp`
-и затем входит в давление (разд. 2.7) при $D\ne0$.
+Результат записывается в `sys.dp` и входит в давление (разд. 2.7) при $D\ne0$. Ограничение
+$\mu\ge0$ оставлено сознательно (в оригинале его нет).
 
-> Возможная ошибка. В коде `u0 = 2*sqrt(J2_до)/(6G)`, а `u1 = 2*J2_после/(6G)` — в $u_1$
-> стоит $J_2$ (`sigma_i`), а не $\sqrt{J_2}$; размерности $u_0$ и $u_1$ различаются. Корректная
-> разность упругих энергий сдвига $=(\sigma_{eq,\rm до}^2-\sigma_{eq,\rm после}^2)/(6G)=(J_{2,\rm до}-J_{2,\rm после})/(2G)$.
-> В СИ при $J_{2,\rm после}\sim10^{17}$–$10^{18}$ Па² условие $\Delta u>0$ практически
-> никогда не выполняется, и $\Delta p$ остаётся нулевым (булкинг фактически выключен).
-> Аналогично в упругой части $\dot\varepsilon_e$ делится на $G$ (а не на $2G$, как следует
-> из закона Гука для $\dot s^{\alpha\beta}=2G\dot\varepsilon_e^{\alpha\beta}$): пластическая
-> скорость деформации занижается/искажается множителем 2. Описано как есть, не исправлено.
+> До исправления (ветка `fiber_johnson_holmquist`, этапы A–D плана `jh2/jh2-fix-plan.md`)
+> упругая часть скорости деформации делилась на $G$ вместо $2G$, а энергии $u_0$, $u_1$
+> в булкинге имели разную размерность, из-за чего $\Delta p$ практически оставалось нулевым.
+> Константы Al₂O₃ (`const_JH_2[1]`) не проверены — см. [реестр материалов](../../03-reference/materials/registry.md).
 
 ### 5.5. Параметры JH-2
 
