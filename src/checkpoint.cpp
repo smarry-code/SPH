@@ -32,14 +32,10 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 #endif
 
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
-// Версия 2: в CONF добавлены поля проекции скорости контакта (в конце списка), в конце файла
-// блок PROJ (таблица тёплого старта). Версия 3: после PROJ блок USER (непрозрачное состояние
-// вызывающего, Payload::user_state). Версия 4: у связи нити в TOPO 14-е слово -- индекс собственного
-// материала связи (стежки, -1 = материал бусины i). Версия 5: после USER блок JCST -- настройки
-// Джонсона-Кука и XSPH (jc_heating, jc_chi, xsph_mode) и поля частиц Solid T, edot, r0.
-// Читаются все пять (v1: новых полей, PROJ, USER и JCST нет; v2: нет USER; v1-v3: у связи 13 слов,
-// mat = -1; v1-v4: нет JCST -- T, edot, r0 остаются значениями сцены). Ветка Джонсона-Кука до слияния
-// с ветками нитей писала свои v2/v3 (T, edot, r0 в PART): такие файлы не читаются (PART другой длины).
+// Версия формата. Чекпоинт -- для рестарта той же сборкой, а не для хранения: читается только
+// текущая версия, совместимости со старыми нет. Меняя состав или порядок данных, поднять номер.
+// 5 -- после слияния веток нитей (проекция контакта, состояние вызывающего, материал связи-стежка)
+// и Джонсона-Кука (T, edot, r0, jc_heating, jc_chi, xsph_mode).
 constexpr std::uint32_t kFormatVersion = 5;
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
@@ -74,7 +70,6 @@ constexpr std::uint32_t kTagHist = make_tag('H', 'I', 'S', 'T');
 constexpr std::uint32_t kTagEnrg = make_tag('E', 'N', 'R', 'G');
 constexpr std::uint32_t kTagProj = make_tag('P', 'R', 'O', 'J');
 constexpr std::uint32_t kTagUser = make_tag('U', 'S', 'E', 'R');
-constexpr std::uint32_t kTagJcst = make_tag('J', 'C', 'S', 'T');
 
 [[noreturn]] void fail(const std::string& msg) { throw std::runtime_error("чекпоинт: " + msg); }
 
@@ -276,9 +271,8 @@ std::string text(const std::vector<std::vector<double>>& v)
 // Перечень полей SimulationConfig: f(имя, поле, свободно_ли_менять). Порядок
 // фиксирован версией формата (меняя его или состав полей, поднять kFormatVersion).
 // Поля checkpoint_* / restart_file -- настройки запуска, не сериализуются.
-// ver -- версия формата: поля, добавленные в версии 2, при ver < 2 не перечисляются.
 template <class C, class F>
-void visit_cfg(C& c, F&& f, std::uint32_t ver = kFormatVersion)
+void visit_cfg(C& c, F&& f)
 {
     f("pa_sph", c.pa_sph, false);
     f("nnps", c.nnps, false);
@@ -340,21 +334,12 @@ void visit_cfg(C& c, F&& f, std::uint32_t ver = kFormatVersion)
     f("contact_stats_summary", c.contact_stats_summary, true);
     f("contact_hold_n", c.contact_hold_n, true);
 #endif
-    // Версия 2: проекция скорости нормальной силы контакта (менять при рестарте нельзя).
-    if (ver >= 2)
-    {
-        f("fiber_fiber_contact_predictor", c.fiber_fiber_contact_predictor, false);
-        f("fiber_solid_contact_predictor", c.fiber_solid_contact_predictor, false);
-        f("fiber_contact_projection_iters", c.fiber_contact_projection_iters, false);
-        f("fiber_contact_projection_warm", c.fiber_contact_projection_warm, false);
-    }
-}
-
-// Настройки Джонсона-Кука и XSPH (формат v5, блок JCST; в v1-v4 их нет -- берутся из
-// настроек нового запуска, различий не дают).
-template <class C, class F>
-void visit_cfg_jc(C& c, F&& f)
-{
+    // Проекция скорости нормальной силы контакта (менять при рестарте нельзя).
+    f("fiber_fiber_contact_predictor", c.fiber_fiber_contact_predictor, false);
+    f("fiber_solid_contact_predictor", c.fiber_solid_contact_predictor, false);
+    f("fiber_contact_projection_iters", c.fiber_contact_projection_iters, false);
+    f("fiber_contact_projection_warm", c.fiber_contact_projection_warm, false);
+    // Джонсон-Кук и XSPH.
     f("jc_heating", c.jc_heating, false);
     f("jc_chi", c.jc_chi, false);
     f("xsph_mode", c.xsph_mode, false);
@@ -371,14 +356,12 @@ struct CfgField
 std::vector<CfgField> collect_cfg(const SimulationConfig& c)
 {
     std::vector<CfgField> out;
-    const auto add = [&out](const char* name, const auto& v, bool fr)
-    {
-        Writer w;
-        put(w, v);
-        out.push_back({name, fr, std::move(w.buf()), text(v)});
-    };
-    visit_cfg(c, add);
-    visit_cfg_jc(c, add);
+    visit_cfg(c, [&out](const char* name, const auto& v, bool fr)
+              {
+                  Writer w;
+                  put(w, v);
+                  out.push_back({name, fr, std::move(w.buf()), text(v)});
+              });
     return out;
 }
 
@@ -390,15 +373,13 @@ void write_cfg(Writer& w, const SimulationConfig& c)
     visit_cfg(c, [&w](const char*, const auto& v, bool) { put(w, v); });
 }
 
-// base -- настройки нового запуска: поля, которых нет в файле старой версии, берутся из них
-// (в сравнении настроек различий не дают).
-SimulationConfig read_cfg(Reader& r, std::uint32_t ver, const SimulationConfig& base)
+SimulationConfig read_cfg(Reader& r)
 {
-    SimulationConfig c = base;
+    SimulationConfig c;
     std::uint32_t cnt = 0;
-    visit_cfg(c, [&cnt](const char*, auto&, bool) { ++cnt; }, ver);
+    visit_cfg(c, [&cnt](const char*, auto&, bool) { ++cnt; });
     if (r.u32() != cnt) fail("число полей SimulationConfig не совпадает (другой состав настроек)");
-    visit_cfg(c, [&r](const char*, auto& v, bool) { get(r, v); }, ver);
+    visit_cfg(c, [&r](const char*, auto& v, bool) { get(r, v); });
     return c;
 }
 
@@ -413,7 +394,7 @@ auto double_fields(S& s)
     for (size_t d = 0; d < dim; ++d) v.push_back(&s.vx[d]);
     for (auto* p : {&s.mass, &s.rho, &s.rho_0, &s.p, &s.u, &s.c, &s.s, &s.e, &s.hsml, &s.dp, &s.e_pl, &s.D,
                     &s.sxx, &s.syy, &s.szz, &s.sxy, &s.syz, &s.sxz, &s.exx, &s.eyy, &s.ezz, &s.exy, &s.exz,
-                    &s.eyz, &s.rxy, &s.rxz, &s.ryz})
+                    &s.eyz, &s.rxy, &s.rxz, &s.ryz, &s.T, &s.edot, &s.r0})
         v.push_back(p);
     return v;
 }
@@ -588,25 +569,6 @@ void write_user(Writer& w, const Payload& p)
     w.end_block(b);
 }
 
-// Поля Solid, добавленные моделью Джонсона-Кука (формат v5).
-template <class S>
-auto jc_fields(S& s)
-{
-    using Ptr = std::conditional_t<std::is_const_v<S>, const std::vector<double>*, std::vector<double>*>;
-    return std::vector<Ptr>{&s.T, &s.edot, &s.r0};
-}
-
-void write_jc(Writer& w, const SimulationConfig& cfg, const ParticleSystem& s, size_t n)
-{
-    const size_t b = w.begin_block(kTagJcst);
-    std::uint32_t cnt = 0;
-    visit_cfg_jc(cfg, [&cnt](const char*, const auto&, bool) { ++cnt; });
-    w.u32(cnt);
-    visit_cfg_jc(cfg, [&w](const char*, const auto& v, bool) { put(w, v); });
-    for (const auto* f : jc_fields(s)) w.f64range(*f, n);
-    w.end_block(b);
-}
-
 // Проверка длины вектора истории: 0 (нет истории) или n.
 void check_hist_len(const std::vector<double>& v, size_t n, const char* name)
 {
@@ -660,7 +622,6 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     write_energy(w, payload);
     write_proj(w, payload);
     write_user(w, payload);
-    write_jc(w, cfg, model.solid, ntotal);
     w.u32(crc32(w.buf().data(), w.buf().size()));
 
     const std::string tmp = temp_path(path);
@@ -712,9 +673,9 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     Reader hr(data.data() + 8, kHeader - 8);
     const std::uint32_t ver = hr.u32(), fdim = hr.u32(), flags = hr.u32(), dsz = hr.u32();
-    if (ver < 1 || ver > kFormatVersion)
-        fail("версия формата " + std::to_string(ver) + " не поддерживается (поддерживаются 1.." +
-             std::to_string(kFormatVersion) + ")");
+    if (ver != kFormatVersion)
+        fail("версия формата " + std::to_string(ver) + " не поддерживается (ожидается " +
+             std::to_string(kFormatVersion) + "; чекпоинт читается только той же версией кода)");
     if (fdim != dim)
         fail("SPH_DIM чекпоинта (" + std::to_string(fdim) + ") не равен SPH_DIM сборки (" + std::to_string(dim) + ")");
     if (flags != build_flags())
@@ -731,7 +692,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     // --- разбор в промежуточные объекты; модель меняется только после проверок ---
     Reader rc = top.block(kTagConf, "CONF");
-    SimulationConfig saved = read_cfg(rc, ver, cfg); // JC-поля (v5) -- из блока JCST ниже
+    const SimulationConfig saved = read_cfg(rc);
     rc.expect_end("CONF");
 
     Reader rp = top.block(kTagPart, "PART");
@@ -769,8 +730,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     topo.next.resize(rt.count(8));
     for (auto& v : topo.next) v = rt.i64();
     topo.version = rt.u64();
-    const bool bond_has_mat = ver >= 4;
-    topo.bonds.resize(rt.count(8 * (bond_has_mat ? 14 : 13)));
+    topo.bonds.resize(rt.count(8 * 14));
     for (auto& bd : topo.bonds)
     {
         bd.i = static_cast<size_t>(rt.u64());
@@ -787,7 +747,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         s.kappa = rt.f64();
         s.eps0 = rt.f64();
         s.w_d = rt.f64();
-        bd.mat = bond_has_mat ? static_cast<int>(rt.i64()) : -1;
+        bd.mat = static_cast<int>(rt.i64());
         if (bd.i >= nf || bd.j >= nf) fail("индекс связи нити выходит за число бусин");
     }
     rt.expect_end("TOPO");
@@ -879,7 +839,6 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     pl.energy.e_mech0 = re.f64();
     pl.energy.have_e0 = re.boolean();
     re.expect_end("ENRG");
-    if (ver >= 2)
     {
         Reader rj = top.block(kTagProj, "PROJ");
         pl.proj_h_prev = rj.f64();
@@ -892,21 +851,10 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         }
         rj.expect_end("PROJ");
     }
-    if (ver >= 3)
     {
         Reader ru = top.block(kTagUser, "USER");
         pl.user_state = ru.str();
         ru.expect_end("USER");
-    }
-    if (ver >= 5)
-    {
-        Reader rj = top.block(kTagJcst, "JCST");
-        std::uint32_t cnt = 0;
-        visit_cfg_jc(saved, [&cnt](const char*, auto&, bool) { ++cnt; });
-        if (rj.u32() != cnt) fail("блок JCST: число настроек не совпадает (другой состав настроек)");
-        visit_cfg_jc(saved, [&rj](const char*, auto& v, bool) { get(rj, v); });
-        for (auto* f : jc_fields(ps)) *f = rj.f64range(ntotal);
-        rj.expect_end("JCST");
     }
     top.expect_end("файл");
 
@@ -938,12 +886,6 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     {
         auto dst = double_fields(s);
         auto src = double_fields(static_cast<const ParticleSystem&>(ps));
-        for (size_t k = 0; k < dst.size(); ++k) std::copy_n(src[k]->begin(), ntotal, dst[k]->begin());
-    }
-    if (ver >= 5) // в v1-v4 полей T, edot, r0 нет -- остаются значениями сцены
-    {
-        auto dst = jc_fields(s);
-        auto src = jc_fields(static_cast<const ParticleSystem&>(ps));
         for (size_t k = 0; k < dst.size(); ++k) std::copy_n(src[k]->begin(), ntotal, dst[k]->begin());
     }
     std::copy_n(ps.itype.begin(), ntotal, s.itype.begin());

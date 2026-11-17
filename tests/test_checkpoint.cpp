@@ -291,21 +291,6 @@ void spit(const std::string& p, const std::vector<char>& v)
     out.write(v.data(), static_cast<std::streamsize>(v.size()));
 }
 
-// Смещения начал блоков верхнего уровня (тег u32 + длина u64 + тело) после заголовка 24 байта; CRC -- последние 4.
-std::vector<std::size_t> block_starts(const std::vector<char>& raw)
-{
-    std::vector<std::size_t> v;
-    std::size_t pos = 24;
-    while (pos + 12 + 4 <= raw.size())
-    {
-        std::uint64_t len;
-        std::memcpy(&len, raw.data() + pos + 4, 8);
-        v.push_back(pos);
-        pos += 12 + static_cast<std::size_t>(len);
-    }
-    return v;
-}
-
 // CRC32 (IEEE, как в src/checkpoint.cpp) по всему буферу.
 std::uint32_t crc32_of(const std::vector<char>& raw)
 {
@@ -316,35 +301,6 @@ std::uint32_t crc32_of(const std::vector<char>& raw)
         for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
     }
     return ~crc;
-}
-
-// Перевод файла v4 в раскладку связей v1-v3 (без CRC в конце raw): из блока TOPO убирается 14-е слово
-// каждой связи (индекс материала связи, появился в v4), длина блока уменьшается. Версию и CRC ставит вызывающий.
-void strip_bond_mat(std::vector<char>& raw)
-{
-    for (const std::size_t pos : block_starts(raw))
-    {
-        if (std::memcmp(raw.data() + pos, "TOPO", 4) != 0 && std::memcmp(raw.data() + pos, "OPOT", 4) != 0) continue;
-        std::uint64_t len;
-        std::memcpy(&len, raw.data() + pos + 4, 8);
-        std::size_t q = pos + 12;
-        auto u64at = [&](std::size_t off) { std::uint64_t v; std::memcpy(&v, raw.data() + off, 8); return v; };
-        q += 8 + 8 * static_cast<std::size_t>(u64at(q)); // prev
-        q += 8 + 8 * static_cast<std::size_t>(u64at(q)); // next
-        q += 8;                                          // version
-        const std::size_t nb = static_cast<std::size_t>(u64at(q));
-        q += 8;
-        // С конца, чтобы смещения ещё не обработанных связей не сдвигались.
-        for (std::size_t k = nb; k-- > 0;)
-        {
-            const std::size_t mat_off = q + k * 14 * 8 + 13 * 8;
-            raw.erase(raw.begin() + static_cast<std::ptrdiff_t>(mat_off), raw.begin() + static_cast<std::ptrdiff_t>(mat_off + 8));
-        }
-        const std::uint64_t nl = len - 8 * nb;
-        std::memcpy(raw.data() + pos + 4, &nl, 8);
-        return;
-    }
-    throw std::runtime_error("strip_bond_mat: нет блока TOPO");
 }
 
 // Пишет чекпоинт после N шагов в path; сцена остаётся в cwd workdir.
@@ -438,7 +394,7 @@ int main()
         e2e::check(!e3.empty(), "неверный magic -> ошибка");
         e2e::note("сообщение: " + e3);
 
-        // Версия новее поддерживаемой -- понятная ошибка (v1-v3 читаются: связи без индекса материала, mat = -1).
+        // Чужая версия формата -- понятная ошибка (читается только текущая).
         std::vector<char> oldver = good;
         oldver[8] = 99; // u32 little-endian сразу после 8-байтовой сигнатуры
         spit(root + "/oldver.ckpt", oldver);
@@ -608,8 +564,8 @@ int main()
     });
 #endif
 
-    // 7. Проекция контакта (формат v2): таблица тёплого старта, поля конфига, чтение файла v1
-    run_case("7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается", [] {
+    // 7. Проекция контакта: таблица тёплого старта, поля конфига; файл предыдущей версии не читается
+    run_case("7. proj_warm/proj_h_prev и поля проекции round-trip; файл другой версии не читается", [] {
         e2e::ScopedWorkDir wd("sph_ckpt", "proj");
         const std::string root = wd.dir().string();
         const std::string ck = root + "/proj.ckpt";
@@ -639,7 +595,7 @@ int main()
 
         write_ck(root + "/w0", ck, false);
         checkpoint::Payload out;
-        e2e::check(try_read(root + "/w1", ck, false, set_proj, &out).empty(), "v2 читается");
+        e2e::check(try_read(root + "/w1", ck, false, set_proj, &out).empty(), "файл читается");
         const auto ref = make_entries();
         bool same = out.proj_warm.size() == ref.size() && out.proj_h_prev == 3.5e-9;
         for (std::size_t k = 0; same && k < ref.size(); ++k)
@@ -661,46 +617,24 @@ int main()
         });
         e2e::check(e.find("fiber_contact_projection_iters") != std::string::npos, "смена iters без force -> ошибка");
 
-        // Файл v1: версия 1, из CONF убраны 4 последних int, блоки PROJ, USER и JCST удалены, CRC пересчитан.
+        // Файл предыдущей версии формата (только номер изменён, CRC пересчитан) -- понятная ошибка.
         std::vector<char> raw = slurp(ck);
-        auto rd64 = [&](std::size_t off) { std::uint64_t v; std::memcpy(&v, raw.data() + off, 8); return v; };
-        std::size_t pos = 24;
-        const std::uint64_t conf_len = rd64(pos + 4);
-        const std::vector<std::size_t> starts = block_starts(raw);
-        const std::size_t proj_pos = starts[starts.size() - 3]; // последние блоки: PROJ, USER, JCST
-        raw.resize(proj_pos);      // отрезали PROJ, USER, JCST и CRC
-        const std::uint64_t nl = conf_len - 16;
-        std::memcpy(raw.data() + pos + 4, &nl, 8);
-        std::uint32_t cnt;
-        std::memcpy(&cnt, raw.data() + pos + 12, 4);
-        cnt -= 4;
-        std::memcpy(raw.data() + pos + 12, &cnt, 4);
-        raw.erase(raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len - 16),
-                  raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len));
-        strip_bond_mat(raw);
-        const std::uint32_t one = 1;
-        std::memcpy(raw.data() + 8, &one, 4);
-        std::uint32_t crc = 0xFFFFFFFFu;
-        for (unsigned char c : raw)
-        {
-            crc ^= c;
-            for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
-        crc = ~crc;
+        raw.resize(raw.size() - 4);
+        std::uint32_t ver;
+        std::memcpy(&ver, raw.data() + 8, 4);
+        const std::uint32_t old_ver = ver - 1;
+        std::memcpy(raw.data() + 8, &old_ver, 4);
+        const std::uint32_t crc = crc32_of(raw);
         raw.resize(raw.size() + 4);
         std::memcpy(raw.data() + raw.size() - 4, &crc, 4);
-        spit(root + "/v1.ckpt", raw);
-
-        checkpoint::Payload out1;
-        checkpoint::ConfigDiff diff1;
-        const std::string e1 = try_read(root + "/w5", root + "/v1.ckpt", false, set_proj, &out1, &diff1);
-        e2e::check(e1.empty(), "файл v1 читается" + (e1.empty() ? std::string() : ": " + e1));
-        e2e::check(out1.proj_warm.empty() && diff1.forbidden.empty(), "v1: таблицы нет, различий новых полей нет");
+        spit(root + "/old.ckpt", raw);
+        const std::string eo = try_read(root + "/w5", root + "/old.ckpt", false, set_proj);
+        e2e::check(eo.find("версия формата " + std::to_string(old_ver)) != std::string::npos,
+                   "файл предыдущей версии -> ошибка версии");
     });
 
-    // 8. Блок USER (формат v3): состояние вызывающего round-trip; файлы v4 (без JCST), v3 (и без mat
-    // связей) и v2 (и без USER) читаются
-    run_case("8. user_state round-trip (в т.ч. нулевые байты); файлы v4, v3 и v2 читаются", [] {
+    // 8. Блок USER: состояние вызывающего round-trip
+    run_case("8. user_state round-trip (в т.ч. нулевые байты)", [] {
         e2e::ScopedWorkDir wd("sph_ckpt", "user");
         const std::string root = wd.dir().string();
         const std::string ck = root + "/user.ckpt";
@@ -714,45 +648,9 @@ int main()
         }
         checkpoint::Payload out;
         const std::string e = try_read(root + "/w1", ck, false, [](SimulationConfig&) {}, &out);
-        e2e::check(e.empty(), "v5 читается" + (e.empty() ? std::string() : ": " + e));
+        e2e::check(e.empty(), "файл читается" + (e.empty() ? std::string() : ": " + e));
         e2e::check(out.user_state == blob, "user_state совпадает побайтно");
 
-        // Файлы v4 (блок JCST удалён; T, edot, r0 -- значения сцены) и v3 (ещё и 14-е слово связей
-        // удалено); CRC пересчитан.
-        for (const std::uint32_t v : {4u, 3u})
-        {
-            std::vector<char> rawv = slurp(ck);
-            rawv.resize(block_starts(rawv).back());
-            if (v == 3) strip_bond_mat(rawv);
-            std::memcpy(rawv.data() + 8, &v, 4);
-            const std::uint32_t crcv = crc32_of(rawv);
-            rawv.resize(rawv.size() + 4);
-            std::memcpy(rawv.data() + rawv.size() - 4, &crcv, 4);
-            const std::string tag = "v" + std::to_string(v);
-            spit(root + "/" + tag + ".ckpt", rawv);
-            checkpoint::Payload outv;
-            const std::string ev =
-                try_read(root + "/w" + tag, root + "/" + tag + ".ckpt", false, [](SimulationConfig&) {}, &outv);
-            e2e::check(ev.empty(), "файл " + tag + " читается" + (ev.empty() ? std::string() : ": " + ev));
-            e2e::check(outv.user_state == blob, tag + ": user_state совпадает побайтно");
-        }
-
-        // Файл v2: версия 2, блоки USER и JCST и 14-е слово связей удалены, CRC пересчитан.
-        std::vector<char> raw = slurp(ck);
-        const std::vector<std::size_t> starts = block_starts(raw);
-        raw.resize(starts[starts.size() - 2]);
-        strip_bond_mat(raw);
-        const std::uint32_t two = 2;
-        std::memcpy(raw.data() + 8, &two, 4);
-        const std::uint32_t crc = crc32_of(raw);
-        raw.resize(raw.size() + 4);
-        std::memcpy(raw.data() + raw.size() - 4, &crc, 4);
-        spit(root + "/v2.ckpt", raw);
-        checkpoint::Payload out2;
-        out2.user_state = "мусор";
-        const std::string e2 = try_read(root + "/w2", root + "/v2.ckpt", false, [](SimulationConfig&) {}, &out2);
-        e2e::check(e2.empty(), "файл v2 читается" + (e2.empty() ? std::string() : ": " + e2));
-        e2e::check(out2.user_state.empty(), "v2: user_state пуст");
     });
 
     // 9-10. Проекция нормального контакта (закон 3, predictor = 1) на сцене с пересекающимися нитями:

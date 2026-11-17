@@ -9,10 +9,7 @@
 //
 // Формат: little-endian, magic "SPHCKPT\0", версия формата, SPH_DIM, флаги
 // сборки, sizeof(double), блоки с тегом и длиной, в конце CRC32 всего файла.
-// Версии формата: 1 (без проекции контакта), 2 (+ поля конфига проекции и блок PROJ),
-// 3 (+ блок USER: непрозрачное состояние вызывающего, например монитора выстрела),
-// 4 (+ материал связи нити в TOPO: стежки), 5 (+ блок JCST: настройки Джонсона-Кука и XSPH,
-// поля Solid T, edot, r0); читаются все пять.
+// Читается только файл той же версии формата: чекпоинт -- для рестарта той же сборкой, не для хранения.
 #pragma once
 #include <cstddef>
 #include <functional>
@@ -72,10 +69,10 @@ struct Payload
     SolverHistory hist;
     EnergyState energy;
     bool has_energy = false;
-    // Тёплый старт проекции скорости нормального контакта (формат v2; в v1 пусто).
+    // Тёплый старт проекции скорости нормального контакта (блок PROJ).
     std::vector<interactions::NormalWarmEntry> proj_warm;
     double proj_h_prev = 0.0;
-    // Состояние вызывающего (блок USER, формат v3; в v1/v2 пусто): байты, которые отдал UserState::save.
+    // Состояние вызывающего (блок USER): байты, которые отдал UserState::save.
     std::string user_state;
 };
 
@@ -85,7 +82,7 @@ struct Payload
 struct UserState
 {
     std::function<std::string()> save;
-    // blob пуст -- в чекпоинте блока нет (формат v1/v2) или save не задавался; guard_steps -- шагов
+    // blob пуст -- при записи save не задавался; guard_steps -- шагов
     // сторожа на момент чекпоинта (для сверки со счётчиком вызывающего).
     std::function<void(const std::string& blob, std::size_t guard_steps)> restore;
 };
