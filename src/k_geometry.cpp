@@ -411,7 +411,7 @@ void build_fibers_from_deck(const KDeck& deck, const KPartsTable& table, const K
     bool first_bond = true;
     for (const auto& bd : model.topology.bonds)
     {
-        const double d = model.materials[static_cast<std::size_t>(model.fiber.material_id[bd.i])].d;
+        const double d = model.materials[static_cast<std::size_t>(fiber::bond_material_id(bd, model.fiber))].d;
         const double ld = d > 0.0 ? bd.l0 / d : 0.0;
         if (first_bond)
         {

@@ -34,12 +34,13 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "чекпоинт хр�
 constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
 // Версия 2: в CONF добавлены поля проекции скорости контакта (в конце списка), в конце файла
 // блок PROJ (таблица тёплого старта). Версия 3: после PROJ блок USER (непрозрачное состояние
-// вызывающего, Payload::user_state). Версия 4: после USER блок JCST -- настройки Джонсона-Кука
-// и XSPH (jc_heating, jc_chi, xsph_mode) и поля частиц Solid T, edot, r0. Читаются все четыре
-// (v1: новых полей, PROJ, USER и JCST нет; v2: нет USER и JCST; v3: нет JCST -- T, edot, r0 остаются
-// значениями сцены). Ветка Джонсона-Кука до слияния с fabric_penetration писала свои v2/v3 (T, edot,
-// r0 в PART): такие файлы не читаются (блок PART не совпадёт по длине).
-constexpr std::uint32_t kFormatVersion = 4;
+// вызывающего, Payload::user_state). Версия 4: у связи нити в TOPO 14-е слово -- индекс собственного
+// материала связи (стежки, -1 = материал бусины i). Версия 5: после USER блок JCST -- настройки
+// Джонсона-Кука и XSPH (jc_heating, jc_chi, xsph_mode) и поля частиц Solid T, edot, r0.
+// Читаются все пять (v1: новых полей, PROJ, USER и JCST нет; v2: нет USER; v1-v3: у связи 13 слов,
+// mat = -1; v1-v4: нет JCST -- T, edot, r0 остаются значениями сцены). Ветка Джонсона-Кука до слияния
+// с ветками нитей писала свои v2/v3 (T, edot, r0 в PART): такие файлы не читаются (PART другой длины).
+constexpr std::uint32_t kFormatVersion = 5;
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -349,7 +350,7 @@ void visit_cfg(C& c, F&& f, std::uint32_t ver = kFormatVersion)
     }
 }
 
-// Настройки Джонсона-Кука и XSPH (формат v4, блок JCST; в v1-v3 их нет -- берутся из
+// Настройки Джонсона-Кука и XSPH (формат v5, блок JCST; в v1-v4 их нет -- берутся из
 // настроек нового запуска, различий не дают).
 template <class C, class F>
 void visit_cfg_jc(C& c, F&& f)
@@ -467,6 +468,7 @@ void write_topology(Writer& w, const fiber::FiberTopology& t)
         w.f64(s.kappa);
         w.f64(s.eps0);
         w.f64(s.w_d);
+        w.i64(static_cast<std::int64_t>(bd.mat)); // индекс материала связи, -1 = материал бусины i
     }
     w.end_block(b);
 }
@@ -586,7 +588,7 @@ void write_user(Writer& w, const Payload& p)
     w.end_block(b);
 }
 
-// Поля Solid, добавленные моделью Джонсона-Кука (формат v4).
+// Поля Solid, добавленные моделью Джонсона-Кука (формат v5).
 template <class S>
 auto jc_fields(S& s)
 {
@@ -729,7 +731,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
 
     // --- разбор в промежуточные объекты; модель меняется только после проверок ---
     Reader rc = top.block(kTagConf, "CONF");
-    SimulationConfig saved = read_cfg(rc, ver, cfg); // JC-поля (v4) -- из блока JCST ниже
+    SimulationConfig saved = read_cfg(rc, ver, cfg); // JC-поля (v5) -- из блока JCST ниже
     rc.expect_end("CONF");
 
     Reader rp = top.block(kTagPart, "PART");
@@ -767,7 +769,8 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
     topo.next.resize(rt.count(8));
     for (auto& v : topo.next) v = rt.i64();
     topo.version = rt.u64();
-    topo.bonds.resize(rt.count(8 * 13));
+    const bool bond_has_mat = ver >= 4;
+    topo.bonds.resize(rt.count(8 * (bond_has_mat ? 14 : 13)));
     for (auto& bd : topo.bonds)
     {
         bd.i = static_cast<size_t>(rt.u64());
@@ -784,6 +787,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         s.kappa = rt.f64();
         s.eps0 = rt.f64();
         s.w_d = rt.f64();
+        bd.mat = bond_has_mat ? static_cast<int>(rt.i64()) : -1;
         if (bd.i >= nf || bd.j >= nf) fail("индекс связи нити выходит за число бусин");
     }
     rt.expect_end("TOPO");
@@ -894,7 +898,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         pl.user_state = ru.str();
         ru.expect_end("USER");
     }
-    if (ver >= 4)
+    if (ver >= 5)
     {
         Reader rj = top.block(kTagJcst, "JCST");
         std::uint32_t cnt = 0;
@@ -936,7 +940,7 @@ void read(const std::string& path, SimulationConfig& cfg, fiber::Model& model, s
         auto src = double_fields(static_cast<const ParticleSystem&>(ps));
         for (size_t k = 0; k < dst.size(); ++k) std::copy_n(src[k]->begin(), ntotal, dst[k]->begin());
     }
-    if (ver >= 4) // в v1-v3 полей T, edot, r0 нет -- остаются значениями сцены
+    if (ver >= 5) // в v1-v4 полей T, edot, r0 нет -- остаются значениями сцены
     {
         auto dst = jc_fields(s);
         auto src = jc_fields(static_cast<const ParticleSystem&>(ps));

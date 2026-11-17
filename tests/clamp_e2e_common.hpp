@@ -160,7 +160,7 @@ inline double bond_energy(const fiber::Model& m)
     double e = 0.0;
     for (const auto& b : m.topology.bonds)
     {
-        const fiber::FiberMaterial& mat = m.materials[static_cast<std::size_t>(m.fiber.material_id[b.i])];
+        const fiber::FiberMaterial& mat = m.materials[static_cast<std::size_t>(fiber::bond_material_id(b, m.fiber))];
         double l2 = 0.0;
         for (std::size_t d = 0; d < dim; ++d)
         {

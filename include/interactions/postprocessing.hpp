@@ -282,7 +282,7 @@ inline void apply_fiber_bond_constitutive(const rhs::CpuExecutor& exec, const fi
 #endif
     exec.parallel_for(nbonds, [&](std::size_t k) {
         fiber::FiberBond& b = topology.bonds[k];
-        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
         if (!mat.inelastic()) return;
         const double eps = fiber_bond_length(state, b) / b.l0 - 1.0;
         const double A = fiber_cross_section_area(mat);
@@ -337,7 +337,7 @@ inline void init_fiber_bond_state(const fiber::FiberState& state, fiber::FiberTo
 {
     for (fiber::FiberBond& b : topology.bonds)
     {
-        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
         if (!mat.inelastic()) continue;
         b.st.eps_prev = fiber_bond_length(state, b) / b.l0 - 1.0;
     }
@@ -406,7 +406,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
         }
         else if (any_failure)
         {
-            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(state.material_id[b.i])];
+            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
             if (mat.failure.eps_p > 0.0 && b.st.eps_p >= mat.failure.eps_p)
             {
                 broken = true;
@@ -557,7 +557,7 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
         for (std::size_t bidx : break_indices)
         {
             const fiber::FiberBond& b = topology.bonds[bidx];
-            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(state.material_id[b.i])];
+            const fiber::FiberMaterial& mat = (*materials)[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
             *break_acc += fiber_bond_stored_energy(mat, b, fiber_bond_length(state, b));
         }
     }
@@ -575,6 +575,10 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
         const fiber::FiberBond& b = topology.bonds[bidx];
         const std::size_t i = b.i;
         const std::size_t j = b.j;
+
+        // Связь-стежок (вне цепочки: не next[i]==j && prev[j]==i) только удаляется
+        // из bonds на шаге 2: prev/next и object_id нитей не меняются.
+        if (!fiber::is_chain_bond(b, topology)) continue;
 
         topology.next[i] = -1;
         topology.prev[j] = -1;

@@ -20,6 +20,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -144,6 +145,7 @@ std::vector<Blob> snapshot(const CkptScene& sc, double time)
         add_val(o, p + "j", b.j);
         add_val(o, p + "l0", b.l0);
         add_val(o, p + "l_break", b.l_break);
+        add_val(o, p + "mat", b.mat);
         // Каждое поле BondState отдельно: отступы структуры в сравнение не попадают.
         add_val(o, p + "eps_p", b.st.eps_p);
         add_val(o, p + "q", b.st.q);
@@ -191,12 +193,27 @@ fs::path scratch_root(const char* tag)
     return fs::temp_directory_path() / (std::string("sph_ckpt_") + tag);
 }
 
+// Связь-стежок между свободными концами двух нитей (бусины 3 и 7, расстояние
+// 10 мм), собственный материал 0, mat задан явно (не -1): проверка, что поле
+// проходит через чекпоинт и стежок остаётся растяжимой связью вне цепочки.
+void add_stitch(CkptScene& sc)
+{
+    fiber::FiberBond b;
+    b.i = 3;
+    b.j = 7;
+    b.l0 = 0.01;
+    b.l_break = (1.0 + sc.model.materials[0].eps_break) * b.l0;
+    b.mat = 0;
+    sc.model.topology.bonds.push_back(b);
+}
+
 // Общая часть кейсов 1 и 2: A -- 2N шагов подряд; B -- N шагов с чекпоинтом, затем рестарт.
 // Возвращает число связей в A на шаге N (до рестарта оно же) для проверки разрыва.
 //   solid_itype/extra_ic -- как в build_checkpoint_scene (по умолчанию прежняя сцена);
-//   check_heated -- сообщить, нагрелись ли частицы JC (T > Tr) в прогоне A (JC + TQ).
+//   check_heated -- сообщить, нагрелись ли частицы JC (T > Tr) в прогоне A (JC + TQ);
+//   stitch -- добавить связь-стежок (add_stitch).
 void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_break, int solid_itype = 10,
-               const std::string& extra_ic = "", bool check_heated = false)
+               const std::string& extra_ic = "", bool check_heated = false, bool stitch = false)
 {
     e2e::ScopedWorkDir wd("sph_ckpt", tag);
     const fs::path root = wd.dir();
@@ -206,6 +223,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::size_t bonds_initial = 0, bonds_at_N = 0;
     {
         CkptScene sc = build_checkpoint_scene((root / "probe").string(), eps_break, ode_solver, solid_itype, extra_ic);
+        if (stitch) add_stitch(sc);
         bonds_initial = sc.model.topology.bonds.size();
         double time = 0.0;
         e2e::check(run_steps(sc, N, time), "зонд: N шагов выполнены");
@@ -222,6 +240,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::vector<Blob> snap_a;
     {
         CkptScene sc = build_checkpoint_scene((root / "A").string(), eps_break, ode_solver, solid_itype, extra_ic);
+        if (stitch) add_stitch(sc);
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "A: 2N шагов выполнены");
         snap_a = snapshot(sc, time);
@@ -239,6 +258,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     // Прогон B, часть 1: N шагов, чекпоинт на шаге N (периодический = финальный).
     {
         CkptScene sc = build_checkpoint_scene((root / "B1").string(), eps_break, ode_solver, solid_itype, extra_ic);
+        if (stitch) add_stitch(sc);
         sc.cfg.checkpoint_file = ck;
         sc.cfg.checkpoint_every_steps = N;
         double time = 0.0;
@@ -250,6 +270,7 @@ void roundtrip(const char* tag, double eps_break, int ode_solver, bool expect_br
     std::vector<Blob> snap_b;
     {
         CkptScene sc = build_checkpoint_scene((root / "B2").string(), eps_break, ode_solver, solid_itype, extra_ic);
+        if (stitch) add_stitch(sc);
         sc.cfg.restart_file = ck;
         double time = 0.0;
         e2e::check(run_steps(sc, 2 * N, time), "B2: рестарт дошёл до 2N шагов");
@@ -295,6 +316,35 @@ std::uint32_t crc32_of(const std::vector<char>& raw)
         for (int b = 0; b < 8; ++b) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
     }
     return ~crc;
+}
+
+// Перевод файла v4 в раскладку связей v1-v3 (без CRC в конце raw): из блока TOPO убирается 14-е слово
+// каждой связи (индекс материала связи, появился в v4), длина блока уменьшается. Версию и CRC ставит вызывающий.
+void strip_bond_mat(std::vector<char>& raw)
+{
+    for (const std::size_t pos : block_starts(raw))
+    {
+        if (std::memcmp(raw.data() + pos, "TOPO", 4) != 0 && std::memcmp(raw.data() + pos, "OPOT", 4) != 0) continue;
+        std::uint64_t len;
+        std::memcpy(&len, raw.data() + pos + 4, 8);
+        std::size_t q = pos + 12;
+        auto u64at = [&](std::size_t off) { std::uint64_t v; std::memcpy(&v, raw.data() + off, 8); return v; };
+        q += 8 + 8 * static_cast<std::size_t>(u64at(q)); // prev
+        q += 8 + 8 * static_cast<std::size_t>(u64at(q)); // next
+        q += 8;                                          // version
+        const std::size_t nb = static_cast<std::size_t>(u64at(q));
+        q += 8;
+        // С конца, чтобы смещения ещё не обработанных связей не сдвигались.
+        for (std::size_t k = nb; k-- > 0;)
+        {
+            const std::size_t mat_off = q + k * 14 * 8 + 13 * 8;
+            raw.erase(raw.begin() + static_cast<std::ptrdiff_t>(mat_off), raw.begin() + static_cast<std::ptrdiff_t>(mat_off + 8));
+        }
+        const std::uint64_t nl = len - 8 * nb;
+        std::memcpy(raw.data() + pos + 4, &nl, 8);
+        return;
+    }
+    throw std::runtime_error("strip_bond_mat: нет блока TOPO");
 }
 
 // Пишет чекпоинт после N шагов в path; сцена остаётся в cwd workdir.
@@ -346,6 +396,7 @@ int main()
     // 1. Побитовый round-trip, предиктор-корректор и Эйлер
     run_case("1a. round-trip PC (ode_solver=0), связи целы", [] { roundtrip("rt_pc", 0.5, 0, false); });
     run_case("1b. round-trip Euler (ode_solver=1), связи целы", [] { roundtrip("rt_eu", 0.5, 1, false); });
+    run_case("1c. round-trip PC со стежком (mat >= 0)", [] { roundtrip("rt_stitch", 0.5, 0, false, 10, "", false, true); });
 
     // 2. Разрыв связей до чекпоинта (eps_break=0.002 рвёт 4 из 6 связей за 40 шагов -- проверяется зондом)
     run_case("2a. round-trip PC, связи рвутся до шага N", [] { roundtrip("brk_pc", 0.002, 0, true); });
@@ -386,6 +437,14 @@ int main()
         const std::string e3 = try_read(root + "/w4", root + "/magic.ckpt", false, [](SimulationConfig&) {});
         e2e::check(!e3.empty(), "неверный magic -> ошибка");
         e2e::note("сообщение: " + e3);
+
+        // Версия новее поддерживаемой -- понятная ошибка (v1-v3 читаются: связи без индекса материала, mat = -1).
+        std::vector<char> oldver = good;
+        oldver[8] = 99; // u32 little-endian сразу после 8-байтовой сигнатуры
+        spit(root + "/oldver.ckpt", oldver);
+        const std::string e5 = try_read(root + "/w6", root + "/oldver.ckpt", false, [](SimulationConfig&) {});
+        e2e::check(e5.find("версия формата 99") != std::string::npos, "версия формата 99 -> понятная ошибка");
+        e2e::note("сообщение: " + e5);
 
         const std::string e4 = try_read(root + "/w5", root + "/net_takogo.ckpt", false, [](SimulationConfig&) {});
         e2e::check(!e4.empty(), "несуществующий файл -> ошибка");
@@ -618,6 +677,7 @@ int main()
         std::memcpy(raw.data() + pos + 12, &cnt, 4);
         raw.erase(raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len - 16),
                   raw.begin() + static_cast<std::ptrdiff_t>(pos + 12 + conf_len));
+        strip_bond_mat(raw);
         const std::uint32_t one = 1;
         std::memcpy(raw.data() + 8, &one, 4);
         std::uint32_t crc = 0xFFFFFFFFu;
@@ -638,9 +698,9 @@ int main()
         e2e::check(out1.proj_warm.empty() && diff1.forbidden.empty(), "v1: таблицы нет, различий новых полей нет");
     });
 
-    // 8. Блок USER (формат v3): состояние вызывающего round-trip; файлы v3 (без JCST) и v2 (без USER)
-    // читаются
-    run_case("8. user_state round-trip (в т.ч. нулевые байты); файлы v3 и v2 читаются", [] {
+    // 8. Блок USER (формат v3): состояние вызывающего round-trip; файлы v4 (без JCST), v3 (и без mat
+    // связей) и v2 (и без USER) читаются
+    run_case("8. user_state round-trip (в т.ч. нулевые байты); файлы v4, v3 и v2 читаются", [] {
         e2e::ScopedWorkDir wd("sph_ckpt", "user");
         const std::string root = wd.dir().string();
         const std::string ck = root + "/user.ckpt";
@@ -654,30 +714,34 @@ int main()
         }
         checkpoint::Payload out;
         const std::string e = try_read(root + "/w1", ck, false, [](SimulationConfig&) {}, &out);
-        e2e::check(e.empty(), "v4 читается" + (e.empty() ? std::string() : ": " + e));
+        e2e::check(e.empty(), "v5 читается" + (e.empty() ? std::string() : ": " + e));
         e2e::check(out.user_state == blob, "user_state совпадает побайтно");
 
-        // Файл v3: версия 3, блок JCST удалён, CRC пересчитан; T, edot, r0 -- значения сцены.
+        // Файлы v4 (блок JCST удалён; T, edot, r0 -- значения сцены) и v3 (ещё и 14-е слово связей
+        // удалено); CRC пересчитан.
+        for (const std::uint32_t v : {4u, 3u})
         {
-            std::vector<char> raw3 = slurp(ck);
-            raw3.resize(block_starts(raw3).back());
-            const std::uint32_t three = 3;
-            std::memcpy(raw3.data() + 8, &three, 4);
-            const std::uint32_t crc3 = crc32_of(raw3);
-            raw3.resize(raw3.size() + 4);
-            std::memcpy(raw3.data() + raw3.size() - 4, &crc3, 4);
-            spit(root + "/v3.ckpt", raw3);
-            checkpoint::Payload out3;
-            const std::string e3 =
-                try_read(root + "/w3", root + "/v3.ckpt", false, [](SimulationConfig&) {}, &out3);
-            e2e::check(e3.empty(), "файл v3 читается" + (e3.empty() ? std::string() : ": " + e3));
-            e2e::check(out3.user_state == blob, "v3: user_state совпадает побайтно");
+            std::vector<char> rawv = slurp(ck);
+            rawv.resize(block_starts(rawv).back());
+            if (v == 3) strip_bond_mat(rawv);
+            std::memcpy(rawv.data() + 8, &v, 4);
+            const std::uint32_t crcv = crc32_of(rawv);
+            rawv.resize(rawv.size() + 4);
+            std::memcpy(rawv.data() + rawv.size() - 4, &crcv, 4);
+            const std::string tag = "v" + std::to_string(v);
+            spit(root + "/" + tag + ".ckpt", rawv);
+            checkpoint::Payload outv;
+            const std::string ev =
+                try_read(root + "/w" + tag, root + "/" + tag + ".ckpt", false, [](SimulationConfig&) {}, &outv);
+            e2e::check(ev.empty(), "файл " + tag + " читается" + (ev.empty() ? std::string() : ": " + ev));
+            e2e::check(outv.user_state == blob, tag + ": user_state совпадает побайтно");
         }
 
-        // Файл v2: версия 2, блоки USER и JCST удалены, CRC пересчитан.
+        // Файл v2: версия 2, блоки USER и JCST и 14-е слово связей удалены, CRC пересчитан.
         std::vector<char> raw = slurp(ck);
         const std::vector<std::size_t> starts = block_starts(raw);
         raw.resize(starts[starts.size() - 2]);
+        strip_bond_mat(raw);
         const std::uint32_t two = 2;
         std::memcpy(raw.data() + 8, &two, 4);
         const std::uint32_t crc = crc32_of(raw);

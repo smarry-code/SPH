@@ -103,6 +103,12 @@ struct FiberBond
     // w_v -- Дж/м^3 (энергия связи = w·A·l0). Нулевое состояние -- упругая
     // ненагруженная связь.
     BondState st{};
+    // Индекс материала связи. -1 (по умолчанию) -- материал бусины i, побитово
+    // прежнее поведение обычных связей цепочки. >= 0 -- собственный материал
+    // связи-стежка (fiber/plan-quilt-fabric.md, раздел 10): связь между бусинами
+    // разных нитей, prev/next она не меняет. Лежит ПОСЛЕ st по той же причине
+    // (агрегатная инициализация FiberBond{i, j, l0, l_break}).
+    int mat = -1;
 };
 
 // prev[]/next[] — соседи по нити, -1 на конце (частица — конец нити, если
@@ -125,6 +131,18 @@ struct FiberTopology
 
     std::size_t size() const { return prev.size(); }
 };
+
+// Материал связи: собственный (стежок, mat >= 0) или материал бусины i.
+inline int bond_material_id(const FiberBond& b, const FiberState& s)
+{
+    return b.mat >= 0 ? b.mat : s.material_id[b.i];
+}
+
+// Связь входит в цепочку нити (next[i]==j и prev[j]==i); иначе это связь-стежок.
+inline bool is_chain_bond(const FiberBond& b, const FiberTopology& t)
+{
+    return t.next[b.i] == static_cast<long long>(b.j) && t.prev[b.j] == static_cast<long long>(b.i);
+}
 
 // --- FiberDelta ---------------------------------------------------------------
 // Изменение состояния Fiber-частицы, суммируемое на стадии Reduce

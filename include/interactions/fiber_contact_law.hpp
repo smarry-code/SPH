@@ -157,7 +157,7 @@ inline std::vector<double>& compute_fiber_bead_dt_ref(const fiber::FiberState& s
     out.assign(n, kInf);
     for (const fiber::FiberBond& b : topology.bonds)
     {
-        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
         const double dt = fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
         out[b.i] = std::min(out[b.i], dt);
         out[b.j] = std::min(out[b.j], dt);
@@ -186,7 +186,7 @@ inline std::vector<double>& compute_fiber_bead_dt_ref(const rhs::CpuExecutor& ex
     std::vector<double> bond_dt(nb);
     exec.parallel_for(nb, [&](std::size_t q) {
         const fiber::FiberBond& b = topology.bonds[q];
-        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
         bond_dt[q] = fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
     });
     for (std::size_t q = 0; q < nb; ++q)

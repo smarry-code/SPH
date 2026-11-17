@@ -426,6 +426,24 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
+# --- Связи-стежки (fiber/plan-quilt-fabric.md, этап 2a): директива BOND в .fib,
+#     материал связи FiberBond::mat, разрыв связи вне цепочки. SPH_DIM=3.
+add_executable(test_fiber_stitch tests/test_fiber_stitch.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_fiber_stitch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_stitch PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_stitch PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_stitch PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_stitch PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_stitch PRIVATE -fopenmp)
+    target_link_options(test_fiber_stitch PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_stitch_test COMMAND test_fiber_stitch)
+set_tests_properties(fiber_stitch_test PROPERTIES LABELS "3d")
+
 # --- Пластичность нити, этап 1 (fiber/fiber-plasticity-design.md): чистая
 #     функция bond_constitutive_update, тесты Т1-Т7. Без решателя и SPH_DIM.
 add_executable(test_fiber_plasticity tests/test_fiber_plasticity.cpp)
@@ -924,6 +942,11 @@ endif()
 add_test(NAME checkpoint_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint_cli_test.sh $<TARGET_FILE:guo2019_shot>)
 set_tests_properties(checkpoint_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
 
+# --- Стёжка в пакете kT через guo2019_shot: число стежков, рестарт из чекпоинта, scene_id со стёжкой
+#     (tests/stitch_kt_cli_test.sh).
+add_test(NAME stitch_kt_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/stitch_kt_cli_test.sh $<TARGET_FILE:guo2019_shot>)
+set_tests_properties(stitch_kt_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIRONMENT OMP_NUM_THREADS=1)
+
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
 add_executable(fabric_checks tools/fabric_checks/fabric_checks.cpp ${SPH_PIPELINE_SOURCES})
@@ -984,6 +1007,23 @@ add_test(NAME plain_weave_gen_cli_test
          COMMAND ${CMAKE_COMMAND} -DGEN=$<TARGET_FILE:plain_weave_gen>
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plain_weave_cli_test.cmake)
 set_tests_properties(plain_weave_gen_cli_test PROPERTIES LABELS "3d" TIMEOUT 60)
+
+# --- Ткань-«одеяло» из патчей и сетка стёжки слоёв (include/fiber/plain_weave_quilt.hpp).
+add_executable(test_plain_weave_quilt tests/test_plain_weave_quilt.cpp ${SPH_PIPELINE_SOURCES})
+target_include_directories(test_plain_weave_quilt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_plain_weave_quilt PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_quilt PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_plain_weave_quilt PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_plain_weave_quilt PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_quilt PRIVATE -fopenmp)
+    target_link_options(test_plain_weave_quilt PRIVATE -fopenmp)
+endif()
+add_test(NAME plain_weave_quilt_test COMMAND test_plain_weave_quilt)
+set_tests_properties(plain_weave_quilt_test PROPERTIES LABELS "3d" TIMEOUT 120)
 
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях

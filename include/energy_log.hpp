@@ -334,7 +334,7 @@ inline EnergyStocks compute_energy_stocks(const rhs::CpuExecutor& exec, const Si
             nb, 0.0,
             [&](std::size_t k) -> double {
                 const fiber::FiberBond& b = topology.bonds[k];
-                const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fb.material_id[b.i])];
+                const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, fb))];
                 double l2 = 0.0;
                 for (std::size_t d = 0; d < dim; ++d)
                 {

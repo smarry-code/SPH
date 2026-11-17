@@ -24,6 +24,17 @@
 //       нити, в ненагруженной (недеформированной) конфигурации. <point_count>
 //       >= 2. Каждая ломаная становится отдельной Fiber с собственным
 //       object_id (0, 1, 2, ... в порядке следования блоков FIBER в файле).
+//   - "BOND <bead_i> <bead_j> <material_id>"
+//       НЕОБЯЗАТЕЛЬНАЯ директива: связь-стежок между бусинами разных нитей
+//       (fiber/plan-quilt-fabric.md, раздел 10). <bead_i>, <bead_j> -- глобальные
+//       индексы бусин (с нуля, в порядке блоков FIBER и точек внутри них),
+//       i != j; <material_id> -- материал стежка (E, d, eps_break), объявленный
+//       директивой MATERIAL (в любом месте файла, до или после BOND). Связь
+//       только растягивающая, l0 = расстояние между бусинами в начальной
+//       конфигурации (> 0), l_break = (1 + eps_break) * l0. Стежок не меняет
+//       prev/next и object_id. Масса бусин не меняется: масса швейной нити не
+//       учитывается. Ошибка формата: индекс вне диапазона, i == j, неопределённый
+//       материал, l0 == 0, лишние токены.
 //   - "CLAMP_BOX <xmin> <ymin> <zmin> <xmax> <ymax> <zmax> [<mask>]"
 //       НЕОБЯЗАТЕЛЬНАЯ директива кинематического закрепления бусин в
 //       прямоугольной области (interactions/clamp.hpp, fiber/SPH.md,
@@ -597,6 +608,15 @@ void build_model_from_polylines(const std::vector<PolylineSpec>& polylines,
     }
 }
 
+// BOND <i> <j> <mat>: связь-стежок, строка файла хранится для сообщений об ошибках.
+struct StitchSpec
+{
+    long long i = 0;
+    long long j = 0;
+    long long mat = 0;
+    std::size_t line = 0;
+};
+
 void load_fiber_file(const std::string& filename, Model& model)
 {
     // Границу Р9 проверяем прежде всего: дальше код пишет ровно dim
@@ -615,6 +635,7 @@ void load_fiber_file(const std::string& filename, Model& model)
     std::vector<char> material_defined;
     std::vector<PolylineSpec> fibers;
     std::vector<ClampBoxSpec> boxes;
+    std::vector<StitchSpec> stitches;
     std::map<std::size_t, PendingInelastic> pending; // PLASTIC/RATE/VISCO/FAILURE по id
 
     std::string line;
@@ -686,6 +707,26 @@ void load_fiber_file(const std::string& filename, Model& model)
             else if (kw == "VISCO") parse_visco_directive(iss, line_no, pi);
             else if (kw == "DAMAGE") parse_damage_directive(iss, line_no, pi);
             else parse_failure_directive(iss, line_no, pi);
+        }
+        else if (kw == "BOND")
+        {
+            // BOND <bead_i> <bead_j> <material_id>: связь-стежок между бусинами
+            // разных нитей (диапазоны индексов проверяются после разбора всех FIBER).
+            StitchSpec st;
+            st.line = line_no;
+            if (!(iss >> st.i >> st.j >> st.mat))
+            {
+                throw std::runtime_error(
+                    "fiber::load_fiber_file: неверный формат BOND (ожидается: bead_i bead_j material_id) в строке " +
+                    std::to_string(line_no));
+            }
+            std::string extra;
+            if (iss >> extra)
+            {
+                throw std::runtime_error(
+                    "fiber::load_fiber_file: лишние токены после BOND в строке " + std::to_string(line_no));
+            }
+            stitches.push_back(st);
         }
         else if (kw == "CLAMP_BOX")
         {
@@ -796,6 +837,51 @@ void load_fiber_file(const std::string& filename, Model& model)
     apply_inelastic(pending, materials, material_defined);
 
     build_model_from_polylines(fibers, materials, boxes, model);
+
+    // Связи-стежки BOND: добавляются после цепочечных связей, prev/next не меняют.
+    // l0 -- расстояние между бусинами в начальной конфигурации; l_break по eps_break
+    // материала стежка. Масса бусин не меняется (масса швейной нити не учитывается).
+    const std::size_t total_beads = model.fiber.size();
+    for (const StitchSpec& st : stitches)
+    {
+        const std::string at = " в строке " + std::to_string(st.line);
+        if (st.i < 0 || st.j < 0 || static_cast<std::size_t>(st.i) >= total_beads ||
+            static_cast<std::size_t>(st.j) >= total_beads)
+        {
+            throw std::runtime_error("fiber::load_fiber_file: индекс бусины BOND вне диапазона [0, " +
+                                     std::to_string(total_beads) + ")" + at);
+        }
+        if (st.i == st.j)
+        {
+            throw std::runtime_error("fiber::load_fiber_file: BOND соединяет бусину саму с собой" + at);
+        }
+        if (st.mat < 0 || static_cast<std::size_t>(st.mat) >= materials.size() ||
+            !material_defined[static_cast<std::size_t>(st.mat)])
+        {
+            throw std::runtime_error("fiber::load_fiber_file: BOND ссылается на неопределённый материал " +
+                                     std::to_string(st.mat) + at);
+        }
+        const std::size_t bi = static_cast<std::size_t>(st.i);
+        const std::size_t bj = static_cast<std::size_t>(st.j);
+        double d2 = 0.0;
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            const double dc = model.fiber.x[d][bj] - model.fiber.x[d][bi];
+            d2 += dc * dc;
+        }
+        const double l0 = std::sqrt(d2);
+        if (!(l0 > 0.0))
+        {
+            throw std::runtime_error("fiber::load_fiber_file: BOND между совпадающими бусинами (l0 = 0)" + at);
+        }
+        FiberBond b;
+        b.i = bi;
+        b.j = bj;
+        b.l0 = l0;
+        b.l_break = (1.0 + materials[static_cast<std::size_t>(st.mat)].eps_break) * l0;
+        b.mat = static_cast<int>(st.mat);
+        model.topology.bonds.push_back(b);
+    }
 }
 
 } // namespace fiber

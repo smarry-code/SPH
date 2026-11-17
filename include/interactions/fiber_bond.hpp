@@ -141,7 +141,7 @@ inline void compute_fiber_bond_contributions(
         const fiber::FiberBond& b = topology.bonds[k];
         const std::size_t i = b.i;
         const std::size_t j = b.j;
-        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[i])];
+        const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
         const double A = fiber_cross_section_area(mat);
 
         double xij[dim];
@@ -306,7 +306,7 @@ inline double compute_fiber_bond_dt_limit(const rhs::CpuExecutor& exec, const fi
         nbonds, kInf,
         [&](std::size_t k) -> double {
             const fiber::FiberBond& b = topology.bonds[k];
-            const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(state.material_id[b.i])];
+            const fiber::FiberMaterial& mat = materials[static_cast<std::size_t>(fiber::bond_material_id(b, state))];
             return fiber_bond_pair_dt(mat, b.l0, state.mass[b.i], state.mass[b.j]);
         },
         [](double a, double b2) { return std::min(a, b2); });

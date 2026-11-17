@@ -231,7 +231,10 @@ inline constexpr double kMuDefault = 0.3;             // mu_ff = mu_fs = 0.3, о
 inline constexpr double kFabricOverhangYBase = 5.0e-3; // e_y = c = 5 мм (ширина зажима), оценка; выступ вдоль x (свободные нити) = p/2
 inline constexpr double kFabricClampEdgeBase = 60.0e-3; // c_e = 60 мм: бусины зажатых нитей (вдоль y) с |y| >= 60 мм неподвижны, статья (верх и низ зажаты)
 inline constexpr int kFabricNBase = 102;              // nx = ny = 102 нити (окно 120 мм), пресет
-inline constexpr int kFabricSegBase = 2;              // k = 2 сегмента на полуволну, base, ТЗ Guo 2019 §7
+inline constexpr int kFabricPatchBase = 34;           // патч 34 x 34 нити для «одеяла» (plain_weave_quilt.hpp); сцену не меняет
+inline constexpr int kFabricTileBase = 3;             // сетка патчей 3 x 3
+static_assert(kFabricPatchBase * kFabricTileBase == kFabricNBase, "патч x сетка должны давать kFabricNBase нитей");
+inline constexpr int kFabricSegBase = 2;             // k = 2 сегмента на полуволну, base, ТЗ Guo 2019 §7
 inline constexpr int kFabricSegFine = 4;              // k = 4, fine
 // smoke: 12 x 12 нитей с d, p пресета, k = 2, A = 0.6 d.
 inline constexpr int kFabricNSmoke = 12;

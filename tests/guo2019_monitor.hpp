@@ -130,6 +130,10 @@ struct MonitorStats
     double eps_p_max = 0.0, W_p_total = 0.0;
     std::size_t n_bonds_plastic = 0; // связей с eps_p > 0 на последнем шаге
 
+    // Стёжка слоёв (этап 2в): заполняется и пишется только при n_stitch_0 > 0.
+    std::size_t n_stitch_0 = 0, n_stitch_broken_end = 0;
+    double slip_mean_end = 0.0;
+
     // Пакет слоёв (n_plies >= 2; ТЗ 2T/4T §4.3). При n_plies == 1 не заполняется и не пишется.
     int n_plies = 1;
     std::vector<std::size_t> n_broken_v_p, n_broken_h_p;      // порванные нити по слоям (слой 1 -- лицевой)
@@ -324,7 +328,23 @@ public:
         for (std::size_t y = 0; y < sc_.yarns.size(); ++y)
             orig_bonds_[y] = sc_.yarns[y].bead_end - sc_.yarns[y].bead_begin - 1;
         cnt_.assign(sc_.yarns.size(), 0);
-        st_.n_bonds_0 = m_.topology.bonds.size();
+        // Стежки (bond.mat >= 0) в статистику связей ткани не входят.
+        {
+            std::size_t ns = 0;
+            for (const auto& b : m_.topology.bonds)
+                if (b.mat >= 0) ++ns;
+            st_.n_bonds_0 = m_.topology.bonds.size() - ns;
+            // Число стежков и их начальные векторы -- из сцены (t = 0), а не из текущей модели: при --restart
+            // монитор создаётся после чтения чекпоинта, когда часть стежков уже порвана.
+            st_.n_stitch_0 = sc_.stitch_pairs.size();
+            n_stitch_ = sc_.stitch_pairs.size();
+            if (ns > 0 || n_stitch_ > 0)
+            {
+                stitch_r0_ = sc_.stitch_r0;
+                if (stitch_r0_.size() != sc_.stitch_pairs.size() || sc_.stitch_pairs.empty() || ns > n_stitch_)
+                    throw std::runtime_error("guo2019: монитор: в модели есть стежки, но сцена не хранит их пары");
+            }
+        }
         last_bonds_ = st_.n_bonds_0;
 
         U_int0_ = clamp_e2e::internal_solid(s, nt_);
@@ -338,7 +358,8 @@ public:
         init_plies();
 
         // Диаметр нити и число пересечений
-        for (const auto& mat : m_.materials) d_fiber_ = std::max(d_fiber_, mat.d);
+        for (std::size_t mi = 0; mi < m_.materials.size(); ++mi)
+            if (!(n_stitch_ > 0 && mi >= 1)) d_fiber_ = std::max(d_fiber_, m_.materials[mi].d); // материал 1 -- стежок
         crossings_ = static_cast<double>(sc_.has_fabric ? sc_.spec.nx * sc_.spec.ny : 0);
 
         // Fiber-Fiber на исходной укладке (до шага 1)
@@ -390,6 +411,9 @@ public:
                     if (csv_load_col_) std::fprintf(csv_, ",proj_resid_load");
                     if (csv_v3_cols_) std::fprintf(csv_, ",proj_resid_post,proj_warm_scale_min");
                 }
+                // Столбцы стежков (только со стёжкой) -- последними, после столбцов проекции.
+                if (n_stitch_ > 0)
+                    std::fprintf(csv_, ",n_stitch,n_stitch_broken,F_stitch_max,F_stitch_sum,slip_mean,gap_mean");
                 std::fprintf(csv_, "\n");
             }
         }
@@ -474,6 +498,7 @@ public:
 
         // --- связи и разрывы
         r.n_bonds = m_.topology.bonds.size();
+        if (n_stitch_ > 0) stitch_step(r);
         if (r.n_bonds != last_bonds_)
         {
             last_bonds_ = r.n_bonds;
@@ -561,6 +586,8 @@ public:
         st_.v_z_end = r.v_z;
         st_.w_f_end = r.w_f;
         st_.n_bonds_end = r.n_bonds;
+        st_.n_stitch_broken_end = r.n_stitch_broken;
+        st_.slip_mean_end = r.slip_mean;
         st_.n_broken_v = r.n_broken_v;
         st_.n_broken_h = r.n_broken_h;
         if (nply_ >= 2)
@@ -803,6 +830,8 @@ public:
                              k + 1, fb ? st_.w_f_at_first_break_p[q] : nan, k + 1,
                              fb ? st_.pullin_at_first_break_p[q] : nan, k + 1, st_.pullin_end_p[q]);
             }
+            if (n_stitch_ > 0)
+                std::fprintf(f, " n_stitch_broken_end=%zu slip_mean_end=%.9g", st_.n_stitch_broken_end, st_.slip_mean_end);
             std::fprintf(f,
                          " contacts_per_crossing_inter=%.9g max_delta_ff_inter/d=%.9g ply_order_violations=%zu "
                          "t_ply_order_first=%.9g ply_gap_min=%.12e ply_gap_max=%.12e%s",
@@ -835,6 +864,7 @@ private:
         std::size_t npl = 0;
         for (const auto& b : m_.topology.bonds)
         {
+            if (b.mat >= 0) continue; // стежок
             if (!(b.st.w_p > 0.0) && !(b.st.eps_p > 0.0)) continue;
             const fiber::FiberMaterial& mat = m_.materials[static_cast<std::size_t>(m_.fiber.material_id[b.i])];
             const double A = interactions::fiber_cross_section_area(mat);
@@ -875,7 +905,54 @@ private:
         double w_f = 0.0, w_p = 0.0;
         std::vector<std::size_t> pv, ph; // по слоям (только при n_plies >= 2)
         std::vector<double> wp;          // прогиб по слоям (только при n_plies >= 2)
+        // Стёжка (только при наличии стежков)
+        std::size_t n_stitch = 0, n_stitch_broken = 0;
+        // slip_mean -- среднее по исходным парам плоской (x, y) нормы (r(t) - r0), r = x_j - x_i; gap_mean -- среднее
+        // (|r(t)| - |r0|), удлинение пары. Для вертикальных пар сетки r0 в плоскости нулевой: slip -- сдвиг слоёв.
+        double F_stitch_max = 0.0, F_stitch_sum = 0.0, slip_mean = 0.0, gap_mean = 0.0;
     };
+
+    // Статистика стежков на шаге; r.n_bonds приводится к числу связей ткани (без стежков).
+    void stitch_step(Row& r) const
+    {
+        const fiber::FiberState& fb = m_.fiber;
+        std::size_t intact = 0;
+        double fmax = 0.0, fsum = 0.0;
+        for (const auto& b : m_.topology.bonds)
+        {
+            if (b.mat < 0) continue;
+            ++intact;
+            const double dx = fb.x[0][b.i] - fb.x[0][b.j], dy = fb.x[1][b.i] - fb.x[1][b.j],
+                         dz = fb.x[2][b.i] - fb.x[2][b.j];
+            const double l = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (l > b.l0)
+            {
+                const fiber::FiberMaterial& mat = m_.materials[static_cast<std::size_t>(b.mat)];
+                const double F = mat.E * interactions::fiber_cross_section_area(mat) * (l - b.l0) / b.l0;
+                fmax = std::max(fmax, F);
+                fsum += F;
+            }
+        }
+        double slip = 0.0, gap = 0.0;
+        for (std::size_t q = 0; q < sc_.stitch_pairs.size(); ++q)
+        {
+            const std::size_t i = sc_.stitch_pairs[q].first, j = sc_.stitch_pairs[q].second;
+            const auto& r0 = stitch_r0_[q];
+            const double rx = fb.x[0][j] - fb.x[0][i], ry = fb.x[1][j] - fb.x[1][i], rz = fb.x[2][j] - fb.x[2][i];
+            slip += std::sqrt((rx - r0[0]) * (rx - r0[0]) + (ry - r0[1]) * (ry - r0[1]));
+            gap += std::sqrt(rx * rx + ry * ry + rz * rz) - std::sqrt(r0[0] * r0[0] + r0[1] * r0[1] + r0[2] * r0[2]);
+        }
+        const double np = static_cast<double>(sc_.stitch_pairs.size());
+        r.n_stitch = intact;
+        r.n_stitch_broken = n_stitch_ - intact;
+        r.F_stitch_max = fmax;
+        r.F_stitch_sum = fsum;
+        r.slip_mean = slip / np;
+        r.gap_mean = gap / np;
+        r.n_bonds -= intact;
+    }
+    std::size_t n_stitch_ = 0;
+    std::vector<std::array<double, 3>> stitch_r0_; // начальные относительные векторы пар x_j - x_i
 
     struct ContactFF
     {
@@ -938,6 +1015,7 @@ private:
         std::fill(cnt_.begin(), cnt_.end(), 0u);
         for (const auto& b : m_.topology.bonds)
         {
+            if (b.mat >= 0) continue; // стежок
             const int y = yarn_of_[b.i];
             if (y >= 0) ++cnt_[static_cast<std::size_t>(y)];
         }
@@ -1190,7 +1268,8 @@ private:
             for (int d = 0; d < 3; ++d) g.org[d] = std::min(g.org[d], s.x[d][k]);
         }
         double rf_max = 0.0;
-        for (const auto& mat : m_.materials) rf_max = std::max(rf_max, 0.5 * mat.d);
+        for (std::size_t mi = 0; mi < m_.materials.size(); ++mi)
+            if (!(n_stitch_ > 0 && mi >= 1)) rf_max = std::max(rf_max, 0.5 * m_.materials[mi].d);
         g.W = rf_max + rs_max;
         if (!(g.W > 0.0)) return;
         // Ячейки сетки (ключ ячейки, индекс частицы), отсортированы; буфер постоянный.
@@ -1209,6 +1288,7 @@ private:
         double dmax_fs = 0.0;
         for (const auto& b : bonds)
         {
+            if (b.mat >= 0) continue; // стежок не сегмент нити
             double a[3], bb[3], lo[3], hi[3];
             for (int d = 0; d < 3; ++d)
             {
@@ -1305,8 +1385,8 @@ private:
             for (std::size_t k = 0; k < r.wp.size(); ++k) std::fprintf(csv_, ",%.9e", r.wp[k]);
         }
         // Модули реакций зажимов -- всегда, сразу после прежних столбцов (и до столбцов проекции).
-        std::fprintf(csv_, ",%.9e,%.9e,%.9e,%.9e,%.9e,%.9e%s", r.Fs_norm, r.Fs_abs_sum, r.Fs_abs_max, r.Ff_norm,
-                     r.Ff_abs_sum, r.Ff_abs_max, proj_on_ ? "" : "\n");
+        std::fprintf(csv_, ",%.9e,%.9e,%.9e,%.9e,%.9e,%.9e", r.Fs_norm, r.Fs_abs_sum, r.Fs_abs_max, r.Ff_norm,
+                     r.Ff_abs_sum, r.Ff_abs_max);
         if (proj_on_)
         {
             // Окно -- с прошлой записанной строки; пустое окно (нет шагов с проекцией) -- нули, warm_frac = 1.
@@ -1314,11 +1394,15 @@ private:
                          pw_.resid, pw_.resid_rel, pw_.warm_frac, pw_.W_pos);
             if (csv_load_col_) std::fprintf(csv_, ",%.9e", pw_resid_load_);
             if (csv_v3_cols_) std::fprintf(csv_, ",%.9e,%.17g", pw3_.resid_post, pw3_.warm_scale_min);
-            std::fprintf(csv_, "\n");
             pw_ = ProjWindow{};
             pw_resid_load_ = 0.0;
             pw3_ = ProjWindow3{};
         }
+        // Столбцы стежков (только со стёжкой) -- последними.
+        if (n_stitch_ > 0)
+            std::fprintf(csv_, ",%zu,%zu,%.9e,%.9e,%.9e,%.9e", r.n_stitch, r.n_stitch_broken, r.F_stitch_max,
+                         r.F_stitch_sum, r.slip_mean, r.gap_mean);
+        std::fprintf(csv_, "\n");
         // Сброс буфера: внешний сэмплер (tail -1 monitor.csv) видит актуальный шаг; содержимое файла не меняется.
         std::fflush(csv_);
     }
