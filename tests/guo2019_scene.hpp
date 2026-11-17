@@ -46,6 +46,7 @@
 #include "fiber/model.hpp"
 #include "fiber/plain_weave.hpp"
 #include "fiber/plain_weave_quilt.hpp"
+#include "fiber/plain_weave_random_cut.hpp"
 #include "input.hpp"
 #include "int_force.hpp"
 #include "interactions/clamp.hpp"
@@ -135,6 +136,15 @@ struct GuoScene
     std::size_t n_stitch = 0;       // число связей-стежков (0 -- без стёжки)
     std::vector<std::pair<std::size_t, std::size_t>> stitch_pairs; // пары глобальных бусин стежков
     std::vector<std::array<double, 3>> stitch_r0; // начальные векторы пар x_j - x_i (по .fib, t = 0; не из чекпоинта)
+    // Мозаика (MosaicSpec): ткань -- случайная раскройка, стежки через швы в слоях и сквозные между слоями.
+    bool mosaic = false;
+    std::vector<char> stitch_through; // [стежок] 1 -- сквозной между слоями; пусто без мозаики (стежки сетки -- как раньше)
+    std::size_t n_stitch_in = 0, n_stitch_through = 0;
+    int mosaic_cuts = 0;                // число раскроек пакета
+    double mosaic_min_cross_dist = 0.0; // мин. расстояние в плане между бусинами разных фрагментов слоя, м
+    double mosaic_size_x = 0.0, mosaic_size_y = 0.0, mosaic_gap = 0.0, mosaic_stitch_step = 0.0;
+    bool mosaic_own_field = false;      // поле или c_e заданы явно (MosaicSpec::size_x/y, clamp_edge)
+    std::filesystem::path cut_json_path;
 
     // --- диапазоны индексов Solid -----------------------------------------
     std::size_t ntotal = 0;
@@ -279,6 +289,28 @@ struct StitchSpec
     double E = 8.5e10, nu = 0.3, d = 0.2e-3, rho = 1440.0, eps_break = 0.03; // материал 1 стежка
 };
 
+// Мозаичная ткань: случайная раскройка (include/fiber/plain_weave_random_cut.hpp) вместо сплошного
+// полотна, решение владельца 2026-11-13. Поле -- габарит сплошной ткани уровня: по x (ny - 1) p + 2 e_x
+// (свободные концы по p/2), по y (nx - 1) p + 2 e_y (выступы в зажим); зажим -- боксы раскройки |y| >= c_e
+// для всех бусин независимо от направления нити. Слои группы layers_per_cut делят одну раскройку.
+// Стежки: через швы в каждом слое и сквозные между соседними слоями, материал 1 -- из StitchSpec
+// (E, nu, d, rho, eps_break); --stitch=grid|seam вместе с мозаикой не допускается.
+struct MosaicSpec
+{
+    bool enabled = false;
+    int n_frag = 1;            // N фрагментов
+    std::uint64_t seed = 1;
+    int layers_per_cut = 0;    // k; 0 -- одна раскройка на весь пакет
+    double gap = -1.0;         // зазор между фрагментами, м; < 0 -- d
+    double rot_max_deg = 25.0; // поворот сетки фрагмента в [-rot_max, rot_max], градусы
+    double stitch_step = -1.0; // шаг стежков вдоль шва, м; < 0 -- шаг нитей p (прокол на каждой нити)
+    // Своё поле (решение владельца 2026-11-15): size_x x size_y, м, по центру (0, 0), и граница зажима c_e, м
+    // (зажаты бусины |y| >= c_e). < 0 -- габарит сплошной ткани уровня и c_e уровня. Окно плотности при своём
+    // поле -- свободная часть без полушага с краёв: (size_x - p) x (2 c_e - p).
+    double size_x = -1.0, size_y = -1.0;
+    double clamp_edge = -1.0;
+};
+
 // Дополнение .fib: MATERIAL 1 и строки BOND i j 1 (глобальные индексы бусин).
 struct StitchFibExtra
 {
@@ -390,7 +422,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
                                 int plies = 0, double ball_d_override = 0.0, double ball_m_override = 0.0,
                                 double ball_dx_override = 0.0, int fabric_n_override = 0,
                                 double fabric_clamp_edge_override = 0.0, double fabric_overhang_y_override = 0.0,
-                                const StitchSpec& stitch = StitchSpec{})
+                                const StitchSpec& stitch = StitchSpec{}, const MosaicSpec& mosaic = MosaicSpec{})
 {
     // plies -- число слоёв для Config::TK; ball_*_override > 0 заменяют D_s, m_s, dx_s шара уровня
     // (решение владельца 2026-11-09); плотность по-прежнему выводится из массы: m_s / (n_ball dx_s^3).
@@ -444,6 +476,10 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     sc.z_c0 = sc.z_f + L.g_0 + sc.R_eff;
 
     // -------------------------------------------------------------- ткань
+    std::optional<fiber::RandomCut> rcut; // мозаика: раскройка (пишется в .fib ниже)
+    if (mosaic.enabled && !sc.has_fabric) throw std::invalid_argument("guo2019: мозаика требует конфигурации с тканью");
+    if (mosaic.enabled && stitch.enabled)
+        throw std::invalid_argument("guo2019: мозаика несовместима с --stitch=grid|seam (стежки мозаики строятся по швам раскройки)");
     if (sc.has_fabric)
     {
         fiber::PlainWeaveParams q;
@@ -473,8 +509,65 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         sc.fabric_amp = Aamp;
         sc.fabric_d = d;
         sc.ply_pitch = 2.0 * Aamp + d + kEpsPly; // Delta_ply (ТЗ 2T/4T §3.2)
-        // Генератор сам проверяет диапазон c_e и бросает исключение.
-        sc.plies = build_fabric_stack(q, sc.n_plies, sc.ply_pitch);
+        if (mosaic.enabled)
+        {
+            if ((mosaic.size_x > 0.0) != (mosaic.size_y > 0.0))
+                throw std::invalid_argument("guo2019: мозаика: размер поля задаётся парой size_x, size_y");
+            const double fx = mosaic.size_x > 0.0 ? mosaic.size_x
+                                                  : static_cast<double>(q.ny - 1) * q.pitch + 2.0 * q.overhang_x;
+            const double fy = mosaic.size_y > 0.0 ? mosaic.size_y
+                                                  : static_cast<double>(q.nx - 1) * q.pitch + 2.0 * q.overhang_y;
+            if (mosaic.clamp_edge > 0.0) q.clamp_edge = mosaic.clamp_edge;
+            if (!(q.clamp_edge < 0.5 * fy))
+                throw std::invalid_argument("guo2019: мозаика: граница зажима c_e должна быть меньше size_y / 2");
+            sc.mosaic_own_field = mosaic.size_x > 0.0 || mosaic.clamp_edge > 0.0;
+            fiber::RandomCutParams P;
+            P.base = q;
+            P.n_frag = mosaic.n_frag;
+            P.size_x = fx;
+            P.size_y = fy;
+            P.seed = mosaic.seed;
+            P.gap = mosaic.gap;
+            P.rot_max_deg = mosaic.rot_max_deg;
+            P.stitch_step = mosaic.stitch_step < 0.0 ? q.pitch : mosaic.stitch_step;
+            P.stitch_E = stitch.E;
+            P.stitch_nu = stitch.nu;
+            P.stitch_d = stitch.d;
+            P.stitch_rho = stitch.rho;
+            P.stitch_eps_break = stitch.eps_break;
+            P.layers = sc.n_plies;
+            P.layers_per_cut = mosaic.layers_per_cut;
+            P.ply_pitch = sc.ply_pitch;
+            rcut = fiber::build_plain_weave_random_cut(P);
+            const fiber::RandomCut& R = *rcut;
+            // Слои -- куски полотна раскройки (нити в порядке записи); параметры -- сплошной ткани уровня
+            // (окно, плотность summary), c_z -- свой у слоя.
+            sc.plies.assign(static_cast<std::size_t>(sc.n_plies), fiber::PlainWeave{});
+            for (int k = 0; k < sc.n_plies; ++k)
+            {
+                sc.plies[static_cast<std::size_t>(k)].params = q;
+                sc.plies[static_cast<std::size_t>(k)].params.cz = R.ply_cz[static_cast<std::size_t>(k)];
+            }
+            for (std::size_t f = 0; f < R.W.fibers.size(); ++f)
+                sc.plies[static_cast<std::size_t>(R.fiber_ply[f])].fibers.push_back(R.W.fibers[f]);
+            sc.mosaic = true;
+            sc.stitch_pairs = R.stitch_pairs;
+            sc.stitch_through.clear();
+            for (const auto& st : R.stitches) sc.stitch_through.push_back(st.through ? 1 : 0);
+            if (sc.stitch_through.size() != sc.stitch_pairs.size())
+                throw std::logic_error("guo2019: мозаика: число стежков и пар BOND различается");
+            sc.n_stitch = sc.stitch_pairs.size();
+            sc.n_stitch_in = R.n_stitches_in;
+            sc.n_stitch_through = R.n_stitches_through;
+            sc.mosaic_cuts = static_cast<int>(R.cuts.size());
+            sc.mosaic_min_cross_dist = R.min_cross_dist;
+            sc.mosaic_size_x = R.params.size_x;
+            sc.mosaic_size_y = R.params.size_y;
+            sc.mosaic_gap = R.params.gap;
+            sc.mosaic_stitch_step = R.params.stitch_step;
+        }
+        else // Генератор сам проверяет диапазон c_e и бросает исключение.
+            sc.plies = build_fabric_stack(q, sc.n_plies, sc.ply_pitch);
         sc.W = sc.plies.front(); // слой 1 (лицевой): на него опирается остальной код
         for (const auto& P : sc.plies) sc.ply_cz.push_back(P.params.cz);
         if (stitch.enabled)
@@ -651,7 +744,17 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             std::ofstream f(sc.fib_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.fib_path.string());
-            if (sc.n_plies == 1 && !stitch.enabled) // шов-строчка для 1T идёт через писатель пакета (MATERIAL 1, BOND)
+            if (rcut)
+            {
+                fiber::PlainWeaveFibExtra ex = fiber::random_cut_fib_extra(*rcut);
+                std::ostringstream c3; // материал стежка задан сценой, а не заглушкой генератора
+                c3 << std::setprecision(17) << "стежки: шаг " << rcut->params.stitch_step << ", в слоях " << rcut->n_stitches_in
+                   << ", сквозных " << rcut->n_stitches_through << "; материал 1 E=" << stitch.E << " nu=" << stitch.nu
+                   << " d=" << stitch.d << " rho=" << stitch.rho << " eps_break=" << stitch.eps_break;
+                if (ex.comments.size() >= 3) ex.comments[2] = c3.str();
+                fiber::write_plain_weave_fib(f, rcut->W, "guo2019_scene build_guo_scene (мозаика)", ex);
+            }
+            else if (sc.n_plies == 1 && !stitch.enabled) // шов-строчка для 1T идёт через писатель пакета (MATERIAL 1, BOND)
                 fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
             else
             {
@@ -667,10 +770,17 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             std::ofstream f(sc.layout_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.layout_path.string());
-            if (sc.n_plies == 1)
+            if (sc.n_plies == 1 && !rcut)
                 fiber::write_plain_weave_layout(f, sc.W);
             else
                 write_fabric_stack_layout(f, sc.plies);
+        }
+        if (rcut)
+        {
+            sc.cut_json_path = workdir / "guo2019_fabric.cut.json";
+            std::ofstream f(sc.cut_json_path);
+            if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.cut_json_path.string());
+            fiber::write_random_cut_json(f, *rcut);
         }
         fiber::load_fiber_file(sc.fib_path.string(), sc.model); // заполняет model.clamps.fiber_mask из CLAMP_BOX
         sc.stitch_r0.clear();
@@ -755,6 +865,11 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     {
         const auto& q = sc.W.params;
         fiber::plain_weave_window(q, sc.window_Lx, sc.window_Ly);
+        if (sc.mosaic && sc.mosaic_own_field) // своё поле мозаики: свободная часть без полушага с краёв
+        {
+            sc.window_Lx = sc.mosaic_size_x - q.pitch;
+            sc.window_Ly = 2.0 * q.clamp_edge - q.pitch;
+        }
         const double tol = 1.0e-9 * q.pitch;
         const double hx = 0.5 * sc.window_Lx + tol, hy = 0.5 * sc.window_Ly + tol;
         const auto& fb = sc.model.fiber;
@@ -809,7 +924,7 @@ struct PlyGapReport
 inline PlyGapReport ply_vertex_gaps(const GuoScene& sc)
 {
     PlyGapReport r;
-    if (sc.n_plies < 2) return r;
+    if (sc.n_plies < 2 || sc.mosaic) return r; // мозаика: сетки пересечений nx x ny нет
     r.valid = true;
     const auto& fb = sc.model.fiber;
     const int nx = sc.W.params.nx, ny = sc.W.params.ny;
@@ -1076,6 +1191,11 @@ inline void print_scene_summary(std::FILE* f, const GuoScene& sc)
         std::fprintf(f, "  plain_weave_summary (все бусины, включая выступы): %.5f кг/м^2; статья %.2f, ожидание модели %.3f (k = 2) / %.3f (k = 4)\n",
                      sc.areal_density_summary, kArealDensityPaper, kArealDensityExpectK2, kArealDensityExpectK4);
         std::fprintf(f, "  толщина полотна 2A + d = %.4g м\n", 2.0 * q.amp + q.d);
+        if (sc.mosaic)
+            std::fprintf(f, "  мозаика: поле %.6g x %.6g м, раскроек %d, gap = %.4g м, мин. расстояние между фрагментами %.4g м; "
+                         "стежков %zu (в слоях %zu, сквозных %zu), шаг вдоль шва %.4g м\n",
+                         sc.mosaic_size_x, sc.mosaic_size_y, sc.mosaic_cuts, sc.mosaic_gap, sc.mosaic_min_cross_dist, sc.n_stitch,
+                         sc.n_stitch_in, sc.n_stitch_through, sc.mosaic_stitch_step);
     }
     if (sc.has_fabric && sc.n_plies >= 2)
     {
@@ -1101,6 +1221,9 @@ inline void print_scene_summary(std::FILE* f, const GuoScene& sc)
                      "(статья %.2f / %.2f для 2T / 4T)\n",
                      sb, sn, scl, sum_w, sum_s, 2.0 * kArealDensityPaper, 4.0 * kArealDensityPaper);
         const PlyGapReport pg = ply_vertex_gaps(sc);
+        if (!pg.valid)
+            std::fprintf(f, "  зазор слоёв по вершинным бусинам: не считается (мозаика)\n");
+        else
         std::fprintf(f, "  зазор слоёв по вершинным бусинам (мин / макс; ожидание eps_ply = %.3e м): %.12e / %.12e м по %zu "
                      "пересечениям; мин в паре слоёв %d, пересечение (%d, %d); макс в паре %d, (%d, %d)\n",
                      kEpsPly, pg.min_gap, pg.max_gap, pg.n_pairs, pg.min_ply, pg.min_i, pg.min_j, pg.max_ply, pg.max_i,

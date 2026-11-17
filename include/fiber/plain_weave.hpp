@@ -45,6 +45,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace fiber
@@ -732,13 +733,31 @@ inline void print_plain_weave_summary(std::FILE* f, const PlainWeave& W)
     std::fprintf(f, "оценка стоимости (бусин/340, демо \"4 слоя\"): %.4g\n", S.cost_ratio);
 }
 
+// Необязательное дополнение .fib (случайная раскройка, plain_weave_random_cut.hpp):
+// стежки BOND материала 1 и уточнения заголовка. По умолчанию пусто -- вывод прежний.
+struct PlainWeaveFibExtra
+{
+    // Материал 1 стежков (пишется, если pairs != nullptr): формат как MATERIAL 0.
+    double stitch_E = 0.0, stitch_nu = 0.0, stitch_d = 0.0, stitch_rho = 0.0, stitch_eps_break = 0.0;
+    const std::vector<std::pair<std::size_t, std::size_t>>* pairs = nullptr; // BOND i j 1 (глобальные индексы)
+    std::vector<std::string> comments; // доп. строки комментария заголовка (без '#')
+    double window_area = 0.0;          // > 0: площадь окна для поверхностной плотности вместо plain_weave_window
+};
+
 // Запись .fib (формат: src/fiber_input.cpp). Правило записи трения (ТЗ §3.6):
 // если mu_fs != 0 пишутся оба поля (mu_ff = 0 явно, если не задан); иначе при
 // mu_ff != 0 -- только mu_ff; если оба 0, необязательные поля не пишутся.
-inline void write_plain_weave_fib(std::ostream& os, const PlainWeave& W, const std::string& command_line)
+inline void write_plain_weave_fib(std::ostream& os, const PlainWeave& W, const std::string& command_line,
+                                  const PlainWeaveFibExtra& extra = PlainWeaveFibExtra{})
 {
     const auto& q = W.params;
-    const PlainWeaveSummary S = plain_weave_summary(W);
+    PlainWeaveSummary S = plain_weave_summary(W);
+    if (extra.window_area > 0.0)
+    {
+        double Lx = 0.0, Ly = 0.0;
+        plain_weave_window(q, Lx, Ly);
+        S.areal_density = S.areal_density * (Lx * Ly) / extra.window_area;
+    }
     os << std::setprecision(std::numeric_limits<double>::max_digits10);
     os << "# Полотняное переплетение (plain weave), сгенерировано plain_weave.hpp\n";
     os << "# команда: " << command_line << "\n";
@@ -759,6 +778,7 @@ inline void write_plain_weave_fib(std::ostream& os, const PlainWeave& W, const s
     os << "\n";
     os << "# итого: нитей " << S.fibers << ", бусин " << S.beads << ", связей " << S.bonds << ", зажатых бусин "
        << S.clamped_beads << ", поверхностная плотность " << S.areal_density << " кг/м^2\n";
+    for (const auto& c : extra.comments) os << "# " << c << "\n";
     for (const auto& w : W.warnings) os << "# " << w << "\n";
 
     os << "MATERIAL 0 " << q.E << " " << q.nu << " " << q.d << " " << q.rho << " " << q.eps_break;
@@ -767,11 +787,19 @@ inline void write_plain_weave_fib(std::ostream& os, const PlainWeave& W, const s
     else if (q.mu_ff != 0.0)
         os << " " << q.mu_ff;
     os << "\n";
+    if (extra.pairs)
+        os << "MATERIAL 1 " << extra.stitch_E << " " << extra.stitch_nu << " " << extra.stitch_d << " "
+           << extra.stitch_rho << " " << extra.stitch_eps_break << "\n";
 
     for (const auto& F : W.fibers)
     {
         os << "FIBER 0 " << F.pts.size() << "\n";
         for (const auto& P : F.pts) os << P[0] << " " << P[1] << " " << P[2] << "\n";
+    }
+    if (extra.pairs)
+    {
+        os << "# стёжка: " << extra.pairs->size() << " стежков (материал 1)\n";
+        for (const auto& pr : *extra.pairs) os << "BOND " << pr.first << " " << pr.second << " 1\n";
     }
     if (!W.clamp_boxes.empty())
     {

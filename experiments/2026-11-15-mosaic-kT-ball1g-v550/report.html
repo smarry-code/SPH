@@ -1,0 +1,192 @@
+<title>Мозаика kT: граница пробития</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Технический отчёт лабораторного журнала: одна колонка ~70ch, таблицы и рисунки на «листах», моно — для чисел и ключей */
+:root{
+  --bg:#f6f7f8; --sheet:#ffffff; --fg:#14171a; --muted:#5a6168; --rule:#dde1e5;
+  --accent:#256abf; --warm:#c4501f; --ok-bg:#e8f1fb; --stop-bg:#fbeee8;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121417; --sheet:#1b1e22; --fg:#e8eaed; --muted:#a3abb3; --rule:#2e3338;
+  --accent:#6da7ec; --warm:#ec835a; --ok-bg:#1c2a3a; --stop-bg:#3a2620; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121417; --sheet:#1b1e22; --fg:#e8eaed; --muted:#a3abb3; --rule:#2e3338;
+  --accent:#6da7ec; --warm:#ec835a; --ok-bg:#1c2a3a; --stop-bg:#3a2620; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding-block:40px 72px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:28px}
+header{display:grid;gap:8px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:30px;line-height:1.2;margin:0;font-weight:600;text-wrap:balance}
+h2{font-size:21px;margin:0;font-weight:600;text-wrap:balance}
+h3{font-size:16px;margin:0;font-weight:600}
+p,ul{margin:0;max-width:70ch}
+ul{padding-left:1.2em;display:grid;gap:4px}
+section{display:grid;gap:14px}
+.lead{font-size:18px}
+.verdict{background:var(--sheet);border:1px solid var(--rule);border-left:4px solid var(--accent);border-radius:6px;padding:18px 20px;display:grid;gap:6px}
+.verdict b{font-size:22px}
+code,.num{font-family:var(--mono);font-size:.9em}
+.num{font-variant-numeric:tabular-nums}
+.tbl{overflow-x:auto;background:var(--sheet);border:1px solid var(--rule);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--rule);white-space:nowrap}
+th{font-weight:500;color:var(--muted);font-size:12px;letter-spacing:.03em}
+tr:last-child td{border-bottom:none}
+td.r{text-align:right;font-family:var(--mono)}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:500}
+.perf{background:var(--stop-bg);color:var(--warm)}
+.held{background:var(--ok-bg);color:var(--accent)}
+.run{background:var(--rule);color:var(--muted)}
+tr.edge td{border-top:2px solid var(--accent)}
+figure{margin:0;display:grid;gap:8px}
+figure .sheet{background:#ffffff;border:1px solid var(--rule);border-radius:6px;padding:8px;overflow-x:auto}
+figure img{display:block;width:100%;height:auto}
+figcaption{font-size:14px;color:var(--muted);max-width:70ch}
+.note{font-size:14px;color:var(--muted)}
+hr{border:none;border-top:1px solid var(--rule);margin:8px 0}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">SPH · ветка fabric_mosaic · сессия 14–15.11.2026</div>
+  <h1>Мозаичная ткань kT: граница пробития по числу слоёв</h1>
+  <p class="note">Шар 1 г, D = 6,253 мм, V0 = 550 м/с. Мозаика из 7 кусочков на поле 50 × 70 мм. Все расчёты локальные, 6 потоков.</p>
+</header>
+
+<div class="verdict">
+  <span class="eyebrow">Итог</span>
+  <b>14 слоёв пробиваются, 15 держат</b>
+  <p>Граница получена для варианта B, где у каждого слоя своя раскройка, делением пополам. В варианте A (одна раскройка
+  на весь пакет) даже 16 слоёв пробиваются, и шар вылетает со скоростью 457 м/с.</p>
+</div>
+
+<section>
+  <h2>Что сделано за сессию</h2>
+  <ul>
+    <li><b>Guo 2T, мозаика, 147 м/с.</b> Посчитаны выстрелы с общей раскройкой двух слоёв (k = 2, V_R = 116 м/с) и с отдельной
+      раскройкой каждого слоя (k = 1, V_R = 112 м/с). В обоих случаях шар проходит по шву, нити целы. Сделаны анимации обоих выстрелов.</li>
+    <li><b>Размер ткани стал задаваться ключами.</b> В драйвер <code>guo2019_shot</code> добавлены ключи
+      <code>--cut-size=WxH</code> и <code>--cut-clamp-edge</code>. Поле 50 × 70 мм: свободная часть 50 × 50, по 10 мм на зажим с
+      каждой стороны. «По 10 см на закрепление» я понял как 10 мм.</li>
+    <li><b>Запущена автоматическая очередь</b> <code>queue.py</code>. Сначала 16T в вариантах A и B, затем выбор лучшего,
+      затем деление пополам только выбранным вариантом. После поиска по просьбе добавлен 17T.</li>
+    <li><b>Посчитано 7 выстрелов kT</b> (17T ещё идёт). Сделаны картинки устройства вариантов, рисунки отчёта и анимации пороговых выстрелов 14T B и 15T B.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Два способа сшить пакет</h2>
+  <p>Есть два вида стежков. <b>Стежок в слое</b> соединяет два соседних кусочка одного слоя через шов, с шагом 1,18 мм
+  вдоль шва. <b>Сквозной стежок</b> соединяет только соседние слои (1–2, 2–3, …). В одной точке они идут подряд и
+  образуют цепочку через всю толщину пакета.</p>
+  <figure>
+    <div class="sheet"><img src="fig/variants_scheme.png" alt="Схема сшивки вариантов A и B на четырёх слоях"></div>
+    <figcaption>Схема на 4 слоях, не расчёт. В A швы всех слоёв лежат друг над другом, и цепочки стоят только на них. В B у
+    каждого слоя свои швы, и цепочка ставится на шве любого слоя через весь пакет.</figcaption>
+  </figure>
+  <div class="tbl"><table>
+    <tr><th>16T</th><th>Раскроек</th><th>Стежков в слоях</th><th>Сквозных</th><th>Сквозных на пару слоёв</th></tr>
+    <tr><td>Вариант A</td><td class="r">1</td><td class="r">2 592</td><td class="r">2 430</td><td class="r">162</td></tr>
+    <tr><td>Вариант B</td><td class="r">16</td><td class="r">2 619</td><td class="r">36 368</td><td class="r">≈ 2 440</td></tr>
+  </table></div>
+  <figure>
+    <div class="sheet"><img src="fig/variant_A.png" alt="Вариант A: вид сверху и сечение по реальной сцене"></div>
+    <figcaption>Вариант A по реальной сцене 16T. Удар (крестик) приходится рядом со стыком кусочков 4, 5 и 7. Все 16 слоёв
+    разрезаны в одном месте.</figcaption>
+  </figure>
+  <figure>
+    <div class="sheet"><img src="fig/variant_B.png" alt="Вариант B: вид сверху и сечение по реальной сцене"></div>
+    <figcaption>Вариант B: швы слоёв 1–3 идут в разных местах, а точки сквозных стежков покрывают почти всё поле. В сечении
+    видна плотная сетка цепочек. Срез перегружен, потому что полоса шириной 3,6 мм спроецирована на одну плоскость.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Выстрелы</h2>
+  <div class="tbl"><table>
+    <tr><th>Выстрел</th><th>Исход</th><th>V_R, м/с</th><th>z_c min, мм</th><th>Нити о/у</th><th>Стежки порв. / всего</th><th>δ_ff/d</th><th>Счёт, ч</th></tr>
+    <tr><td>16T A</td><td><span class="pill perf">пробит</span></td><td class="r">457</td><td class="r">−28,1</td><td class="r">45 / 21</td><td class="r">212 / 5 022</td><td class="r">0,67</td><td class="r">1,7</td></tr>
+    <tr><td>8T B</td><td><span class="pill perf">пробит</span></td><td class="r">443</td><td class="r">−28,4</td><td class="r">32 / 27</td><td class="r">362 / 10 065</td><td class="r">0,43</td><td class="r">0,9</td></tr>
+    <tr><td>12T B</td><td><span class="pill perf">пробит</span></td><td class="r">365</td><td class="r">−26,5</td><td class="r">40 / 34</td><td class="r">745 / 22 342</td><td class="r">0,80</td><td class="r">1,5</td></tr>
+    <tr><td>14T B</td><td><span class="pill perf">пробит</span></td><td class="r">185</td><td class="r">−29,1</td><td class="r">47 / 45</td><td class="r">1 070 / 30 122</td><td class="r">0,65</td><td class="r">2,6</td></tr>
+    <tr class="edge"><td>15T B</td><td><span class="pill held">не пробит</span></td><td class="r">0</td><td class="r">−21,6</td><td class="r">49 / 49</td><td class="r">1 375 / 34 363</td><td class="r">0,68</td><td class="r">4,0</td></tr>
+    <tr><td>16T B</td><td><span class="pill held">не пробит</span></td><td class="r">0</td><td class="r">−18,0</td><td class="r">43 / 47</td><td class="r">1 203 / 38 987</td><td class="r">0,86</td><td class="r">4,3</td></tr>
+    <tr><td>17T B</td><td><span class="pill run">идёт</span></td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td><td class="r">—</td></tr>
+  </table></div>
+  <p class="note">Порядок выстрелов: 16T A → 16T B → выбран B → 8 → 12 → 14 → 15, затем 17 сверх поиска. «Не пробит» значит, что
+  шар остановлен и отскочил назад, в 15T и 16T со скоростью 22–25 м/с. Баланс энергии сходится во всех выстрелах, невязка ≤ 0,1 Дж
+  при E0 = 151 Дж.</p>
+  <figure>
+    <div class="sheet"><img src="fig/vr_vs_n.png" alt="Остаточная скорость шара в зависимости от числа слоёв"></div>
+    <figcaption>Скорость вылета шара по числу слоёв. От 8 до 12 слоёв она падает медленно, затем резко: 185 м/с при 14 слоях,
+    а 15 слоёв шар уже останавливают. 16T A для сравнения: он пробит почти так же легко, как 8T B.</figcaption>
+  </figure>
+  <figure>
+    <div class="sheet"><img src="fig/vz_t.png" alt="Скорость и положение шара во времени"></div>
+    <figcaption>Первые 15 мкс варианты B тормозят шар одинаково. В 16T A шар за первые 10 мкс теряет около 60 м/с,
+    а дальше почти не тормозится: пакет расходится по шву. В варианте B торможение растёт с числом слоёв. 15T и 16T
+    переходят через ноль (отскок), 17T на момент отчёта тормозит сильнее 16T.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Почему B держит лучше</h2>
+  <ul>
+    <li>В A кусочек — это стопка из 16 слоёв со стыками точно друг над другом. Шар попадает рядом со стыком трёх кусочков
+      и проходит по шву, раздвигая кусочки. Порвано 212 стежков из 5 022, нагрузка до зажима не доходит: наибольшая сила на
+      зажиме 0,12 кН.</li>
+    <li>В B швы разных слоёв не совпадают, и через каждый шов перекрываются целые слои. Сквозных стежков в 15 раз больше,
+      пакет простёган почти сплошь и прогибается как единое целое. Наибольшая сила на зажиме 7,3 кН.</li>
+    <li>Энергия в B уходит в основном в трение: 71–72 % E0 в 15T и 16T. В A трение забирает только 15 %.</li>
+  </ul>
+  <figure>
+    <div class="sheet"><img src="fig/sections.png" alt="Сечения пакета в момент 60 мкс"></div>
+    <figcaption>Сечения y = 0 в один момент, t = 60 мкс. В B пакет прогибается конусом, и шар сидит в его вершине. В A
+    стопки кусочков расходятся по шву, и шар уже вышел под пакет, пройдя его с малыми потерями.</figcaption>
+  </figure>
+  <figure>
+    <div class="sheet"><img src="fig/energy.png" alt="Распределение энергии шара на конец выстрела"></div>
+    <figcaption>Куда ушла энергия шара к концу выстрела, в процентах E0. Синее — энергия, оставшаяся у шара.</figcaption>
+  </figure>
+  <figure>
+    <div class="sheet"><img src="fig/damage.png" alt="Разрывы нитей и стежков"></div>
+    <figcaption>Разрывы нитей и стежков. В варианте B доля порванных стежков почти постоянна, 3–4 %. Число порванных нитей
+    растёт до 15T, а в 16T немного падает: шар останавливается раньше.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Анимации пороговых выстрелов</h2>
+  <p>Кадры записаны с шагом 10 мкс. Слева 3D-вид: нити окрашены по кусочкам, нижние слои темнее, порванные стежки показаны
+  красными крестиками. Справа сечение xz по полосе |y| &lt; 1,8 мм.</p>
+  <figure>
+    <div class="sheet"><img src="anim/mosaic_14T_B.gif" alt="Анимация 14T B: пробит"></div>
+    <figcaption>14T B, пробит. Пакет прогибается конусом, нижние слои рвутся под шаром. Шар выходит со скоростью 185 м/с.</figcaption>
+  </figure>
+  <figure>
+    <div class="sheet"><img src="anim/mosaic_15T_B.gif" alt="Анимация 15T B: не пробит"></div>
+    <figcaption>15T B, не пробит. Нижние слои удерживают шар, он останавливается на глубине 21,6 мм и отскакивает назад.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Ограничения</h2>
+  <ul>
+    <li>Нити заходят друг в друга глубже допустимого: δ_ff/d до 0,86, при пороге 0,5, на котором ветка законов контакта поставлена
+      на паузу. Сравнение A и B качественно надёжно, а границу 14 | 15 стоит считать оценкой.</li>
+    <li>Расчёт проведён на одной раскройке (seed = 1) и с одной точкой удара (0, 0). Попадание в стык кусочков случайно.
+      При другом seed граница может сдвинуться, особенно в варианте A.</li>
+    <li>В B каждая пара слоёв сшита по швам всех 16 раскроек, а не только своих двух. Если сшивать только по швам двух соседних
+      слоёв, стежков будет примерно в 8 раз меньше. Такой вариант не считался.</li>
+    <li>Изменения кода в <code>guo2019_shot</code> и сцене не закоммичены. Патч лежит в <code>source.patch</code>, бинарник
+      заморожен в <code>bin/</code>.</li>
+  </ul>
+</section>
+
+<hr>
+<p class="note">Каталог: <code>experiments/2026-11-15-mosaic-kT-ball1g-v550/</code>. Журнал очереди — <code>queue.log</code>,
+рисунки — <code>scripts/report_figs.py</code> и <code>scripts/variants_fig.py</code>. Отчёт собран 15.11.2026 в 17:20, когда 17T ещё считался.</p>
+</div>
