@@ -405,6 +405,26 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
             else if (value == "position") cfg.xsph_mode = 1;
             else throw std::runtime_error("xsph_mode: допустимы velocity и position, получено '" + value + "'");
         }
+        else if (key == "art_stress_eps" || key == "art_stress_n")
+        {
+            std::size_t pos = 0;
+            double v = 0.0;
+            try
+            {
+                v = std::stod(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            const bool is_eps = key == "art_stress_eps";
+            if (pos == 0 || pos != value.size() || !std::isfinite(v) || (is_eps ? v < 0.0 : v <= 0.0))
+            {
+                throw std::runtime_error(key + (is_eps ? ": ожидается число >= 0" : ": ожидается число > 0")
+                                         + ", получено '" + value + "'");
+            }
+            (is_eps ? cfg.art_stress_eps : cfg.art_stress_n) = v;
+        }
         else if (key == "jc_chi")
         {
             std::size_t pos = 0;

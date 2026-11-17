@@ -84,20 +84,22 @@ JC-материалы (itype 12–15) хранятся в отдельном в�
 | 15 | AL5083H116 | 2700 | Linear, K = 58,33 ГПа | 26,92 | 167 | 596 | 0,551 | 0,001 | 0,859 | 893 | 293 | 910 | Børvik: 0,178; 0,389; −2,25; 0,147; 0 |
 
 - Для всех материалов: ε̇0 = 1 с⁻¹, форма скорости «1st Order».
-- STEEL 4340: p_min = −4 ГПа (нижний предел давления, аналог Autodyn Hydro Pmin).
+- STEEL 4340: p_min = −5,5 ГПа (нижний предел давления, аналог Autodyn Hydro Pmin) —
+  откольная прочность 4340 RC30 по Bless 1981 (AFWAL-TR-81-4040, DTIC ADA112445).
 
 Источники:
 
 - A, B, n, C, m, T_m — Autodyn (скриншоты 27.10.2026); для 4340, 1006 и 7039 совпадают с
   Johnson & Cook 1983 (Proc. 7th Int. Symp. Ballistics).
-- D1–D5 STEEL 4340 — Johnson & Cook 1985 (Eng. Fract. Mech. 21(1)).
+- STEEL 4340 целиком, включая разрушение JC (D1–D5, T_m = 1793 К и ε̇0 = 1 с⁻¹ в разделе
+  Failure) — библиотека Autodyn, скриншоты 15.11.2026
+  ([`fiber/steel-4340-autodyn-constants.md`](../../../fiber/steel-4340-autodyn-constants.md));
+  D1–D5 совпадают с Johnson & Cook 1985 (Eng. Fract. Mech. 21(1)).
 - AL5083H116 — Grytten et al. 2006 (9th LS-DYNA Conf.), модифицированный критерий Børvik,
   скоростной множитель (1+ε̇*)^D4.
 
 Не сверено (`TODO(verify)` в [`include/materials.hpp`](../../../include/materials.hpp)):
 
-- D1–D5 STEEL 4340;
-- p_min STEEL 4340 (из перебора, [`johnson-cook/03-pmin-energy.md`](../../../johnson-cook/03-pmin-energy.md));
 - T_r и c_p STEEL 1006 (JC 1983);
 - Γ0, c0, S1 для STEEL 1006 и AL 7039 (Steinberg, литературные);
 - плотность AL 7039 (JC 1983).

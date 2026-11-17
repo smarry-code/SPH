@@ -167,6 +167,26 @@ endif()
 add_test(NAME kinematics_3d_test COMMAND test_kinematics_3d)
 set_tests_properties(kinematics_3d_test PROPERTIES LABELS "3d")
 
+# --- Искусственное напряжение Монагана (include/interactions/artificial_stress.hpp):
+#     главные оси 1D/2D/3D, сохранение импульса и энергии членом. Три цели по SPH_DIM.
+foreach(_as_dim 1 2 3)
+    add_executable(test_art_stress_${_as_dim}d tests/test_art_stress.cpp ${SPH_PIPELINE_SOURCES})
+    target_include_directories(test_art_stress_${_as_dim}d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(test_art_stress_${_as_dim}d PRIVATE SPH_DIM=${_as_dim})
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(test_art_stress_${_as_dim}d PRIVATE -fexceptions)
+    endif()
+    if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        target_compile_options(test_art_stress_${_as_dim}d PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+        target_link_options(test_art_stress_${_as_dim}d PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+    elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(test_art_stress_${_as_dim}d PRIVATE -fopenmp)
+        target_link_options(test_art_stress_${_as_dim}d PRIVATE -fopenmp)
+    endif()
+    add_test(NAME art_stress_${_as_dim}d_test COMMAND test_art_stress_${_as_dim}d)
+    set_tests_properties(art_stress_${_as_dim}d_test PROPERTIES LABELS "jc")
+endforeach()
+
 # --- Модель данных нитей (fiber/PLAN.md, этап Ф2): FiberState, FiberTopology,
 #     FiberMaterial, Model, разбор файла ломаных (fiber_input.cpp), масса/l0/
 #     l_break, body[] в Solid. Нити только при SPH_DIM=3 (Р9) — собственные

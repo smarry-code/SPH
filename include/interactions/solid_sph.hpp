@@ -43,6 +43,7 @@
 #include <vector>
 
 #include "eos.hpp"
+#include "interactions/artificial_stress.hpp"
 #include "interactions/jc_strength.hpp"
 #include "kernel.hpp"
 #include "materials.hpp"
@@ -325,6 +326,10 @@ struct SolidExtended
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
     std::vector<double> hsml;
     std::vector<int> body; // номер тела (sys.body); ghost наследует body источника
+    // Искусственное напряжение Монагана (artificial_stress.hpp), единицы напряжения.
+    // Пустые, если cfg.art_stress_eps <= 0 (выключено): ядро член не считает.
+    std::vector<double> art_rxx, art_ryy, art_rzz, art_rxy, art_ryz, art_rxz;
+    std::vector<double> art_dp; // начальный шаг частицы (m / rho_0)^(1/dim)
     std::size_t nreal = 0;
     std::size_t next = 0; // nreal + nghost
 };
@@ -386,6 +391,56 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
 {
     const rhs::CpuExecutor serial(1);
     build_solid_extended(serial, sys, nreal, derived, ghosts, ext);
+}
+
+// ----------------------------------------------------------------------
+// Искусственное напряжение: тензор R каждой частицы (реальной и ghost) из
+// полного напряжения s - p*I в ext (зеркало получает зеркальный R, так как
+// считается по зеркальному s). Только твёрдые тела (itype > 2). При
+// cfg.art_stress_eps <= 0 массивы очищаются, ядро член не считает.
+// ----------------------------------------------------------------------
+inline void build_art_stress(const rhs::CpuExecutor& exec, const SimulationConfig& cfg, const ParticleSystem& sys,
+                             const GhostSet& ghosts, SolidExtended& ext)
+{
+    const double eps = cfg.art_stress_eps;
+    if (!(eps > 0.0))
+    {
+        ext.art_rxx.clear(); ext.art_ryy.clear(); ext.art_rzz.clear();
+        ext.art_rxy.clear(); ext.art_ryz.clear(); ext.art_rxz.clear();
+        ext.art_dp.clear();
+        return;
+    }
+    const std::size_t n = ext.next;
+    ext.art_rxx.assign(n, 0.0); ext.art_ryy.assign(n, 0.0); ext.art_rzz.assign(n, 0.0);
+    ext.art_rxy.assign(n, 0.0); ext.art_ryz.assign(n, 0.0); ext.art_rxz.assign(n, 0.0);
+    ext.art_dp.assign(n, 0.0);
+    exec.parallel_for(n, [&](std::size_t k) {
+        const std::size_t src = k < ext.nreal ? k : ghosts.source_index[k - ext.nreal];
+        if (sys.itype[src] <= 2) return;
+        const double rho0 = sys.rho_0[src] > 0.0 ? sys.rho_0[src] : sys.rho[src];
+        ext.art_dp[k] = std::pow(ext.mass[k] / rho0, 1.0 / static_cast<double>(dim));
+        const double p = ext.p[k];
+        if constexpr (dim == 1)
+        {
+            ext.art_rxx[k] = art_stress::r_1d(eps, ext.sxx[k], p);
+        }
+        else if constexpr (dim == 2)
+        {
+            art_stress::r_2d(eps, ext.sxx[k] - p, ext.syy[k] - p, ext.sxy[k],
+                             ext.art_rxx[k], ext.art_ryy[k], ext.art_rxy[k]);
+            // Осесимметрия: окружное направление -- главное, sigma_tt = szz - p.
+            if constexpr (axis_sim) ext.art_rzz[k] = art_stress::principal_r(eps, ext.szz[k] - p);
+        }
+        else
+        {
+            art_stress::Sym3 sig;
+            sig.xx = ext.sxx[k] - p; sig.yy = ext.syy[k] - p; sig.zz = ext.szz[k] - p;
+            sig.xy = ext.sxy[k]; sig.yz = ext.syz[k]; sig.xz = ext.sxz[k];
+            const art_stress::Sym3 r = art_stress::r_3d(eps, sig);
+            ext.art_rxx[k] = r.xx; ext.art_ryy[k] = r.yy; ext.art_rzz[k] = r.zz;
+            ext.art_rxy[k] = r.xy; ext.art_ryz[k] = r.yz; ext.art_rxz[k] = r.xz;
+        }
+    });
 }
 
 // ----------------------------------------------------------------------
@@ -657,6 +712,8 @@ inline void compute_solid_sph_contributions(
     const double xi = cfg.xi;
     const double epsilon_h = cfg.epsilon_h;
     const double alpha = cfg.alpha, beta = cfg.beta, etq = cfg.etq;
+    const bool art_on = cfg.art_stress_eps > 0.0 && ext.art_dp.size() == ext.next;
+    const double art_n = cfg.art_stress_n;
 
     exec.parallel_for(n, [&](std::size_t k) {
         const SolidSphPrimitive& prim = primitives[k];
@@ -896,6 +953,68 @@ inline void compute_solid_sph_contributions(
                 }
                 di.du += ext.mass[j] * he;
                 dj.du += ext.mass[i] * he;
+            }
+        }
+
+        // --- искусственное напряжение Монагана (artificial_stress.hpp) -------
+        // f^n (R_i + R_j) в той же форме, что и напряжения (pa_sph 1/2);
+        // работа -- в du парно, как работа давления (энергия сохраняется).
+        if (art_on && ext.art_dp[i] > 0.0 && ext.art_dp[j] > 0.0)
+        {
+            const double mhsml = 0.5 * (ext.hsml[i] + ext.hsml[j]);
+            const double dp_ij = 0.5 * (ext.art_dp[i] + ext.art_dp[j]);
+            double dxp[dim] = {};
+            dxp[0] = dp_ij;
+            double w_dp = 0.0, dw_dummy[dim] = {};
+            kernel(cfg.skf, dp_ij, std::span<const double>(dxp, dim), mhsml, w_dp, dw_dummy);
+            const double fn = art_stress::pair_factor(w, w_dp, art_n);
+            if (fn > 0.0)
+            {
+                double ci, cj; // множители R_i, R_j
+                if (pa_sph == 1) { ci = cj = 1.0 / (ext.rho[i] * ext.rho[j]); }
+                else { ci = 1.0 / (ext.rho[i] * ext.rho[i]); cj = 1.0 / (ext.rho[j] * ext.rho[j]); }
+                auto T = [&](std::size_t a, std::size_t b) {
+                    // компонента (a, b) суммы ci R_i + cj R_j
+                    const auto pick = [&](std::size_t q) {
+                        if (a == 0 && b == 0) return ext.art_rxx[q];
+                        if (a == 1 && b == 1) return ext.art_ryy[q];
+                        if (a == 2 && b == 2) return ext.art_rzz[q];
+                        if ((a == 0 && b == 1) || (a == 1 && b == 0)) return ext.art_rxy[q];
+                        if ((a == 1 && b == 2) || (a == 2 && b == 1)) return ext.art_ryz[q];
+                        return ext.art_rxz[q];
+                    };
+                    return ci * pick(i) + cj * pick(j);
+                };
+                double he_art = 0.0;
+                for (std::size_t a = 0; a < dim; ++a)
+                {
+                    double h = 0.0;
+                    for (std::size_t b = 0; b < dim; ++b) h += T(a, b) * dwdx[b];
+                    h *= fn;
+                    di.dv[a] += ext.mass[j] * h;
+                    dj.dv[a] += -ext.mass[i] * h;
+                    he_art += (ext.vx[a][j] - ext.vx[a][i]) * h;
+                }
+                di.du += ext.mass[j] * he_art;
+                dj.du += ext.mass[i] * he_art;
+
+                if constexpr (axis_sim && dim == 2)
+                {
+                    // Осевая часть дивергенции R (как у s в импульсе выше):
+                    // a_r += (R_rr - R_tt)/r, a_z += R_rz/r, по соседу, с тем же f^n.
+                    // Работа этих членов радиального импульса не сохраняет; чтобы
+                    // KE + U сохранялась, частица получает du = -v.a_hoop (здесь
+                    // с множителем 2: finalize берёт 0.5*du).
+                    const double rhoij_a = 1.0 / (ext.rho[i] * ext.rho[j]);
+                    const double hi0 = fn * rhoij_a * ext.mass[j] * ((ext.art_rxx[j] - ext.art_rzz[j]) / ext.x[0][j]) * w;
+                    const double hi1 = fn * rhoij_a * ext.mass[j] * (ext.art_rxy[j] / ext.x[0][j]) * w;
+                    const double hj0 = fn * rhoij_a * ext.mass[i] * ((ext.art_rxx[i] - ext.art_rzz[i]) / ext.x[0][i]) * w;
+                    const double hj1 = fn * rhoij_a * ext.mass[i] * (ext.art_rxy[i] / ext.x[0][i]) * w;
+                    di.dv[0] += hi0; di.dv[1] += hi1;
+                    dj.dv[0] += hj0; dj.dv[1] += hj1;
+                    di.du += -2.0 * (ext.vx[0][i] * hi0 + ext.vx[1][i] * hi1);
+                    dj.du += -2.0 * (ext.vx[0][j] * hj0 + ext.vx[1][j] * hj1);
+                }
             }
         }
 

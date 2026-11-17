@@ -12,10 +12,6 @@
 
 #ifdef _WIN32
 #include <io.h> // _commit, _fileno
-namespace
-{
-inline int fsync(int fd) { return _commit(fd); }
-} // namespace
 #else
 #include <unistd.h> // fsync, fileno
 #endif
@@ -35,8 +31,8 @@ constexpr char kMagic[8] = {'S', 'P', 'H', 'C', 'K', 'P', 'T', '\0'};
 // Версия формата. Чекпоинт -- для рестарта той же сборкой, а не для хранения: читается только
 // текущая версия, совместимости со старыми нет. Меняя состав или порядок данных, поднять номер.
 // 5 -- после слияния веток нитей (проекция контакта, состояние вызывающего, материал связи-стежка)
-// и Джонсона-Кука (T, edot, r0, jc_heating, jc_chi, xsph_mode).
-constexpr std::uint32_t kFormatVersion = 5;
+// и Джонсона-Кука (T, edot, r0, jc_heating, jc_chi, xsph_mode); 6 -- art_stress_eps, art_stress_n.
+constexpr std::uint32_t kFormatVersion = 6;
 
 // Флаги сборки, влияющие на состав сохраняемых данных.
 constexpr std::uint32_t build_flags()
@@ -343,6 +339,9 @@ void visit_cfg(C& c, F&& f)
     f("jc_heating", c.jc_heating, false);
     f("jc_chi", c.jc_chi, false);
     f("xsph_mode", c.xsph_mode, false);
+    // Искусственное напряжение Монагана.
+    f("art_stress_eps", c.art_stress_eps, false);
+    f("art_stress_n", c.art_stress_n, false);
 }
 
 struct CfgField
@@ -630,7 +629,11 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     const auto& buf = w.buf();
     bool ok = std::fwrite(buf.data(), 1, buf.size(), f) == buf.size();
     ok = ok && std::fflush(f) == 0;
+#ifdef _WIN32
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
     ok = ok && fsync(fileno(f)) == 0;
+#endif
     ok = (std::fclose(f) == 0) && ok;
     if (!ok)
     {
@@ -643,7 +646,8 @@ void write(const std::string& path, const SimulationConfig& cfg, const fiber::Mo
     {
         std::fclose(ex);
 #ifdef _WIN32
-        // В Windows rename не перезаписывает существующий файл (в POSIX -- атомарная подмена).
+        // На Windows rename не перезаписывает существующий файл — убираем старый .prev.
+        // На POSIX rename заменяет .prev атомарно, удаление не нужно.
         std::remove((path + ".prev").c_str());
 #endif
         if (std::rename(path.c_str(), (path + ".prev").c_str()) != 0)

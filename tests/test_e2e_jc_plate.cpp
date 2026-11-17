@@ -17,7 +17,9 @@
 //        --dx=<м>, --t-total=<с>, --time-limit=<с стенового времени>,
 //        --outdir=<каталог для CSV> (по умолчанию текущий), --verbose,
 //        --interface=continuum|contact (граница ударник-мишень; по умолчанию continuum),
-//        --contact-type=1..3 (по умолчанию 3), --contact-gamma=<доля> (по умолчанию 0.5).
+//        --contact-type=1..3 (по умолчанию 3), --contact-gamma=<доля> (по умолчанию 0.5),
+//        --pmin=<Па> (p_min материала; <= -1e20 -- без ограничения),
+//        --art-eps=<eps> (искусственное напряжение Монагана; 0 -- выкл., по умолчанию).
 // Выходные файлы (в outdir): jc_plate_<case>_gauges.csv (E2: t, sigma_c, v
 // по манометрам), jc_plate_<case>_profile.csv (E3: профиль по частицам в
 // последнем кадре).
@@ -63,6 +65,7 @@ bool g_contact_override = false;   // --interface=...
 bool g_contact_value = false;
 int g_contact_type = 3;
 double g_contact_gamma = 0.5;
+double g_art_eps = 0.0;            // --art-eps=<eps>: искусственное напряжение (0 = выключено)
 double g_pmin = std::nan("");      // --pmin=<Па>: переопределить p_min материала (NaN = из библиотеки)
 
 struct RunResult
@@ -100,6 +103,7 @@ RunResult run_case(const Case& c, double wall_limit_s, bool silence)
         cfg.sph_same_body_only = c.contact;   // SPH-суммы только внутри тела: растяжение через границу не передаётся
         cfg.mats.jc[0].d.enabled = c.damage;
         if (std::isfinite(g_pmin)) cfg.mats.jc[0].p_min = g_pmin;
+        cfg.art_stress_eps = g_art_eps;
         res.mat = cfg.mats.jc[0];
 
         res.geom = build_geometry(sys, c);
@@ -387,6 +391,7 @@ int test_spall(bool damage, const fs::path& outdir, double dx, double t_total, d
     std::printf("  info : граница ударник-мишень: %s\n", c.contact ? "КОНТАКТ (разные тела)" : "континуум (сварены)");
     {
         const double pmin = std::isfinite(g_pmin) ? g_pmin : Materials{}.jc[0].p_min;
+        if (g_art_eps > 0.0) std::printf("  info : искусственное напряжение eps = %.3f\n", g_art_eps);
         if (pmin > -1.0e20) std::printf("  info : p_min = %.3f ГПа\n", pmin / 1e9);
         else std::printf("  info : p_min не задан (растяжение по давлению не ограничено)\n");
     }
@@ -572,6 +577,11 @@ int main(int argc, char** argv)
             else if (a.rfind("--contact-type=", 0) == 0) g_contact_type = std::stoi(val("--contact-type="));
             else if (a.rfind("--contact-gamma=", 0) == 0) g_contact_gamma = std::stod(val("--contact-gamma="));
             else if (a.rfind("--pmin=", 0) == 0) g_pmin = std::stod(val("--pmin="));
+            else if (a.rfind("--art-eps=", 0) == 0)
+            {
+                g_art_eps = std::stod(val("--art-eps="));
+                if (!(g_art_eps >= 0.0)) throw std::invalid_argument("art-eps");
+            }
             else if (a == "--verbose") verbose = true;
             else { std::fprintf(stderr, "неизвестный ключ: %s\n", a.c_str()); return 2; }
         }
