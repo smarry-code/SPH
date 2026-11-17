@@ -17,6 +17,7 @@
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_bond.hpp"
 #include "interactions/fiber_contact.hpp"
+#include "interactions/fiber_contact_law.hpp"
 #include "interactions/postprocessing.hpp"
 #include "param.hpp"
 #include "rhs/contributions.hpp"
@@ -25,6 +26,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -326,6 +328,78 @@ void test_break_removes_bond_from_rhs()
     }
 }
 
+// -----------------------------------------------------------------------
+// 4) FiberDtRefCache: ensure побитово равен прямым compute_fiber_bead_dt_ref /
+//    compute_fiber_bond_dt_limit; пустой набор событий не меняет version (кэш
+//    не пересчитывается); непустой -- version растёт, кэш пересчитывается и
+//    отличается от старого у бусины, потерявшей связь.
+// -----------------------------------------------------------------------
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0);
+}
+
+bool same_bits(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+void test_dt_ref_cache()
+{
+    std::printf("test_dt_ref_cache:\n");
+    BrokenChainFixture fx = make_chain_fixture();
+    fx.topology.bonds[1].l0 = 0.005; // другая l0 у связи (1,2): минимум бусин 1, 2 определяется ею
+    for (int nt : {1, 2, 7, 8})
+    {
+        rhs::CpuExecutor exec(nt);
+        interactions::FiberDtRefCache cache;
+        check(!cache.valid, "кэш изначально invalid");
+        cache.ensure(exec, fx.state, fx.topology, fx.materials, true);
+        std::vector<double> ref;
+        interactions::compute_fiber_bead_dt_ref(exec, fx.state, fx.topology, fx.materials, ref);
+        const double lim = interactions::compute_fiber_bond_dt_limit(exec, fx.state, fx.topology, fx.materials);
+        check(same_bits(cache.bead_dt_ref, ref) && same_bits(cache.bond_dt_limit, lim),
+              "ensure == прямые вызовы побитово (потоков " + std::to_string(nt) + ")");
+    }
+
+    rhs::CpuExecutor exec(2);
+    interactions::FiberDtRefCache cache;
+    cache.ensure(exec, fx.state, fx.topology, fx.materials, false);
+    check(cache.valid && !cache.have_bead && cache.bead_dt_ref.empty(), "need_bead=false: bead_dt_ref не считается");
+    {
+        const double lim = interactions::compute_fiber_bond_dt_limit(exec, fx.state, fx.topology, fx.materials);
+        check(same_bits(cache.bond_dt_limit, lim), "need_bead=false: bond_dt_limit == прямой вызов");
+    }
+    cache.ensure(exec, fx.state, fx.topology, fx.materials, true);
+    check(cache.have_bead && cache.bead_dt_ref.size() == fx.state.size(), "need_bead=true после false: bead_dt_ref досчитан");
+
+    // Пустой набор событий: version не меняется, кэш остаётся валидным и тем же.
+    const unsigned long long v0 = fx.topology.version;
+    const std::vector<double> old_ref = cache.bead_dt_ref;
+    const double old_lim = cache.bond_dt_limit;
+    interactions::apply_fiber_break_events(fx.state, fx.topology, {});
+    check(fx.topology.version == v0, "пустой набор событий: topology.version не меняется");
+    cache.ensure(exec, fx.state, fx.topology, fx.materials, true);
+    check(same_bits(cache.bead_dt_ref, old_ref) && same_bits(cache.bond_dt_limit, old_lim),
+          "пустой набор: кэш прежний");
+
+    // Разрыв связи (1,2).
+    std::vector<std::vector<interactions::FiberBreakEvent>> bufs;
+    std::vector<interactions::FiberBreakEvent> events = interactions::find_fiber_break_events(exec, fx.state, fx.topology, bufs);
+    check(events.size() == 1, "разрыв: одно событие");
+    interactions::apply_fiber_break_events(fx.state, fx.topology, events);
+    check(fx.topology.version == v0 + 1, "непустой набор: version выросла на 1");
+    cache.ensure(exec, fx.state, fx.topology, fx.materials, true);
+    std::vector<double> ref;
+    interactions::compute_fiber_bead_dt_ref(exec, fx.state, fx.topology, fx.materials, ref);
+    const double lim = interactions::compute_fiber_bond_dt_limit(exec, fx.state, fx.topology, fx.materials);
+    check(same_bits(cache.bead_dt_ref, ref) && same_bits(cache.bond_dt_limit, lim),
+          "после разрыва: кэш пересчитан и == прямому вызову побитово");
+    check(cache.version == fx.topology.version && cache.nbonds == fx.topology.bonds.size(), "ключ кэша обновлён");
+    check(!same_bits(cache.bead_dt_ref[1], old_ref[1]) && !same_bits(cache.bead_dt_ref[2], old_ref[2]),
+          "после разрыва dt_ref бусин 1 и 2 отличается от прежнего (потеряли короткую связь)");
+
+    cache.invalidate();
+    check(!cache.valid, "invalidate(): кэш invalid");
+}
+
 } // namespace
 
 int main()
@@ -333,6 +407,7 @@ int main()
     test_break_threshold();
     test_break_new_object_id_and_contact();
     test_break_removes_bond_from_rhs();
+    test_dt_ref_cache();
 
     if (failures == 0)
         std::printf("test_fiber_break: OK\n");

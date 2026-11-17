@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <string>
@@ -1079,6 +1080,61 @@ void test_friction_slots()
     }
 }
 
+// -----------------------------------------------------------------------
+// Закон 0: предел шага из ядра (FiberContactStepParams::law0_dt_min_out) побитово совпадает с
+// compute_fiber_solid_contact_dt_limit при 1, 2, 7, 8 потоках; сцена без контактов -> max().
+// -----------------------------------------------------------------------
+bool same_bits(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+void test_law0_dt_from_kernel()
+{
+    std::printf("test_law0_dt_from_kernel:\n");
+    Materials mats;
+    std::vector<Vec3> beads;
+    for (int k = 0; k < 24; ++k) beads.push_back({k * kL0, 0.0, 0.0});
+    FiberFixture fx = make_bonded_chain(beads, kL0);
+
+    for (int scene = 0; scene < 2; ++scene)
+    {
+        const std::size_t np = 20;
+        ParticleSystem sys;
+        sys.resize(np);
+        for (std::size_t i = 0; i < np; ++i)
+        {
+            // scene 0: частицы вдоль нити на разной высоте (часть в контакте); scene 1: все далеко.
+            const double zoff = (scene == 0) ? (0.2 + 0.05 * static_cast<double>(i % 7)) * 1.0e-3 : 5.0e-2;
+            add_solid_particle(sys, i, (0.7 + 2.1 * static_cast<double>(i)) * 1.0e-3, 0.0, zoff, kMassS, kRhoS,
+                               kItypeS);
+        }
+        for (int nt : {1, 2, 7, 8})
+        {
+            rhs::CpuExecutor exec(nt);
+            interactions::FiberSolidContactSearchResult search;
+            interactions::build_fiber_solid_contact_search(exec, mats, sys, sys.size(), fx.state, fx.topology,
+                                                            fx.materials, search);
+            std::size_t ncontact = 0;
+            for (const auto& pr : search.primitives)
+                if (interactions::compute_fiber_solid_contact_geometry(mats, sys, fx.state, fx.materials, pr).contact)
+                    ++ncontact;
+
+            interactions::FiberContactStepParams p;
+            double dt_kernel = -1.0;
+            p.law0_dt_min_out = &dt_kernel;
+            std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> fbuf;
+            std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> sbuf;
+            std::vector<interactions::FiberSolidFrictionContact> slots;
+            interactions::compute_fiber_solid_contact_contributions(exec, mats, sys, fx.state, fx.materials,
+                                                                     search.primitives, fbuf, sbuf, slots, p);
+            const double dt_ref = interactions::compute_fiber_solid_contact_dt_limit(
+                exec, mats, sys, fx.state, fx.materials, search.primitives);
+            const std::string lab = "сцена " + std::to_string(scene) + ", потоков " + std::to_string(nt);
+            check(same_bits(dt_kernel, dt_ref), lab + ": dt ядра == compute_fiber_solid_contact_dt_limit (побитово)");
+            if (scene == 0) check(ncontact > 0, lab + ": в сцене есть контакты (предпосылка)");
+            else check(ncontact == 0 && dt_kernel == std::numeric_limits<double>::max(), lab + ": без контактов -> max()");
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -1095,6 +1151,7 @@ int main()
     test_fiber_ends();
     test_stretched_bonds();
     test_friction_slots();
+    test_law0_dt_from_kernel();
 
     if (failures == 0)
         std::printf("test_fiber_solid: OK\n");

@@ -1,0 +1,57 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+# symbol: __memmove_evex_unaligned_erms
+#
+# Total Lost Samples: 0
+#
+# Samples: 37K of event 'cpu-clock'
+# Event count (approx.): 370960000000
+#
+# Overhead  Symbol                           
+# ........  .................................
+#
+     2.88%  [.] __memmove_evex_unaligned_erms
+            |          
+             --1.43%--__memmove_evex_unaligned_erms
+                       |          
+                       |--1.32%--__copy_move_a2<false, const interactions::FiberContactPrimitive*, const interactions::FiberContactPrimitive*, interactions::FiberContactPrimitive*> (inlined)
+                       |          __copy_move_a1<false, const interactions::FiberContactPrimitive*, interactions::FiberContactPrimitive*> (inlined)
+                       |          __copy_move_a<false, __gnu_cxx::__normal_iterator<const interactions::FiberContactPrimitive*, std::vector<interactions::FiberContactPrimitive> >, __gnu_cxx::__normal_iterator<interactions::FiberContactPrimitive*, std::vector<interactions::FiberContactPrimitive> > > (inlined)
+                       |          copy<__gnu_cxx::__normal_iterator<const interactions::FiberContactPrimitive*, std::vector<interactions::FiberContactPrimitive> >, __gnu_cxx::__normal_iterator<interactions::FiberContactPrimitive*, std::vector<interactions::FiberContactPrimitive> > > (inlined)
+                       |          operator() (inlined)
+                       |          |          
+                       |          |--1.30%--void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive>(std::vector<rhs::CpuExecutor::SegPart<interactions::FiberContactPrimitive>, std::allocator<rhs::CpuExecutor::SegPart<interactions::FiberContactPrimitive> > > const&, std::vector<interactions::FiberContactPrimitive, std::allocator<interactions::FiberContactPrimitive> >&) const::{lambda(unsigned long)#1}>(unsigned long, unsigned long, rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive>(std::vector<rhs::CpuExecutor::SegPart<interactions::FiberContactPrimitive>, std::allocator<rhs::CpuExecutor::SegPart<interactions::FiberContactPrimitive> > > const&, std::vector<interactions::FiberContactPrimitive, std::allocator<interactions::FiberContactPrimitive> >&) const::{lambda(unsigned long)#1}&&) const [clone ._omp_fn.0]
+                       |          |          GOMP_parallel
+                       |          |          parallel_for<rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive>(const std::vector<SegPart<interactions::FiberContactPrimitive> >&, std::vector<interactions::FiberContactPrimitive>&) const::<lambda(std::size_t)> > (inlined)
+                       |          |          concat_segments<interactions::FiberContactPrimitive> (inlined)
+                       |          |          run_time_integration<ode::PredictorCorrectorSolver> (inlined)
+                       |          |          time_integration (inlined)
+                       |          |          
+                       |           --0.02%--parallel_for<rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive>(const std::vector<SegPart<interactions::FiberContactPrimitive> >&, std::vector<interactions::FiberContactPrimitive>&) const::<lambda(std::size_t)> > (inlined)
+                       |                     parallel_for<rhs::CpuExecutor::concat_segments<interactions::FiberContactPrimitive>(const std::vector<SegPart<interactions::FiberContactPrimitive> >&, std::vector<interactions::FiberContactPrimitive>&) const::<lambda(std::size_t)> > (inlined)
+                       |                     concat_segments<interactions::FiberContactPrimitive> (inlined)
+                       |                     contact_ff (inlined)
+                       |                     diagnostics (inlined)
+                       |                     on_step (inlined)
+                       |                     operator() (inlined)
+                       |                     should_stop (inlined)
+                       |                     run_time_integration<ode::PredictorCorrectorSolver> (inlined)
+                       |                     time_integration (inlined)
+                       |          
+                        --0.10%--__copy_move_a2<false, double const*, double const*, double*> (inlined)
+                                  __copy_move_a1<false, double const*, double*> (inlined)
+                                  __copy_move_a<false, double const*, double*> (inlined)
+                                  copy<double const*, double*> (inlined)
+                                  _M_assign_aux<double const*> (inlined)
+                                  assign<double const*> (inlined)
+                                  build (inlined)
+                                  |          
+                                   --0.09%--build_fiber_contact_search (inlined)
+                                             run_time_integration<ode::PredictorCorrectorSolver> (inlined)
+                                             time_integration (inlined)
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

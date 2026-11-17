@@ -52,8 +52,12 @@ struct Contribution
 // "Временная память": "не следует выполнять большое количество небольших
 // heap allocations внутри... interaction kernel").
 // ----------------------------------------------------------------------
+// alignas(64): буферы лежат в std::vector по одному на отрезок (kDetSegments), соседние отрезки
+// заполняют разные потоки. Без выравнивания заголовки vector (24 Б) соседних буферов делят
+// кэш-линию, и каждый push_back гоняет её между ядрами (false sharing). На порядок вкладов
+// и результат выравнивание не влияет.
 template <class Delta>
-class ContributionBuffer
+class alignas(64) ContributionBuffer
 {
 public:
     void clear() { data_.clear(); }
@@ -178,6 +182,17 @@ private:
 // slot) — результат не зависит от того, сколько потоков и в каком порядке
 // произвели contributions (SPH.md, "Детерминизм").
 //
+// КОНТРАКТ ПО УМОЛЧАНИЮ (deterministic = false, так зовут все ядра расчёта):
+// сортировки нет, порядок суммирования на частицу -- номер буфера, затем
+// позиция в буфере. Независимость от числа потоков держится на производителе:
+// буфер g заполняет ровно один отрезок g фиксированного разбиения
+// (CpuExecutor::parallel_for_segments, отрезки не зависят от числа потоков), и
+// внутри отрезка вклады идут по возрастанию номера primitive. Ядро, которое
+// пишет вклады иначе (worker_id(), динамическая раздача), должно включать
+// deterministic. Следствие для оптимизаций: обход подмножества primitives
+// (например, только активных слотов) в порядке возрастания номера сохраняет
+// порядок сложения на частицу и потому результат побитово.
+//
 // Delta должен быть default-конструируем в "нулевой" элемент суммы и
 // поддерживать operator+=.
 // ----------------------------------------------------------------------
@@ -231,12 +246,20 @@ template <class Delta>
 void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t particle_count,
                           std::vector<Delta>& output, ReduceScratch& scratch, const ReduceOptions& options)
 {
-    output.assign(particle_count, Delta{});
+    // output обнуляется параллельно: при пустом вводе -- здесь, иначе -- в проходе 3 каждым shard'ом свой
+    // непрерывный диапазон частиц (shard'ы покрывают [0, particle_count) целиком). resize не очищает: значения
+    // прошлого вызова перезаписываются Delta{} до суммирования.
+    output.resize(particle_count);
     if (particle_count == 0) return;
 
     std::size_t total = 0;
     for (std::size_t g = 0; g < nbuf; ++g) total += scratch.seg_size[g];
-    if (total == 0) return;
+    if (total == 0)
+    {
+        Delta* const o = output.data();
+        exec.parallel_for(particle_count, [&](std::size_t i) { o[i] = Delta{}; });
+        return;
+    }
 
     std::size_t shard_count = options.shard_count;
     if (shard_count == 0)
@@ -323,6 +346,7 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
     const std::size_t* const start = scratch.shard_start.data();
     Delta* const out = output.data();
     exec.parallel_for(shard_count, std::size_t(1), [&](std::size_t s) {
+        for (std::size_t i = bound[s]; i < bound[s + 1]; ++i) out[i] = Delta{};
         const void** const begin = refs + start[s];
         const void** const end = refs + start[s + 1];
         if (options.deterministic)

@@ -339,6 +339,35 @@ struct SolidCountDelta
 namespace detail_friction
 {
 
+// Обход активных слотов: по списку (только активные, прежние отрезки seg -- порядок вкладов в буфер seg
+// тот же, что при обходе плотного массива с пропуском неактивных) либо по плотному массиву из n слотов.
+// body(seg, k). Пустой список -- ничего не делает (плотный массив в этом случае целиком неактивен).
+// seg_bound (необязательный, только плотный режим): границы отрезков по индексам массива слотов (65 значений,
+// seg_bound[64] == n). Нужен, когда слоты вида стоят по индексу j отсечённого списка primitive (поиск в режиме
+// cull_apart, FiberContactSearchResult::seg_bound): отрезок слота -- отрезок его ПОЛНОГО индекса k, а не
+// j * 64 / n, иначе порядок суммирования double на частицу в буферах вкладов изменился бы. Без seg_bound --
+// прежнее parallel_for_segments(n).
+template <class Body>
+inline void for_each_active_slot(const rhs::CpuExecutor& exec, std::size_t n,
+                                  const std::vector<FrictionActiveRef>* active, Body&& body,
+                                  const std::size_t* seg_bound = nullptr)
+{
+    if (active != nullptr)
+    {
+        exec.parallel_for_seg_groups(
+            active->size(), [&](std::size_t j) { return (*active)[j].seg; },
+            [&](std::size_t seg, std::size_t j) { body(seg, (*active)[j].k); });
+        return;
+    }
+    if (n == 0) return;
+    if (seg_bound != nullptr)
+    {
+        exec.parallel_for_seg_bounds(seg_bound, body);
+        return;
+    }
+    exec.parallel_for_segments(n, body);
+}
+
 template <class Delta>
 inline void prepare(const rhs::CpuExecutor& exec, std::vector<rhs::ContributionBuffer<Delta>>& buffers)
 {
@@ -348,11 +377,13 @@ inline void prepare(const rhs::CpuExecutor& exec, std::vector<rhs::ContributionB
 }
 
 inline void emit_counts_fiber_fiber(const rhs::CpuExecutor& exec, const std::vector<FiberFrictionContact>& contacts,
-                                     std::vector<rhs::ContributionBuffer<FiberCountDelta>>& count_buffers)
+                                     std::vector<rhs::ContributionBuffer<FiberCountDelta>>& count_buffers,
+                                     const std::vector<FrictionActiveRef>* active = nullptr,
+                                     const std::size_t* seg_bound = nullptr)
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+    for_each_active_slot(exec, n, active, [&](std::size_t seg, std::size_t k) {
         const FiberFrictionContact& c = contacts[k];
         if (!c.active) return;
         rhs::ContributionWriter<FiberCountDelta> writer(count_buffers[seg],
@@ -362,16 +393,17 @@ inline void emit_counts_fiber_fiber(const rhs::CpuExecutor& exec, const std::vec
         fiber_friction_for_each_bead(c, [&](rhs::index_t bead, double, double, std::uint16_t slot) {
             writer.emit(bead, one, static_cast<std::uint64_t>(k), slot);
         });
-    });
+    }, seg_bound);
 }
 
 inline void emit_counts_fiber_solid(const rhs::CpuExecutor& exec, const std::vector<FiberSolidFrictionContact>& contacts,
                                      std::vector<rhs::ContributionBuffer<FiberCountDelta>>& fiber_count_buffers,
-                                     std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_count_buffers)
+                                     std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_count_buffers,
+                                     const std::vector<FrictionActiveRef>* active = nullptr)
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+    for_each_active_slot(exec, n, active, [&](std::size_t seg, std::size_t k) {
         const FiberSolidFrictionContact& c = contacts[k];
         if (!c.active) return;
         rhs::ContributionWriter<FiberCountDelta> fw(fiber_count_buffers[seg],
@@ -428,15 +460,19 @@ inline void compute_friction_counts(const rhs::CpuExecutor& exec, std::size_t nf
                                      std::vector<rhs::ContributionBuffer<SolidCountDelta>>& solid_count_buffers,
                                      std::vector<double>& bead_count, std::vector<double>& solid_count,
                                      std::vector<FiberCountDelta>& fiber_counts,
-                                     std::vector<SolidCountDelta>& solid_counts, rhs::ReduceScratch& scratch)
+                                     std::vector<SolidCountDelta>& solid_counts, rhs::ReduceScratch& scratch,
+                                     const std::vector<FrictionActiveRef>* ff_active = nullptr,
+                                     const std::vector<FrictionActiveRef>* fs_active = nullptr,
+                                     const std::size_t* ff_seg_bound = nullptr)
 {
     detail_friction::prepare(exec, fiber_count_buffers);
     detail_friction::prepare(exec, solid_count_buffers);
     bead_count.assign(nfiber, 0.0);
     solid_count.assign(nsolid, 0.0);
 
-    detail_friction::emit_counts_fiber_fiber(exec, fiber_contacts, fiber_count_buffers);
-    detail_friction::emit_counts_fiber_solid(exec, solid_contacts, fiber_count_buffers, solid_count_buffers);
+    detail_friction::emit_counts_fiber_fiber(exec, fiber_contacts, fiber_count_buffers, ff_active, ff_seg_bound);
+    detail_friction::emit_counts_fiber_solid(exec, solid_contacts, fiber_count_buffers, solid_count_buffers,
+                                              fs_active);
 
     if (!fiber_contacts.empty() || !solid_contacts.empty())
     {
@@ -474,12 +510,14 @@ namespace detail_friction
 inline void emit_fiber_fiber(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
                               const ode::FiberVelocityUpdate& upd, const std::vector<double> (&dv_no_friction)[dim],
                               const std::vector<FiberFrictionContact>& contacts, const std::vector<double>& bead_count,
-                              std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers)
+                              std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& thread_buffers,
+                              const std::vector<FrictionActiveRef>* active = nullptr,
+                              const std::size_t* seg_bound = nullptr)
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
 
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+    for_each_active_slot(exec, n, active, [&](std::size_t seg, std::size_t k) {
         const FiberFrictionContact& c = contacts[k];
         if (!c.active) return;
 
@@ -497,7 +535,7 @@ inline void emit_fiber_fiber(const rhs::CpuExecutor& exec, const fiber::FiberSta
             for (std::size_t dd = 0; dd < dim; ++dd) d.dv[dd] = sign * weight * imp.Ft[dd] / m;
             writer.emit(bead, d, static_cast<std::uint64_t>(k), slot);
         });
-    });
+    }, seg_bound);
 }
 
 inline void emit_fiber_solid(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -508,12 +546,13 @@ inline void emit_fiber_solid(const rhs::CpuExecutor& exec, const fiber::FiberSta
                               const std::vector<double>& bead_count, const std::vector<double>& solid_count,
                               bool solid_kinematic,
                               std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-                              std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+                              std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+                              const std::vector<FrictionActiveRef>* active = nullptr)
 {
     const std::size_t n = contacts.size();
     if (n == 0) return;
 
-    exec.parallel_for_segments(n, [&](std::size_t seg, std::size_t k) {
+    for_each_active_slot(exec, n, active, [&](std::size_t seg, std::size_t k) {
         const FiberSolidFrictionContact& c = contacts[k];
         if (!c.active) return;
 
@@ -573,6 +612,10 @@ inline void compute_fiber_friction_contributions(const rhs::CpuExecutor& exec, c
 // Fiber-Solid: type 5) -- в fiber_buffers; вклады Solid (type 13) -- в
 // solid_buffers (при solid_kinematic=true не эмитируются). Суммирование --
 // rhs::reduce_contributions вызывающей стороной.
+// ff_active / fs_active (необязательные): списки активных слотов (см. FrictionActiveRef) -- обход только
+// активных слотов, результат побитово тот же, что при обходе плотных массивов.
+// ff_seg_bound (необязательный): границы отрезков плотного массива слотов нить-нить при отсечённом поиске
+// (см. for_each_active_slot); используется только когда ff_active == nullptr.
 // ----------------------------------------------------------------------
 inline void compute_friction_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const ode::FiberVelocityUpdate& fupd,
@@ -581,13 +624,16 @@ inline void compute_friction_contributions(
     const std::vector<std::vector<double>>& dvx_solid, const std::vector<FiberSolidFrictionContact>& solid_contacts,
     const std::vector<double>& bead_count, const std::vector<double>& solid_count, bool solid_kinematic,
     std::vector<rhs::ContributionBuffer<fiber::FiberDelta>>& fiber_buffers,
-    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers)
+    std::vector<rhs::ContributionBuffer<SolidDelta>>& solid_buffers,
+    const std::vector<FrictionActiveRef>* ff_active = nullptr, const std::vector<FrictionActiveRef>* fs_active = nullptr,
+    const std::size_t* ff_seg_bound = nullptr)
 {
     detail_friction::prepare(exec, fiber_buffers);
     detail_friction::prepare(exec, solid_buffers);
-    detail_friction::emit_fiber_fiber(exec, state, fupd, dv_fiber, fiber_contacts, bead_count, fiber_buffers);
+    detail_friction::emit_fiber_fiber(exec, state, fupd, dv_fiber, fiber_contacts, bead_count, fiber_buffers,
+                                       ff_active, ff_seg_bound);
     detail_friction::emit_fiber_solid(exec, state, fupd, dv_fiber, sys, supd, dvx_solid, solid_contacts, bead_count,
-                                       solid_count, solid_kinematic, fiber_buffers, solid_buffers);
+                                       solid_count, solid_kinematic, fiber_buffers, solid_buffers, fs_active);
 }
 
 // ----------------------------------------------------------------------

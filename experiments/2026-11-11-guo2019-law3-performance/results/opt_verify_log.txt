@@ -1,0 +1,50 @@
+2026-11-12 00:46:38 === старт: NEW=280b0f4 + правки по ревью Codex (постоянные части сбора слотов, тест Т8); REF=1658756 (правки по ревью Codex)
+2026-11-12 00:52:37 сборка NEW build rc=0 предупреждений: 1
+2026-11-12 00:58:50 сборка NEW build-elog rc=0 предупреждений: 1
+2026-11-12 00:58:50 сборка REF build-elog (guo2019_shot) rc=0 предупреждений: 0
+2026-11-12 00:58:50 предупреждения в изменённых файлах NEW:
+2026-11-12 00:58:52 test_spatial_index (build) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-12 00:58:53 test_spatial_index (build-elog) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-12 00:58:53 test_executor (build) rc=0: test_executor: ПРОЙДЕН
+2026-11-12 00:58:53 test_executor (build-elog) rc=0: test_executor: ПРОЙДЕН
+2026-11-12 00:58:56 test_fiber_contact_projection (build) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-12 00:58:59 test_fiber_contact_projection (build-elog) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-12 01:02:50 ctest build rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-12 01:06:42 ctest build-elog rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-12 01:06:42 test_checkpoint (вывод) rc=0
+PASS: 1a. round-trip PC (ode_solver=0), связи целы
+PASS: 1b. round-trip Euler (ode_solver=1), связи целы
+PASS: 2a. round-trip PC, связи рвутся до шага N
+PASS: 2b. round-trip Euler, связи рвутся до шага N
+PASS: 3. целостность: порча байта, обрезка, неверный magic
+PASS: 4. политика настроек: t_total/save_t -- да, CFL -- только с force
+PASS: 4a. периодичность checkpoint_every_steps=7
+PASS: 5. ротация: .ckpt и .ckpt.prev, без временного файла
+PASS: 7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается
+PASS: 8. v3: user_state round-trip (в т.ч. нулевые байты); файл v2 читается
+PASS: 9. проекция: рестарт с заполненным тёплым стартом побитово равен непрерывному прогону
+PASS: 10. проекция: полный шаг на 1 и 4 потоках побитово одинаков
+2026-11-12 01:07:20   закон 0 monitor.csv: СОВПАДАЕТ
+2026-11-12 01:07:20   закон 0 energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:07:20   закон 0 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 01:07:53   закон 3 monitor.csv: СОВПАДАЕТ
+2026-11-12 01:07:53   закон 3 energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:07:53   закон 3 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 01:08:32   закон 4 monitor.csv: СОВПАДАЕТ
+2026-11-12 01:08:32   закон 4 energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:08:32   закон 4 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 01:08:39 проекция REF rc=0
+2026-11-12 01:08:43 проекция NEW rc=0
+2026-11-12 01:08:47 проекция NEW 2 потока rc=0
+2026-11-12 01:08:47   проекция NEW/REF monitor.csv: СОВПАДАЕТ
+2026-11-12 01:08:47   проекция NEW 1/2 потока monitor.csv: СОВПАДАЕТ
+2026-11-12 01:08:47   проекция NEW/REF energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:08:47   проекция NEW 1/2 потока energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:08:47   проекция NEW/REF shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 01:08:47   NEW shot.txt проекция: W_proj_pos_max=0 proj_slots_max=246 proj_warm_scaled_steps=256 
+2026-11-12 01:08:49 чекпоинт ч.1 rc=0
+2026-11-12 01:08:51 чекпоинт ч.2 rc=0: монитор: состояние восстановлено на шаге 1300; monitor.csv: оставлено строк 1300 (последняя -- шаг 1300), отброшено после чекпоинта 0.
+2026-11-12 01:08:51   рестарт monitor.csv: СОВПАДАЕТ
+2026-11-12 01:08:51   рестарт energy_log.csv: СОВПАДАЕТ
+2026-11-12 01:08:51   рестарт shot.txt: СОВПАДАЕТ
+2026-11-12 01:08:51 готово

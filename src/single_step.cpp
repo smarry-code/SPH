@@ -125,7 +125,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     interactions::build_ghost_set(sys, ntotal, ghosts);
 
     interactions::SolidExtended& ext = ws.ext;
-    interactions::build_solid_extended(sys, ntotal, derived, ghosts, ext);
+    interactions::build_solid_extended(exec, sys, ntotal, derived, ghosts, ext);
 
     // --- Поиск пар Solid-SPH (общий для Solid-SPH и Solid-Solid-Contact,
     // fiber/SPH.md: "Одна и та же построенная spatial structure может
@@ -211,7 +211,8 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     }
 #endif
     // --- Запись в выходные параметры + шим совместимости в sys -------------
-    for (size_t i = 0; i < ntotal; ++i)
+    // Поэлементный цикл: каждый элемент пишется один раз, накопителей нет -- результат не зависит от числа потоков.
+    exec.parallel_for(ntotal, [&](size_t i)
     {
         const interactions::SolidFinal& f = finalres[i];
         drho[i] = f.drho;
@@ -255,7 +256,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
         sys.rxy[i] = f.rxy; sys.rxz[i] = f.rxz; sys.ryz[i] = f.ryz;
 
         tdsdt[i] = 0.0; // физическая вязкость (visc) выключена constexpr -- как в старом int_force
-    }
+    });
 
     // h_upgrade (sle) -- этап Ф7: вызов вынесен ИЗ single_step в
     // interactions::update_smoothing_length (interactions/postprocessing.hpp),
@@ -268,7 +269,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
 
     // Единая диагностика состояния (подэтап 5.8, перенесена из старого
     // single_step): read-only проверка конечности p/rho/c/u/hsml после шага.
-    Diagnostics::validate(sys, ntotal, "post-solid-rhs");
+    Diagnostics::validate(exec, sys, ntotal, "post-solid-rhs");
 
     // Старый путь дозаписывал зеркальные частицы прямо в sys (virt_part.cpp)
     // и поэтому обнулял [ntotal, sys.size()) в конце каждого шага, чтобы не

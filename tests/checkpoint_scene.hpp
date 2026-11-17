@@ -17,6 +17,11 @@
 //          (проверка разрыва и повреждённости), при большом -- нет.
 //   Пластина и нити разнесены (пластина при x, y in [0, 3] мм, нити при
 //          x in [50, 53] мм), поэтому контакт Solid-Fiber не участвует.
+//   Вариант contact = true (проверки проекции нормального контакта): третья
+//          свободная нить из 4 бусин вдоль y пересекает первую посередине
+//          сегмента (x = 51.5 мм, y = 0) с прониканием 5 мкм (z = 0.095 мм при
+//          d = 0.1 мм) и сближается с ней со скоростью kApproachSpeed по -z:
+//          с первого шага есть активный нормальный слот и непустой тёплый старт.
 //
 // ЧТО ЧИТАЕТ И ПИШЕТ. input() берёт Initial_Conditions.txt из текущего каталога,
 // а цикл по времени пишет кадры и log.txt туда же. Поэтому build_checkpoint_scene
@@ -60,6 +65,10 @@ constexpr double kPullSpeed = 60.0;
 // Положение зажима (левый конец) и длина нити вдоль x, м.
 constexpr double kRootX = 0.050;
 constexpr double kFiberLen = 0.003;
+// Вариант contact: положение пересекающей нити и скорость её сближения, м и м/с.
+constexpr double kCrossX = kRootX + 1.5e-3;
+constexpr double kCrossZ = 0.095e-3;
+constexpr double kApproachSpeed = 3.0;
 
 // Таблица частей для импорта .k (как в test_k_e2e.cpp, kTable).
 inline constexpr const char* kParts =
@@ -112,7 +121,7 @@ inline std::string make_solid_deck()
 
 // Файл нитей: материал 0 (Twaron, E = 80 ГПа как в образце с повреждённостью),
 // два пучка по 4 бусины вдоль x (y = 0 и y = 10 мм), зажим у левого конца.
-inline std::string make_fiber_file(double eps_break)
+inline std::string make_fiber_file(double eps_break, bool contact)
 {
     std::ostringstream os;
     os << std::setprecision(12);
@@ -128,6 +137,12 @@ inline std::string make_fiber_file(double eps_break)
         for (int j = 0; j < 4; ++j) os << (kRootX + j * 1.0e-3) << " " << y << " 0.0\n";
         os << "CLAMP_BOX " << kRootX - 0.5e-3 << " " << y - 0.5e-3 << " -0.5e-3 "
            << kRootX + 0.5e-3 << " " << y + 0.5e-3 << " 0.5e-3\n";
+    }
+    if (contact)
+    {
+        // Свободная нить поперёк первой, без зажима.
+        os << "FIBER 0 4\n";
+        for (int j = 0; j < 4; ++j) os << kCrossX << " " << (-1.5e-3 + j * 1.0e-3) << " " << kCrossZ << "\n";
     }
     return os.str();
 }
@@ -147,10 +162,12 @@ inline void write_ic(const std::string& extra)
 //   ode_solver -- 0 = предиктор-корректор, 1 = Эйлер (cfg.ode_solver).
 //   solid_itype -- itype Solid: 10 (по умолчанию, rho 2510) или 12 (JC 4340, rho 7830).
 //   extra_ic   -- дополнительные строки Initial_Conditions (например, jc_heating = ...).
+//   contact -- третья нить поперёк первой с прониканием и сближением (см. шапку).
 // Бросает std::runtime_error при сбое загрузки и std::invalid_argument при
 // неверном ode_solver.
 inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_break, int ode_solver,
-                                        int solid_itype = 10, const std::string& extra_ic = "")
+                                        int solid_itype = 10, const std::string& extra_ic = "",
+                                        bool contact = false)
 {
     namespace fs = std::filesystem;
     using namespace ckpt_scene_detail;
@@ -164,7 +181,7 @@ inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_b
     fs::current_path(workdir);
     write_file("deck.k", make_solid_deck());
     write_file("deck.parts", parts);
-    write_file("scene.fib", make_fiber_file(eps_break));
+    write_file("scene.fib", make_fiber_file(eps_break, contact));
     write_ic("k_file = deck.k\nk_parts_file = deck.parts\nfiber_file = scene.fib\n" +
              (extra_ic.empty() ? std::string() : extra_ic + "\n"));
 
@@ -173,7 +190,8 @@ inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_b
     input(sc.cfg, sc.model, sc.ntotal, sc.delta_x);
     sc.cfg.ode_solver = ode_solver;
 
-    if (sc.ntotal != 32 || sc.model.fiber.size() != 8 || sc.model.topology.bonds.size() != 6)
+    const std::size_t nbeads = contact ? 12 : 8, nbonds = contact ? 9 : 6;
+    if (sc.ntotal != 32 || sc.model.fiber.size() != nbeads || sc.model.topology.bonds.size() != nbonds)
         throw std::runtime_error("build_checkpoint_scene: состав сцены не совпал с ожидаемым");
     if (sc.model.clamps.empty())
         throw std::runtime_error("build_checkpoint_scene: зажимы нитей не загружены");
@@ -186,6 +204,7 @@ inline CkptScene build_checkpoint_scene(const std::string& workdir, double eps_b
         const double x = fb.x[0][k];
         if (x > kRootX + 0.5e-3)
             fb.vx[0][k] = kPullSpeed * (x - kRootX) / kFiberLen;
+        if (contact && k >= 8) fb.vx[2][k] = -kApproachSpeed; // пересекающая нить сближается с первой
     }
 
     // Как run_steps в test_k_e2e.cpp: расширение model.solid до maxn и dt по Куранту.

@@ -1,0 +1,279 @@
+потоков 8, запись 84.7 с, главный tid 315592
+
+=== окно pre [0.03, 0.28]: сэмплов 80874, потоков 8
+классы (доля всех сэмплов окна): idle_wait=16.0%  par_wait=0.4%  par_work=81.8%  serial=1.9%
+главный поток: serial=14.2% par_work=78.3% par_wait=0.4% idle_wait=7.1%
+полезная работа (par_work+serial) 83.7% потреблённого CPU-времени окна; доля последовательных сэмплов главного потока (не f_s по Амдалу) = 0.142
+ёмкость 8 x 499 Гц x 21.2 с = 84565 сэмплов: на CPU 95.6%, полезная работа 80.0%, вне CPU (сон) ~4.4%; главный поток на CPU 99.9%, из них serial 14.2% окна
+по потокам: tid  par_work par_wait idle_wait serial
+   315592    78.3%     0.4%      7.1%   14.2%
+   315593    82.2%     0.4%     17.4%    0.0%
+   315594    82.1%     0.4%     17.5%    0.0%
+   315595    82.4%     0.3%     17.2%    0.0%
+   315596    82.6%     0.4%     16.9%    0.1%
+   315597    82.3%     0.3%     17.4%    0.0%
+   315598    82.4%     0.4%     17.1%    0.1%
+   315599    82.0%     0.3%     17.7%    0.0%
+параллельные регионы (доля всех сэмплов окна; wait/(work+wait) -- дисбаланс):
+   29.5%  work  29.5%  wait   0.0%  imb 0.00  interactions::build_fiber_contact_search
+   14.2%  work  14.2%  wait   0.0%  imb 0.00  interactions::compute_solid_sph_contributions
+   12.8%  work  12.7%  wait   0.0%  imb 0.00  reduce_segments_into [libc]
+    7.2%  work   7.2%  wait   0.0%  imb 0.00  interactions::build_solid_sph_search
+    5.4%  work   5.4%  wait   0.0%  imb 0.00  interactions::compute_fiber_contact_contributions
+    2.5%  work   2.5%  wait   0.0%  imb 0.00  interactions::compute_fiber_bond_contributions
+    2.3%  work   2.2%  wait   0.1%  imb 0.04  build
+    2.1%  work   2.1%  wait   0.0%  imb 0.00  interactions::build_fiber_solid_contact_search
+    1.3%  work   1.3%  wait   0.0%  imb 0.00  interactions::apply_fiber_bond_constitutive
+    0.7%  work   0.7%  wait   0.0%  imb 0.05  run_time_integration [libc]
+    0.5%  work   0.5%  wait   0.0%  imb 0.01  interactions::detail::find_fiber_break_events_impl
+    0.5%  work   0.5%  wait   0.0%  imb 0.01  single_step
+    0.5%  work   0.5%  wait   0.0%  imb 0.02  pc_finalize_velocity_position [libc]
+    0.5%  work   0.5%  wait   0.0%  imb 0.01  interactions::fiber_max_current_bond_length
+    0.4%  work   0.4%  wait   0.0%  imb 0.00  ? (__memset_evex_unaligned_erms) [?]
+    0.4%  work   0.4%  wait   0.0%  imb 0.08  pc_predict_velocity_half_step [libc]
+    0.3%  work   0.3%  wait   0.0%  imb 0.00  unsigned [libc]
+    0.2%  work   0.2%  wait   0.0%  imb 0.03  interactions::detail_normal::zero_dvel
+    0.2%  work   0.2%  wait   0.0%  imb 0.03  interactions::compute_fiber_contact_dt_limit
+    0.2%  work   0.2%  wait   0.0%  imb 0.04  interactions::finalize_solid
+    0.2%  work   0.2%  wait   0.0%  imb 0.01  ode::PredictorCorrectorSolver::predict_solid
+    0.2%  work   0.2%  wait   0.0%  imb 0.01  interactions::compute_solid_derived
+    0.1%  work   0.1%  wait   0.0%  imb 0.14  pc_finalize_velocity_position_with_av [libc]
+    0.0%  work   0.0%  wait   0.0%  imb 0.11  Diagnostics::validate
+    0.0%  work   0.0%  wait   0.0%  imb 0.61  concat_segments [libc]
+    0.0%  work   0.0%  wait   0.0%  imb 0.08  interactions::compute_fiber_solid_contact_contributions
+    0.0%  work   0.0%  wait   0.0%  imb 1.00  interactions::compute_normal_counts
+    0.0%  work   0.0%  wait   0.0%  imb 0.00  compute_normal_counts [libc]
+    0.0%  work   0.0%  wait   0.0%  imb 0.00  SpatialIndex [libc]
+    0.0%  work   0.0%  wait   0.0%  imb 0.67  ode::PredictorCorrectorSolver::correct_solid
+последовательный код главного потока: верхняя функция проекта (доля всех сэмплов окна, доля serial):
+   0.19%  10.0%  bond_energy
+   0.15%   7.7%  kinetic_fiber
+   0.13%   6.7%  build_fiber_contact_search
+   0.12%   6.2%  lower_bound<__gnu_cxx::__normal_iterator<std::pair<long unsigned int, unsigned int>*, std::vector<std::pair<lo…
+   0.11%   6.0%  accumulate_plastic
+   0.09%   4.9%  on_step
+   0.09%   4.8%  fiber_segment_closest_params
+   0.09%   4.8%  fiber_cross_section_area
+   0.08%   4.4%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_fiber_contact_search
+   0.08%   4.1%  advance<__gnu_cxx::__normal_iterator<std::pair<long unsigned int, unsigned int>*, std::vector<std::pair<long u…
+   0.07%   3.6%  solid_contact_radius
+   0.06%   3.2%  h_upgrade
+   0.05%   2.9%  compute_fiber_contact_geometry
+   0.05%   2.5%  dist2
+   0.04%   2.3%  parallel_for<interactions::build_fiber_contact_search
+   0.04%   1.9%  cell_key
+   0.03%   1.8%  run_time_integration<ode::PredictorCorrectorSolver>
+   0.03%   1.7%  diagnostics
+   0.03%   1.7%  clamp_project_item
+   0.03%   1.6%  sum_mass_fiber
+   0.03%   1.6%  inelastic
+   0.02%   1.3%  build_fiber_solid_contact_search
+   0.02%   1.0%  compute_cfl_timestep
+   0.02%   1.0%  compute_solid_derived
+   0.01%   0.7%  apply_clamp_projection<std::vector<double> [3], std::vector<std::vector<double> > >
+   0.01%   0.7%  point_segment_dist
+   0.01%   0.5%  single_step
+   0.01%   0.5%  clear
+   0.01%   0.5%  reduce_segments_into<interactions::SolidDelta>
+   0.01%   0.5%  ke_range
+последовательный код: стек проекта (3 кадра):
+   0.19%   9.9%  bond_energy < on_step < should_stop
+   0.15%   7.7%  kinetic_fiber < energies < on_step
+   0.13%   6.7%  build_fiber_contact_search < fiber_contact_view < run_time_integration<ode::PredictorCorrectorSolver…
+   0.12%   6.2%  lower_bound<__gnu_cxx::__normal_iterator<std::pair… < diagnostics < on_step
+   0.11%   6.0%  accumulate_plastic < on_step < should_stop
+   0.09%   4.9%  on_step < should_stop < run_time_integration<ode::PredictorCorrectorSolver…
+   0.09%   4.8%  fiber_segment_closest_params < parallel_for<rhs::CpuExecutor::parallel_reduce<int… < parallel_for<rhs::CpuExecutor::parallel_reduce<int…
+   0.09%   4.8%  fiber_cross_section_area < bond_energy < on_step
+   0.08%   4.4%  for_each_near_cell<rhs::SpatialIndex<3>::visit_sam… < visit_same_type_cell<interactions::build_fiber_con… < parallel_for<rhs::CpuExecutor::parallel_for_segmen…
+   0.08%   4.1%  advance<__gnu_cxx::__normal_iterator<std::pair<lon… < lower_bound<__gnu_cxx::__normal_iterator<std::pair… < diagnostics
+   0.06%   3.4%  solid_contact_radius < build_fiber_solid_contact_search < compute_fiber_solid_contact
+   0.06%   3.1%  h_upgrade < update_smoothing_length < update_smoothing_length
+   0.05%   2.9%  compute_fiber_contact_geometry < parallel_for<rhs::CpuExecutor::parallel_reduce<int… < parallel_for<rhs::CpuExecutor::parallel_reduce<int…
+   0.05%   2.5%  dist2 < for_each_near_cell<rhs::SpatialIndex<3>::visit_sam… < visit_same_type_cell<interactions::build_fiber_con…
+   0.04%   2.3%  parallel_for<interactions::build_fiber_contact_sea… < parallel_for<interactions::build_fiber_contact_sea… < build_fiber_contact_search
+   0.04%   1.9%  cell_key < diagnostics < on_step
+   0.03%   1.8%  run_time_integration<ode::PredictorCorrectorSolver… < time_integration < run_shot
+   0.03%   1.7%  diagnostics < on_step < should_stop
+   0.03%   1.7%  clamp_project_item < apply_clamp_projection<std::vector<double> [3], st… < run_time_integration<ode::PredictorCorrectorSolver…
+   0.03%   1.6%  sum_mass_fiber < on_step < should_stop
+   0.03%   1.6%  inelastic < bond_energy < on_step
+   0.02%   1.3%  build_fiber_solid_contact_search < compute_fiber_solid_contact < run_time_integration<ode::PredictorCorrectorSolver…
+   0.02%   1.0%  compute_cfl_timestep < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.02%   1.0%  compute_solid_derived < single_step < run_time_integration<ode::PredictorCorrectorSolver…
+   0.01%   0.7%  apply_clamp_projection<std::vector<double> [3], st… < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.01%   0.7%  point_segment_dist < diagnostics < on_step
+   0.01%   0.7%  void rhs::CpuExecutor::parallel_for<interactions::…
+   0.01%   0.7%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecut…
+   0.01%   0.5%  single_step < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.01%   0.5%  reduce_segments_into<interactions::SolidDelta> < single_step < run_time_integration<ode::PredictorCorrectorSolver…
+работа в регионах: верхний кадр:
+  14.53%  fiber_contact_surely_apart
+  14.17%  void rhs::CpuExecutor::parallel_for<interactions::compute_solid_sph_contributions(rhs::CpuExecutor const&, Sim…
+  10.43%  void rhs::CpuExecutor::parallel_for<rhs::reduce_segments_into<interactions::SolidDelta>(rhs::CpuExecutor const…
+   7.85%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_fiber_contact_search
+   4.52%  dist2
+   3.01%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_solid_sph_search
+   2.60%  compute_fiber_contact_geometry
+   2.30%  fiber_segment_closest_params
+   2.01%  void rhs::CpuExecutor::parallel_for<interactions::build_fiber_contact_search(rhs::CpuExecutor const&, fiber::F…
+   1.80%  push
+   1.69%  reduce_shard_of
+   1.49%  void rhs::CpuExecutor::parallel_for<interactions::build_solid_sph_search(rhs::CpuExecutor const&, SimulationCo…
+   1.20%  for_each_near_cell<rhs::SpatialIndex<3>::collect_cross_one<interactions::build_fiber_solid_contact_search
+   1.14%  kernel_cubic
+   0.99%  cell_of_point
+   0.94%  void rhs::CpuExecutor::parallel_for<rhs::SpatialIndex<3ul>::build(rhs::CpuExecutor const&, std::array<double c…
+   0.79%  make_fiber_contact_prim
+   0.72%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_reduce<rhs::SpatialIndex<3ul>::build(rhs::CpuEx…
+   0.68%  void rhs::CpuExecutor::parallel_for<detail::run_time_integration<ode::PredictorCorrectorSolver>(SimulationConf…
+   0.63%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_for_segments<interactions::compute_fiber_bond_c…
+   0.60%  void rhs::CpuExecutor::parallel_for<interactions::apply_fiber_bond_constitutive(rhs::CpuExecutor const&, fiber…
+   0.57%  void rhs::CpuExecutor::parallel_for<rhs::reduce_segments_into<fiber::FiberDelta>(rhs::CpuExecutor const&, unsi…
+   0.50%  void rhs::CpuExecutor::parallel_for<single_step(SimulationConfig const&, ParticleSystem&, unsigned long, doubl…
+   0.48%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_reduce<double, interactions::fiber_max_current_…
+   0.48%  void rhs::CpuExecutor::parallel_for<ode::pc_finalize_velocity_position<unsigned long, std::vector<double, std:…
+   0.46%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_for_seg_bounds<interactions::compute_fiber_cont…
+   0.44%  isfinite
+   0.40%  __memset_evex_unaligned_erms (libc.so.6)
+   0.39%  copy<__gnu_cxx::__normal_iterator<std::pair<long unsigned int, long unsigned int>*, std::vector<std::pair<long…
+   0.36%  void rhs::CpuExecutor::parallel_for<ode::pc_predict_velocity_half_step<unsigned long, std::vector<double, std:…
+
+=== окно imp [0.40, 1.00]: сэмплов 193512, потоков 8
+классы (доля всех сэмплов окна): idle_wait=20.0%  par_wait=0.9%  par_work=77.3%  serial=1.9%
+главный поток: serial=13.7% par_work=74.4% par_wait=0.8% idle_wait=11.1%
+полезная работа (par_work+serial) 79.1% потреблённого CPU-времени окна; доля последовательных сэмплов главного потока (не f_s по Амдалу) = 0.137
+ёмкость 8 x 499 Гц x 50.8 с = 202956 сэмплов: на CPU 95.3%, полезная работа 75.5%, вне CPU (сон) ~4.7%; главный поток на CPU 99.3%, из них serial 13.6% окна
+по потокам: tid  par_work par_wait idle_wait serial
+   315592    74.4%     0.8%     11.1%   13.7%
+   315593    77.7%     0.9%     21.3%    0.1%
+   315594    77.5%     1.0%     21.5%    0.1%
+   315595    77.8%     0.9%     21.2%    0.1%
+   315596    77.9%     0.8%     21.2%    0.1%
+   315597    77.7%     0.9%     21.4%    0.1%
+   315598    77.8%     0.7%     21.4%    0.1%
+   315599    77.7%     0.9%     21.4%    0.1%
+параллельные регионы (доля всех сэмплов окна; wait/(work+wait) -- дисбаланс):
+   26.5%  work  26.5%  wait   0.0%  imb 0.00  interactions::build_fiber_contact_search
+   12.9%  work  12.9%  wait   0.0%  imb 0.00  interactions::compute_solid_sph_contributions
+   12.3%  work  12.0%  wait   0.3%  imb 0.02  reduce_segments_into [libc]
+    6.2%  work   6.2%  wait   0.0%  imb 0.00  interactions::build_solid_sph_search
+    4.9%  work   4.9%  wait   0.0%  imb 0.00  interactions::compute_fiber_contact_contributions
+    2.1%  work   2.1%  wait   0.0%  imb 0.00  interactions::compute_fiber_bond_contributions
+    2.1%  work   2.0%  wait   0.1%  imb 0.04  build
+    2.1%  work   2.0%  wait   0.1%  imb 0.03  run_normal_projection [libc]
+    1.9%  work   1.9%  wait   0.0%  imb 0.01  interactions::build_fiber_solid_contact_search
+    1.1%  work   1.1%  wait   0.0%  imb 0.00  interactions::apply_fiber_bond_constitutive
+    0.8%  work   0.8%  wait   0.1%  imb 0.07  run_time_integration [libc]
+    0.8%  work   0.7%  wait   0.1%  imb 0.08  parallel_for_seg_bounds [libc]
+    0.4%  work   0.4%  wait   0.0%  imb 0.01  interactions::detail::find_fiber_break_events_impl
+    0.4%  work   0.4%  wait   0.0%  imb 0.02  pc_finalize_velocity_position [libc]
+    0.4%  work   0.4%  wait   0.0%  imb 0.01  single_step
+    0.4%  work   0.4%  wait   0.0%  imb 0.01  interactions::fiber_max_current_bond_length
+    0.4%  work   0.3%  wait   0.0%  imb 0.09  parallel_reduce [libc]
+    0.3%  work   0.3%  wait   0.0%  imb 0.00  ? (__memset_evex_unaligned_erms) [?]
+    0.3%  work   0.3%  wait   0.0%  imb 0.09  pc_predict_velocity_half_step [libc]
+    0.2%  work   0.2%  wait   0.0%  imb 0.03  interactions::detail_normal::zero_dvel
+    0.2%  work   0.2%  wait   0.0%  imb 0.00  unsigned [libc]
+    0.2%  work   0.2%  wait   0.0%  imb 0.00  interactions::compute_solid_derived
+    0.2%  work   0.1%  wait   0.0%  imb 0.17  parallel_reduce_seg_bounds [libc]
+    0.2%  work   0.2%  wait   0.0%  imb 0.02  interactions::finalize_solid
+    0.1%  work   0.1%  wait   0.0%  imb 0.02  ode::PredictorCorrectorSolver::predict_solid
+    0.1%  work   0.1%  wait   0.0%  imb 0.03  interactions::compute_fiber_contact_dt_limit
+    0.1%  work   0.1%  wait   0.0%  imb 0.15  pc_finalize_velocity_position_with_av [libc]
+    0.1%  work   0.1%  wait   0.0%  imb 0.13  interactions::compute_fiber_solid_contact_contributions
+    0.1%  work   0.0%  wait   0.0%  imb 0.14  interactions::compute_normal_counts
+    0.1%  work   0.0%  wait   0.0%  imb 0.19  interactions::NormalWarmStart::apply
+последовательный код главного потока: верхняя функция проекта (доля всех сэмплов окна, доля serial):
+   0.16%   8.5%  bond_energy
+   0.12%   6.3%  lower_bound<__gnu_cxx::__normal_iterator<std::pair<long unsigned int, unsigned int>*, std::vector<std::pair<lo…
+   0.11%   6.1%  kinetic_fiber
+   0.10%   5.2%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_fiber_contact_search
+   0.09%   5.1%  accumulate_plastic
+   0.09%   4.9%  build_fiber_contact_search
+   0.08%   4.4%  on_step
+   0.08%   4.3%  fiber_segment_closest_params
+   0.08%   4.2%  run_time_integration<ode::PredictorCorrectorSolver>
+   0.07%   3.7%  fiber_cross_section_area
+   0.06%   3.3%  clamp_project_item
+   0.06%   3.1%  solid_contact_radius
+   0.06%   3.0%  compute_fiber_contact_geometry
+   0.05%   2.7%  h_upgrade
+   0.05%   2.5%  advance<__gnu_cxx::__normal_iterator<std::pair<long unsigned int, unsigned int>*, std::vector<std::pair<long u…
+   0.04%   2.2%  dist2
+   0.04%   2.0%  parallel_for<interactions::build_fiber_contact_search
+   0.04%   1.9%  sum_mass_fiber
+   0.03%   1.8%  diagnostics
+   0.03%   1.5%  run_normal_projection
+   0.03%   1.5%  reduce_segments_into<interactions::NormalDelta>
+   0.02%   1.3%  compute_friction_counts
+   0.02%   1.1%  apply_clamp_projection<std::vector<double> [3], std::vector<std::vector<double> > >
+   0.02%   0.9%  inelastic
+   0.02%   0.9%  cell_key
+   0.01%   0.7%  point_segment_dist
+   0.01%   0.7%  compute_cfl_timestep
+   0.01%   0.6%  clamp_fixed_block_sum
+   0.01%   0.6%  build_fiber_solid_contact_search
+   0.01%   0.6%  ke_range
+последовательный код: стек проекта (3 кадра):
+   0.16%   8.5%  bond_energy < on_step < should_stop
+   0.11%   6.1%  kinetic_fiber < energies < on_step
+   0.11%   6.0%  lower_bound<__gnu_cxx::__normal_iterator<std::pair… < diagnostics < on_step
+   0.10%   5.2%  for_each_near_cell<rhs::SpatialIndex<3>::visit_sam… < visit_same_type_cell<interactions::build_fiber_con… < parallel_for<rhs::CpuExecutor::parallel_for_segmen…
+   0.09%   5.1%  accumulate_plastic < on_step < should_stop
+   0.09%   4.9%  build_fiber_contact_search < fiber_contact_view < run_time_integration<ode::PredictorCorrectorSolver…
+   0.08%   4.4%  on_step < should_stop < run_time_integration<ode::PredictorCorrectorSolver…
+   0.08%   4.3%  fiber_segment_closest_params < parallel_for<rhs::CpuExecutor::parallel_reduce<int… < parallel_for<rhs::CpuExecutor::parallel_reduce<int…
+   0.08%   4.2%  run_time_integration<ode::PredictorCorrectorSolver… < time_integration < run_shot
+   0.07%   3.7%  fiber_cross_section_area < bond_energy < on_step
+   0.06%   3.3%  clamp_project_item < apply_clamp_projection<std::vector<double> [3], st… < run_time_integration<ode::PredictorCorrectorSolver…
+   0.06%   3.1%  solid_contact_radius < build_fiber_solid_contact_search < compute_fiber_solid_contact
+   0.06%   3.0%  compute_fiber_contact_geometry < parallel_for<rhs::CpuExecutor::parallel_reduce<int… < parallel_for<rhs::CpuExecutor::parallel_reduce<int…
+   0.05%   2.7%  h_upgrade < update_smoothing_length < update_smoothing_length
+   0.05%   2.5%  advance<__gnu_cxx::__normal_iterator<std::pair<lon… < lower_bound<__gnu_cxx::__normal_iterator<std::pair… < diagnostics
+   0.04%   2.2%  dist2 < for_each_near_cell<rhs::SpatialIndex<3>::visit_sam… < visit_same_type_cell<interactions::build_fiber_con…
+   0.04%   2.0%  parallel_for<interactions::build_fiber_contact_sea… < parallel_for<interactions::build_fiber_contact_sea… < build_fiber_contact_search
+   0.04%   1.9%  sum_mass_fiber < on_step < should_stop
+   0.03%   1.7%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecut…
+   0.03%   1.7%  diagnostics < on_step < should_stop
+   0.03%   1.5%  run_normal_projection < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.03%   1.5%  reduce_segments_into<interactions::NormalDelta> < run_normal_projection < run_time_integration<ode::PredictorCorrectorSolver…
+   0.02%   1.3%  void rhs::CpuExecutor::parallel_for<rhs::reduce_se…
+   0.02%   1.2%  compute_friction_counts < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.02%   1.1%  apply_clamp_projection<std::vector<double> [3], st… < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.02%   0.9%  inelastic < bond_energy < on_step
+   0.02%   0.9%  cell_key < diagnostics < on_step
+   0.01%   0.7%  point_segment_dist < diagnostics < on_step
+   0.01%   0.7%  compute_cfl_timestep < run_time_integration<ode::PredictorCorrectorSolver… < time_integration
+   0.01%   0.6%  clamp_fixed_block_sum < apply_clamp_projection<std::vector<double> [3], st… < run_time_integration<ode::PredictorCorrectorSolver…
+работа в регионах: верхний кадр:
+  12.85%  void rhs::CpuExecutor::parallel_for<interactions::compute_solid_sph_contributions(rhs::CpuExecutor const&, Sim…
+  12.55%  fiber_contact_surely_apart
+   8.91%  void rhs::CpuExecutor::parallel_for<rhs::reduce_segments_into<interactions::SolidDelta>(rhs::CpuExecutor const…
+   7.51%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_fiber_contact_search
+   4.13%  dist2
+   2.58%  for_each_near_cell<rhs::SpatialIndex<3>::visit_same_type_cell<interactions::build_solid_sph_search
+   2.34%  compute_fiber_contact_geometry
+   2.04%  fiber_segment_closest_params
+   2.02%  void rhs::CpuExecutor::parallel_for<interactions::run_normal_projection
+   1.72%  void rhs::CpuExecutor::parallel_for<interactions::build_fiber_contact_search(rhs::CpuExecutor const&, fiber::F…
+   1.61%  push
+   1.56%  reduce_shard_of
+   1.30%  void rhs::CpuExecutor::parallel_for<interactions::build_solid_sph_search(rhs::CpuExecutor const&, SimulationCo…
+   1.11%  for_each_near_cell<rhs::SpatialIndex<3>::collect_cross_one<interactions::build_fiber_solid_contact_search
+   0.97%  kernel_cubic
+   0.85%  void rhs::CpuExecutor::parallel_for<rhs::SpatialIndex<3ul>::build(rhs::CpuExecutor const&, std::array<double c…
+   0.81%  cell_of_point
+   0.76%  void rhs::CpuExecutor::parallel_for<detail::run_time_integration<ode::PredictorCorrectorSolver>(SimulationConf…
+   0.75%  make_fiber_contact_prim
+   0.70%  void rhs::CpuExecutor::parallel_for<rhs::reduce_segments_into<interactions::NormalDelta>(rhs::CpuExecutor cons…
+   0.63%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_reduce<rhs::SpatialIndex<3ul>::build(rhs::CpuEx…
+   0.63%  void rhs::CpuExecutor::parallel_for<rhs::reduce_segments_into<fiber::FiberDelta>(rhs::CpuExecutor const&, unsi…
+   0.53%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_for_segments<interactions::compute_fiber_bond_c…
+   0.50%  void rhs::CpuExecutor::parallel_for<interactions::apply_fiber_bond_constitutive(rhs::CpuExecutor const&, fiber…
+   0.44%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_for_seg_bounds<interactions::run_normal_project…
+   0.44%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_for_seg_bounds<interactions::compute_fiber_cont…
+   0.41%  void rhs::CpuExecutor::parallel_for<ode::pc_finalize_velocity_position<unsigned long, std::vector<double, std:…
+   0.41%  void rhs::CpuExecutor::parallel_for<single_step(SimulationConfig const&, ParticleSystem&, unsigned long, doubl…
+   0.40%  void rhs::CpuExecutor::parallel_for<rhs::CpuExecutor::parallel_reduce<double, interactions::fiber_max_current_…
+   0.38%  isfinite

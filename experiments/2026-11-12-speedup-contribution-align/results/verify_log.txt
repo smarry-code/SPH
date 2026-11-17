@@ -1,0 +1,74 @@
+2026-11-12 20:58:39 === старт: NEW=0b9d3b0 + alignas(64) ContributionBuffer (аудит п.2), незакоммичено; REF=280b0f4 + правки по ревью Codex (постоянные части сбора слотов, тест Т8)
+2026-11-12 21:08:19 сборка NEW build rc=0 предупреждений: 2
+2026-11-12 21:17:49 сборка NEW build-elog rc=0 предупреждений: 2
+2026-11-12 21:17:49 сборка REF build-elog (guo2019_shot) rc=0 предупреждений: 0
+2026-11-12 21:17:49 предупреждения в изменённых файлах NEW:
+2026-11-12 21:17:59 test_spatial_index (build) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-12 21:18:08 test_spatial_index (build-elog) rc=0: test_spatial_index: ПРОЙДЕН
+2026-11-12 21:18:08 test_executor (build) rc=0: test_executor: ПРОЙДЕН
+2026-11-12 21:18:08 test_executor (build-elog) rc=0: test_executor: ПРОЙДЕН
+2026-11-12 21:18:08 test_fiber_contact (build) rc=0: test_fiber_contact: OK
+2026-11-12 21:18:08 test_fiber_contact (build-elog) rc=0: test_fiber_contact: OK
+2026-11-12 21:18:09 test_fiber_friction (build) rc=0: test_fiber_friction: OK
+2026-11-12 21:18:09 test_fiber_friction (build-elog) rc=0: test_fiber_friction: OK
+2026-11-12 21:18:09 test_fiber_solid (build) rc=0: test_fiber_solid: OK
+2026-11-12 21:18:09 test_fiber_solid (build-elog) rc=0: test_fiber_solid: OK
+2026-11-12 21:18:12 test_fiber_contact_projection (build) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-12 21:18:15 test_fiber_contact_projection (build-elog) rc=0: fiber_contact_projection_test: ALL OK
+2026-11-12 21:18:16 test_fiber_time_integration_equivalence (build) rc=0: === ПРОЙДЕН (провалов: 0) ===
+2026-11-12 21:18:18 test_fiber_time_integration_equivalence (build-elog) rc=0: === ПРОЙДЕН (провалов: 0) ===
+2026-11-12 21:22:38 ctest build rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-12 21:26:53 ctest build-elog rc=0: 100% tests passed, 0 tests failed out of 101
+2026-11-12 21:26:54 test_checkpoint (вывод) rc=0
+PASS: 1a. round-trip PC (ode_solver=0), связи целы
+PASS: 1b. round-trip Euler (ode_solver=1), связи целы
+PASS: 2a. round-trip PC, связи рвутся до шага N
+PASS: 2b. round-trip Euler, связи рвутся до шага N
+PASS: 3. целостность: порча байта, обрезка, неверный magic
+PASS: 4. политика настроек: t_total/save_t -- да, CFL -- только с force
+PASS: 4a. периодичность checkpoint_every_steps=7
+PASS: 5. ротация: .ckpt и .ckpt.prev, без временного файла
+PASS: 7. v2: proj_warm/proj_h_prev и поля проекции round-trip; файл v1 читается
+PASS: 8. v3: user_state round-trip (в т.ч. нулевые байты); файл v2 читается
+PASS: 9. проекция: рестарт с заполненным тёплым стартом побитово равен непрерывному прогону
+PASS: 10. проекция: полный шаг на 1 и 4 потоках побитово одинаков
+2026-11-12 21:27:18   закон 0 monitor.csv: СОВПАДАЕТ
+2026-11-12 21:27:18   закон 0 energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:27:18   закон 0 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 21:27:39   закон 3 monitor.csv: СОВПАДАЕТ
+2026-11-12 21:27:39   закон 3 energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:27:39   закон 3 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 21:28:07   закон 4 monitor.csv: СОВПАДАЕТ
+2026-11-12 21:28:07   закон 4 energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:28:07   закон 4 shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 21:28:11 проекция REF rc=0
+2026-11-12 21:28:14 проекция NEW rc=0
+2026-11-12 21:28:19 проекция NEW 2 потока rc=0
+2026-11-12 21:28:19   проекция NEW/REF monitor.csv: СОВПАДАЕТ
+2026-11-12 21:28:19   проекция NEW 1/2 потока monitor.csv: СОВПАДАЕТ
+2026-11-12 21:28:19   проекция NEW/REF energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:28:19   проекция NEW 1/2 потока energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:28:19   проекция NEW/REF shot.txt (без времени): СОВПАДАЕТ
+2026-11-12 21:28:19   NEW shot.txt проекция: W_proj_pos_max=0 proj_slots_max=246 proj_warm_scaled_steps=256 
+2026-11-12 21:28:21 чекпоинт ч.1 rc=0
+2026-11-12 21:28:22 чекпоинт ч.2 rc=0: монитор: состояние восстановлено на шаге 1300; monitor.csv: оставлено строк 1300 (последняя -- шаг 1300), отброшено после чекпоинта 0.
+2026-11-12 21:28:22   рестарт monitor.csv: СОВПАДАЕТ
+2026-11-12 21:28:22   рестарт energy_log.csv: СОВПАДАЕТ
+2026-11-12 21:28:22   рестарт shot.txt: СОВПАДАЕТ
+2026-11-12 21:32:38 полная сцена H.base.1 rc=0: шагов=4372, wall=255.52 с (0.0584 с/шаг)
+2026-11-12 21:32:38   H.base.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:36:51 полная сцена H.new.1 rc=0: шагов=4372, wall=252.68 с (0.0578 с/шаг)
+2026-11-12 21:36:51   H.new.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:41:22 полная сцена P.base.1 rc=0: шагов=4372, wall=270.92 с (0.0620 с/шаг)
+2026-11-12 21:41:22   P.base.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:45:44 полная сцена P.new.1 rc=0: шагов=4372, wall=261.30 с (0.0598 с/шаг)
+2026-11-12 21:45:44   P.new.1 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:50:01 полная сцена H.base.2 rc=0: шагов=4372, wall=257.03 с (0.0588 с/шаг)
+2026-11-12 21:50:01   H.base.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:54:08 полная сцена H.new.2 rc=0: шагов=4372, wall=246.24 с (0.0563 с/шаг)
+2026-11-12 21:54:08   H.new.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 21:58:40 полная сцена P.base.2 rc=0: шагов=4372, wall=271.48 с (0.0621 с/шаг)
+2026-11-12 21:58:40   P.base.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 22:02:54 полная сцена P.new.2 rc=0: шагов=4372, wall=253.48 с (0.0580 с/шаг)
+2026-11-12 22:02:54   P.new.2 monitor.csv против f1298aa: СОВПАДАЕТ
+2026-11-12 22:02:54 готово

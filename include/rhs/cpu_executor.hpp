@@ -103,12 +103,19 @@ public:
     static constexpr std::size_t kDetSegments = 64;
     std::size_t det_segments() const { return kDetSegments; }
 
+    // Начало отрезка s из S при разбиении [0, n): floor(n*s/S) без переполнения n*s (s <= S).
+    // n = q*S + r: n*s/S = q*s + r*s/S, q*s <= n, r*s < S*S. Для n*s без переполнения равно прежнему n*s/S.
+    static constexpr std::size_t seg_begin(std::size_t n, std::size_t s, std::size_t S = kDetSegments)
+    {
+        return (n / S) * s + (n % S) * s / S;
+    }
+
     template <class Func>
     void parallel_for_segments(std::size_t n, Func&& f) const
     {
         if (n == 0) return;
         parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
-            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            const std::size_t b = seg_begin(n, s), e = seg_begin(n, s + 1);
             for (std::size_t i = b; i < e; ++i) f(s, i);
         });
     }
@@ -135,7 +142,7 @@ public:
         // Результат (в т. ч. сумма double) одинаков при любом числе потоков и любой раздаче порций.
         std::vector<T> partial(kDetSegments, init);
         parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
-            const std::size_t b = n * s / kDetSegments, e = n * (s + 1) / kDetSegments;
+            const std::size_t b = seg_begin(n, s), e = seg_begin(n, s + 1);
             T local = init;
             for (std::size_t i = b; i < e; ++i) local = combine(local, map(i));
             partial[s] = local;
@@ -143,6 +150,128 @@ public:
         T result = init;
         for (auto& p : partial) result = combine(result, p);
         return result;
+    }
+
+    // ------------------------------------------------------------------
+    // Обход и свёртка ПОДМНОЖЕСТВА исходного диапазона с прежним разбиением на отрезки.
+    // Элементы j = 0..m-1 -- выбранные индексы исходного диапазона по возрастанию; seg_of(j) -- номер отрезка
+    // kDetSegments, которому исходный индекс принадлежал в parallel_for_segments / parallel_reduce по ПОЛНОМУ
+    // диапазону (не убывает по j). Отрезок s обрабатывает один поток, свои j по возрастанию:
+    //   parallel_for_seg_groups(m, seg_of, f)  -- f(s, j): вклады в буфер s ложатся в том же порядке, что и
+    //                                             при обходе полного диапазона с пропуском невыбранных;
+    //   parallel_reduce_seg_groups(...)        -- partial[s] сворачивает свои j, затем отрезки по порядку.
+    // Если невыбранные индексы при полном обходе давали нейтральный элемент combine (0.0 в сумме, начатой
+    // с +0.0; max с 0 для неотрицательных; целые счётчики), результат побитово тот же.
+    // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Сбор результатов по отрезкам: parts[s] заполняет отрезок s parallel_for_segments (по возрастанию i),
+    // concat_segments склеивает их по порядку отрезков -- тот же порядок, что у последовательного цикла.
+    // Смещения -- префиксная сумма, копирование -- параллельно по отрезкам; out не очищается (resize
+    // инициализирует только прирост).
+    // ------------------------------------------------------------------
+    template <class T>
+    struct alignas(64) SegPart // заголовок вектора каждого отрезка -- в своей кэш-линии (false sharing)
+    {
+        std::vector<T> v;
+    };
+
+    template <class T>
+    void prepare_segment_parts(std::vector<SegPart<T>>& parts) const
+    {
+        if (parts.size() < kDetSegments) parts.resize(kDetSegments);
+        for (auto& p : parts) p.v.clear();
+    }
+
+    template <class T>
+    void concat_segments(const std::vector<SegPart<T>>& parts, std::vector<T>& out) const
+    {
+        const std::size_t np = parts.size();
+        std::vector<std::size_t> off(np + 1, 0);
+        for (std::size_t s = 0; s < np; ++s) off[s + 1] = off[s] + parts[s].v.size();
+        out.resize(off[np]);
+        parallel_for(np, std::size_t(1), [&](std::size_t s) {
+            std::copy(parts[s].v.begin(), parts[s].v.end(), out.begin() + static_cast<std::ptrdiff_t>(off[s]));
+        });
+    }
+
+    template <class SegOf>
+    void seg_group_bounds(std::size_t m, SegOf&& seg_of, std::size_t* bound) const
+    {
+        // bound[s] .. bound[s+1] -- j отрезка s; один проход, seg_of(j) не убывает.
+        std::size_t j = 0;
+        for (std::size_t s = 0; s < kDetSegments; ++s)
+        {
+            bound[s] = j;
+            while (j < m && static_cast<std::size_t>(seg_of(j)) <= s) ++j;
+        }
+        bound[kDetSegments] = m;
+    }
+
+    // Обход по готовым границам отрезков: bound[0..kDetSegments] (kDetSegments+1 значений, не убывают),
+    // f(s, j) для j из [bound[s], bound[s+1]); отрезки -- параллельно, каждый один поток, j по возрастанию.
+    // Это тело parallel_for_seg_groups после seg_group_bounds; границы можно посчитать один раз и использовать
+    // в нескольких проходах (ядро контакта нитей: основной обход, dt_limit, диагностика).
+    template <class Func>
+    void parallel_for_seg_bounds(const std::size_t* bound, Func&& f) const
+    {
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            for (std::size_t j = bound[s]; j < bound[s + 1]; ++j) f(s, j);
+        });
+    }
+
+    // Свёртка по границам: partial[s] сворачивает свои j по возрастанию, затем отрезки по порядку --
+    // та же семантика (и тот же порядок суммирования double), что у parallel_reduce_seg_groups.
+    template <class T, class MapFunc, class CombineFunc>
+    T parallel_reduce_seg_bounds(const std::size_t* bound, T init, MapFunc&& map, CombineFunc&& combine) const
+    {
+        std::vector<T> partial(kDetSegments, init);
+        parallel_for(kDetSegments, std::size_t(1), [&](std::size_t s) {
+            T local = init;
+            for (std::size_t j = bound[s]; j < bound[s + 1]; ++j) local = combine(local, map(j));
+            partial[s] = local;
+        });
+        T result = init;
+        for (auto& p : partial) result = combine(result, p);
+        return result;
+    }
+
+    // Номер отрезка индекса k при parallel_for_segments(n) (k < n): наибольший s с floor(n*s/64) <= k.
+    // Вывод: floor(n*s/64) <= k  <=>  n*s/64 < k+1  <=>  n*s < 64*(k+1)  <=>  n*s <= 64*k+63  <=>
+    // s <= floor((64*k+63)/n). Отрезки покрывают [0,n) без пропусков, границы b(s)=floor(n*s/64) не убывают,
+    // b(64)=n>k, поэтому наибольший s с b(s)<=k и есть тот, у которого k < b(s+1), т. е. k лежит в отрезке s
+    // (пустые отрезки с b(s)=b(s+1) наибольшим s не выбираются). При k<n: 64*k+63 <= 64*n-1, s <= 63.
+    // 64*k+63 считается без переполнения: 128-битно, иначе -- двоичный поиск по seg_begin.
+    static constexpr std::size_t seg_of_index(std::size_t k, std::size_t n)
+    {
+#if defined(__SIZEOF_INT128__)
+        return static_cast<std::size_t>((static_cast<unsigned __int128>(k) * kDetSegments + (kDetSegments - 1)) / n);
+#else
+        std::size_t lo = 0, hi = kDetSegments - 1; // наибольший s с seg_begin(n, s) <= k
+        while (lo < hi)
+        {
+            const std::size_t mid = (lo + hi + 1) / 2;
+            if (seg_begin(n, mid) <= k) lo = mid; else hi = mid - 1;
+        }
+        return lo;
+#endif
+    }
+
+    template <class SegOf, class Func>
+    void parallel_for_seg_groups(std::size_t m, SegOf&& seg_of, Func&& f) const
+    {
+        if (m == 0) return;
+        std::size_t bound[kDetSegments + 1];
+        seg_group_bounds(m, seg_of, bound);
+        parallel_for_seg_bounds(bound, f);
+    }
+
+    template <class T, class SegOf, class MapFunc, class CombineFunc>
+    T parallel_reduce_seg_groups(std::size_t m, SegOf&& seg_of, T init, MapFunc&& map, CombineFunc&& combine) const
+    {
+        if (m == 0) return init;
+        std::size_t bound[kDetSegments + 1];
+        seg_group_bounds(m, seg_of, bound);
+        return parallel_reduce_seg_bounds(bound, init, map, combine);
     }
 
     // ------------------------------------------------------------------

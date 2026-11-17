@@ -329,8 +329,8 @@ struct SolidExtended
     std::size_t next = 0; // nreal + nghost
 };
 
-inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, const SolidDerived& derived,
-                                  const GhostSet& ghosts, SolidExtended& ext)
+inline void build_solid_extended(const rhs::CpuExecutor& exec, const ParticleSystem& sys, std::size_t nreal,
+                                  const SolidDerived& derived, const GhostSet& ghosts, SolidExtended& ext)
 {
     const std::size_t nghost = ghosts.source_index.size();
     ext.nreal = nreal;
@@ -348,7 +348,8 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
     ext.hsml.resize(ext.next);
     ext.body.resize(ext.next);
 
-    for (std::size_t i = 0; i < nreal; ++i)
+    // Поэлементное копирование (каждый элемент пишется один раз) -- результат не зависит от числа потоков.
+    exec.parallel_for(nreal, [&](std::size_t i)
     {
         for (std::size_t d = 0; d < dim; ++d) { ext.x[d][i] = sys.x[d][i]; ext.vx[d][i] = sys.vx[d][i]; }
         ext.mass[i] = sys.mass[i]; ext.rho[i] = sys.rho[i];
@@ -357,8 +358,8 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxy[i] = sys.sxy[i];   ext.syz[i] = sys.syz[i];   ext.sxz[i] = sys.sxz[i];
         ext.hsml[i] = sys.hsml[i];
         ext.body[i] = sys.body[i];
-    }
-    for (std::size_t g = 0; g < nghost; ++g)
+    });
+    exec.parallel_for(nghost, [&](std::size_t g)
     {
         const std::size_t dst = nreal + g;
         const std::size_t src = ghosts.source_index[g];
@@ -376,7 +377,15 @@ inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, c
         ext.sxy[dst] = -sys.sxy[src];  ext.syz[dst] = sys.syz[src];   ext.sxz[dst] = sys.sxz[src];
         ext.hsml[dst] = sys.hsml[src];
         ext.body[dst] = sys.body[src]; // как inzializ_2d_symm_index
-    }
+    });
+}
+
+// Однопоточный вариант без исполнителя (тесты и внешний код).
+inline void build_solid_extended(const ParticleSystem& sys, std::size_t nreal, const SolidDerived& derived,
+                                  const GhostSet& ghosts, SolidExtended& ext)
+{
+    const rhs::CpuExecutor serial(1);
+    build_solid_extended(serial, sys, nreal, derived, ghosts, ext);
 }
 
 // ----------------------------------------------------------------------
@@ -461,15 +470,17 @@ inline void build_solid_sph_search(const rhs::CpuExecutor& exec, const Simulatio
         return;
     }
 
-    double max_h = 0.0;
-    for (std::size_t k = 0; k < ext.next; ++k) max_h = std::max(max_h, ext.hsml[k]);
+    // max -- точная операция, порядок свёртки не влияет на результат.
+    const double max_h = exec.parallel_reduce(
+        ext.next, 0.0, [&](std::size_t k) { return ext.hsml[k]; },
+        [](double a, double b) { return std::max(a, b); });
     const double scale_k = (cfg.skf == 1) ? 2.0 : 3.0;
     const double radius = scale_k * max_h;
 
     rhs::SpatialIndex<dim>& index = out.index;
     std::array<const double*, dim> coords{};
     for (std::size_t d = 0; d < dim; ++d) coords[d] = ext.x[d].data();
-    index.build(coords, ext.next, radius > 0.0 ? radius : 1.0);
+    index.build(exec, coords, ext.next, radius > 0.0 ? radius : 1.0);
 
     const std::size_t nreal = ext.nreal;
     const bool same_body_only = cfg.sph_same_body_only;
@@ -964,7 +975,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
                             const std::vector<SolidDelta>& reduced, const std::vector<double>& p,
                             std::vector<SolidFinal>& out)
 {
-    out.assign(nreal, SolidFinal{});
+    out.resize(nreal); // элементы обнуляются первой строкой тела цикла ниже (покрывает все i < nreal)
 
     // Защита от деления на ноль -- БУКВАЛЬНО как в density.cpp, con_density
     // (осевая поправка к уравнению непрерывности): клампы, удерживавшие
@@ -992,6 +1003,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
     }
 
     exec.parallel_for(nreal, [&](std::size_t i) {
+        out[i] = SolidFinal{};
         SolidFinal& f = out[i];
         const SolidDelta& d = reduced[i];
 

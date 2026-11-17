@@ -660,6 +660,27 @@ endif()
 add_test(NAME fiber_friction_test COMMAND test_fiber_friction)
 set_tests_properties(fiber_friction_test PROPERTIES LABELS "3d")
 
+# --- Нормальный контакт нитей как проекция скорости (стадия между dt и трением;
+#     include/interactions/fiber_normal_projection.hpp,
+#     fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md, fiber/TZ_LAW3_PROJECTION.md).
+#     Нити -- только SPH_DIM=3. Только заголовки (без SPH_PIPELINE_SOURCES). Тест шагает по
+#     времени (Т1: 1e5 шагов) -- тяжёлые прогоны на сервере.
+add_executable(test_fiber_contact_projection tests/test_fiber_contact_projection.cpp)
+target_include_directories(test_fiber_contact_projection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_fiber_contact_projection PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_projection PRIVATE -fexceptions)
+endif()
+if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    target_compile_options(test_fiber_contact_projection PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+    target_link_options(test_fiber_contact_projection PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_fiber_contact_projection PRIVATE -fopenmp)
+    target_link_options(test_fiber_contact_projection PRIVATE -fopenmp)
+endif()
+add_test(NAME fiber_contact_projection_test COMMAND test_fiber_contact_projection)
+set_tests_properties(fiber_contact_projection_test PROPERTIES LABELS "3d")
+
 # --- Кинематическое закрепление Solid/Fiber (include/interactions/clamp.hpp,
 #     fiber/TZ_CLAMP_SOLID_FIBER.md, §10). Регистрируется при 1, 2 и 4 потоках.
 add_executable(test_clamp tests/test_clamp.cpp ${SPH_PIPELINE_SOURCES})

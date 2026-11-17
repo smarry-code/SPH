@@ -244,6 +244,22 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         {
             cfg.fiber_solid_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
         }
+        else if (key == "fiber_fiber_contact_predictor")
+        {
+            cfg.fiber_fiber_contact_predictor = std::stoi(value);
+        }
+        else if (key == "fiber_solid_contact_predictor")
+        {
+            cfg.fiber_solid_contact_predictor = std::stoi(value);
+        }
+        else if (key == "fiber_contact_projection_iters")
+        {
+            cfg.fiber_contact_projection_iters = std::stoi(value);
+        }
+        else if (key == "fiber_contact_projection_warm")
+        {
+            cfg.fiber_contact_projection_warm = std::stoi(value);
+        }
         else if (key == "fiber_fiber_contact_type")
         {
             cfg.fiber_fiber_contact_type = parse_fiber_contact_type(key, value);
@@ -433,6 +449,8 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         m.th.heating = cfg.jc_heating == 1 ? jc::Heating::TaylorQuinney : jc::Heating::Energy;
         m.th.chi = cfg.jc_chi;
     }
+
+    validate_fiber_contact_projection(cfg);
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)

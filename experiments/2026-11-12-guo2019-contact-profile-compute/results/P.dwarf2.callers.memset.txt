@@ -1,0 +1,18 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+# symbol: __memset_evex_unaligned_erms
+#
+# Total Lost Samples: 0
+#
+# Samples: 37K of event 'cpu-clock'
+# Event count (approx.): 370960000000
+#
+# Overhead  Symbol                          
+# ........  ................................
+#
+     0.67%  [.] __memset_evex_unaligned_erms
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

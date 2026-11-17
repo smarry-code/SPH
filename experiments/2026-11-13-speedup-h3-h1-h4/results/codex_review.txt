@@ -1,0 +1,25 @@
+Ревью Codex (MCP, режим только чтения), дифф 5995594..7147083 (H3 + H1/H4), 2026-11-13.
+
+Подтверждённые ошибки
+1. include/rhs/cpu_executor.hpp: seg_of_index(k, n) = (64k+63)/n переполняется при k > (SIZE_MAX-63)/64
+   (n > 2^58); то же в n_full*s/S (fiber_contact.hpp, seg_bound) и m*s/64 (вид по j). Практически недостижимо
+   по памяти. Серьёзность: мелочь.
+   -> Исправлено (c8973f7): CpuExecutor::seg_begin(n,s,S) = (n/S)*s + (n%S)*s/S во всех границах отрезков,
+      seg_of_index через unsigned __int128 (запасной путь -- двоичный поиск); тест при n ~ SIZE_MAX.
+2. include/rhs/spatial_index.hpp: строки segcnt_ (S*nc) разных сегментов делят кэш-линию при малом nc
+   (ложное разделение при подсчёте и раскладке). Корректность не страдает. Серьёзность: мелочь.
+   -> Исправлено (c8973f7): шаг строки round_up(nc, 8) + 8.
+
+Подозрения / контрактные риски
+3. include/interactions/fiber_contact_law.hpp: ключ FiberDtRefCache не включает значения l0, mass,
+   material_id и содержимое materials. В боевом пути не ошибка: разрыв увеличивает topology.version,
+   пластичность/повреждение меняют только FiberBond::st, clamp и mass splitting массы не трогают,
+   чекпоинт восстанавливает всё до входа в run_time_integration (кэш создаётся там свежим).
+   Серьёзность: мелочь.
+   -> Без изменений: контракт (ручная правка -> invalidate()) уже записан в комментарии к кэшу.
+
+Проверено, ошибок нет: bbox в build (та же затравка coord[0], семантика min/max, signed zero, NaN);
+parallel_scan, count_/offset_, n=0/1, nc<64, S<=1; L_max между двумя потребителями неизменен; prim_k строго
+возрастает; seg_bound соответствует полному k; плотные friction_contacts / pair_dt_limit / c.prim по j;
+FrictionActiveRef{k=j, seg(k_full)}; сброс слотов при уменьшении, обнулении и росте m; проекция, трение,
+SPH_ENERGY_LOG, SPH_CONTACT_STATS; порядок for_each_pair_segmented == find_pairs_parallel; гонок нет.

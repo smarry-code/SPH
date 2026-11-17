@@ -30,6 +30,7 @@
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/fiber_friction.hpp"
+#include "interactions/fiber_normal_projection.hpp"
 #include "interactions/fiber_solid_contact.hpp"
 #include "materials.hpp"
 #include "ode/ode_solver.hpp"
@@ -2331,6 +2332,575 @@ void test_fs_solver_interface()
     run_solver_stick<ode::EulerSolver>("Euler (без XSPH)", 4);
 }
 
+// ============================================================================
+// Режим списка активных слотов трения (FrictionActiveRef) против полного прохода: два параллельных
+// конвейера (ядра контактов -> [fill из нормальных слотов] -> счётчики c_k/c_s -> вклады трения -> reduce)
+// на сцене из сетки нитей и частиц Solid, 5 «шагов» с возмущением положений (множество активных слотов
+// меняется), при 1, 2, 7, 8 потоках. Сравнение побитовое: слоты, флаги, c_k/c_s, итоговые a^f.
+// ============================================================================
+
+bool bits_eq(double a, double b) { return std::memcmp(&a, &b, sizeof(double)) == 0; }
+
+bool slot_eq(const interactions::FiberFrictionContact& a, const interactions::FiberFrictionContact& b)
+{
+    bool eq = a.active == b.active && a.a0 == b.a0 && a.a1 == b.a1 && a.b0 == b.b0 && a.b1 == b.b1 &&
+              bits_eq(a.s, b.s) && bits_eq(a.t, b.t) && bits_eq(a.N, b.N) && bits_eq(a.mu, b.mu);
+    for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.n[d], b.n[d]);
+    return eq;
+}
+
+bool slot_eq(const interactions::FiberSolidFrictionContact& a, const interactions::FiberSolidFrictionContact& b)
+{
+    bool eq = a.active == b.active && a.a == b.a && a.b == b.b && a.s == b.s && bits_eq(a.lambda, b.lambda) &&
+              bits_eq(a.N, b.N) && bits_eq(a.mu, b.mu);
+    for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.n[d], b.n[d]);
+    return eq;
+}
+
+template <class Slot>
+bool slots_eq(const std::vector<Slot>& a, const std::vector<Slot>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!slot_eq(a[i], b[i])) return false;
+    return true;
+}
+
+bool vec_bits_eq(const std::vector<double>& a, const std::vector<double>& b)
+{
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!bits_eq(a[i], b[i])) return false;
+    return true;
+}
+
+// Сцена: nf x-нитей и nf y-нитей по 12 бусин (пересечения на разной глубине) и частицы Solid рядом.
+struct ListScene
+{
+    fiber::FiberState state;
+    fiber::FiberTopology topology;
+    std::vector<fiber::FiberMaterial> materials;
+    ParticleSystem sys;
+    Materials mats;
+    std::vector<double> base[dim], dv[dim], sbase[dim];
+    std::vector<std::vector<double>> dvx;
+    ode::FiberVelocityUpdate fupd{};
+    ode::SolidVelocityUpdate supd{};
+    int nf = 6;
+    int nb = 12;
+    std::size_t np = 14;
+
+    static constexpr double l0 = 0.01;
+
+    void add_chain(std::size_t base_idx, int oid, const std::vector<std::array<double, 3>>& beads)
+    {
+        const std::size_t n = beads.size();
+        for (std::size_t k = 0; k < n; ++k)
+        {
+            const std::size_t gi = base_idx + k;
+            for (int d3 = 0; d3 < 3; ++d3) state.x[d3][gi] = beads[k][d3];
+            state.mass[gi] = 1.0e-6 * (1.0 + 0.05 * static_cast<double>(gi % 5));
+            state.object_id[gi] = oid;
+            state.material_id[gi] = 0;
+            if (k > 0) topology.prev[gi] = static_cast<long long>(gi - 1);
+            if (k + 1 < n)
+            {
+                topology.next[gi] = static_cast<long long>(gi + 1);
+                fiber::FiberBond b;
+                b.i = gi;
+                b.j = gi + 1;
+                b.l0 = l0;
+                b.l_break = l0 * 1e9;
+                topology.bonds.push_back(b);
+            }
+        }
+    }
+
+    void init()
+    {
+        fiber::FiberMaterial m;
+        m.E = 2.0e9;
+        m.nu = 0.3;
+        m.d = 1.0e-3;
+        m.rho = 1200.0;
+        m.eps_break = 1.0;
+        m.mu_ff = 0.3;
+        m.mu_fs = 0.2;
+        materials.assign(1, m);
+        const std::size_t nfib = static_cast<std::size_t>(2 * nf * nb);
+        state.resize(nfib);
+        topology.resize(nfib);
+        std::size_t idx = 0;
+        int oid = 0;
+        for (int j = 0; j < nf; ++j, idx += static_cast<std::size_t>(nb))
+        {
+            std::vector<std::array<double, 3>> beads;
+            for (int i = 0; i < nb; ++i) beads.push_back({(i - 5.5) * l0, 0.5 * l0 + j * 0.9 * l0, 0.0});
+            add_chain(idx, oid++, beads);
+        }
+        for (int k = 0; k < nf; ++k, idx += static_cast<std::size_t>(nb))
+        {
+            std::vector<std::array<double, 3>> beads;
+            for (int i = 0; i < nb; ++i) beads.push_back({0.5 * l0 + k * 0.9 * l0 - 2.5 * l0, (i - 2.0) * l0, 0.0});
+            add_chain(idx, oid++, beads);
+        }
+        const double dxp = 1.5e-3, rho_s = 2700.0;
+        sys.resize(np);
+        for (std::size_t i = 0; i < np; ++i)
+        {
+            sys.inzializ_index(i);
+            sys.mass[i] = rho_s * dxp * dxp * dxp;
+            sys.rho[i] = rho_s;
+            sys.rho_0[i] = rho_s;
+            sys.itype[i] = 4;
+            sys.hsml[i] = 1.0;
+        }
+        for (std::size_t d = 0; d < dim; ++d)
+        {
+            base[d].resize(nfib);
+            dv[d].resize(nfib);
+            sbase[d].resize(np);
+            for (std::size_t i = 0; i < nfib; ++i)
+            {
+                base[d][i] = 0.3 * std::sin(0.7 * static_cast<double>(i + 1) + static_cast<double>(d));
+                dv[d][i] = 50.0 * std::cos(0.37 * static_cast<double>(i) + 1.3 * static_cast<double>(d));
+                state.vx[d][i] = base[d][i];
+            }
+            for (std::size_t i = 0; i < np; ++i)
+                sbase[d][i] = 0.2 * std::cos(0.9 * static_cast<double>(i) + static_cast<double>(d));
+            fupd.base[d] = &base[d];
+            supd.base[d] = &sbase[d];
+        }
+        dvx.assign(dim, std::vector<double>(np, 0.0));
+        for (std::size_t d = 0; d < dim; ++d)
+            for (std::size_t i = 0; i < np; ++i) dvx[d][i] = 30.0 * std::sin(0.51 * static_cast<double>(i) + static_cast<double>(d));
+        fupd.h = 1.0e-6;
+        supd.h = 1.0e-6;
+        supd.av = nullptr;
+        set_step(0);
+    }
+
+    // Положения на «шаге» st: y-нити (object_id >= nf) смещены по z, частицы -- по высоте над x-нитями.
+    void set_step(int st)
+    {
+        static const double shift[6] = {0.0, 0.25e-3, -0.1e-3, 0.5e-3, -0.3e-3, 0.8e-3};
+        const double sh = shift[st % 6];
+        for (std::size_t i = 0; i < state.size(); ++i)
+        {
+            const int oid = state.object_id[i];
+            if (oid < nf)
+                state.x[2][i] = 1.0e-4 * oid;
+            else
+            {
+                const int k = oid - nf;
+                state.x[2][i] = 0.95e-3 - 0.7e-4 * k + sh * (1.0 + 0.5 * (k % 3));
+            }
+        }
+        for (std::size_t i = 0; i < np; ++i)
+        {
+            const int j = static_cast<int>(i % static_cast<std::size_t>(nf));
+            sys.x[0][i] = (-0.045 + 0.0071 * static_cast<double>(i));
+            sys.x[1][i] = 0.5 * l0 + j * 0.9 * l0 + 0.2e-3 * static_cast<double>((i + static_cast<std::size_t>(st)) % 3);
+            sys.x[2][i] = 1.0e-4 * j + (0.4e-3 + 0.2e-3 * static_cast<double>((i + 2 * static_cast<std::size_t>(st)) % 7));
+        }
+    }
+};
+
+struct PipeOut
+{
+    bool has_ff = false, has_fs = false, stage = false;
+    std::vector<interactions::FiberFrictionContact> ff;
+    std::vector<interactions::FiberSolidFrictionContact> fs;
+    std::vector<double> bcnt, scnt;
+    std::vector<fiber::FiberDelta> fdelta;
+    std::vector<interactions::SolidDelta> sdelta;
+    std::size_t n_active_ff = 0, n_active_fs = 0;
+};
+
+struct Pipe
+{
+    bool list = false;
+    bool proj = false;
+    std::vector<interactions::FiberFrictionContact> ff_slots;
+    std::vector<interactions::FiberSolidFrictionContact> fs_slots;
+    std::vector<interactions::FrictionActiveRef> ff_act, fs_act;
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FrictionActiveRef>> ff_parts, fs_parts;
+    std::vector<interactions::FiberNormalContact> normal_ff;
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FiberNormalContact>> normal_parts;
+    std::vector<double> bead_dt;
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> k_fbuf, k_fbuf2, st_fbuf;
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> k_sbuf, st_sbuf;
+    std::vector<rhs::ContributionBuffer<interactions::FiberCountDelta>> fcb;
+    std::vector<rhs::ContributionBuffer<interactions::SolidCountDelta>> scb;
+    std::vector<interactions::FiberCountDelta> fcd;
+    std::vector<interactions::SolidCountDelta> scd;
+    rhs::ReduceScratch scratch;
+
+    PipeOut step(const rhs::CpuExecutor& exec, ListScene& sc, double h)
+    {
+        PipeOut out;
+        interactions::FiberContactSearchResult ffs;
+        interactions::build_fiber_contact_search(exec, sc.state, sc.topology, sc.materials, ffs);
+        interactions::FiberSolidContactSearchResult fss;
+        interactions::build_fiber_solid_contact_search(exec, sc.mats, sc.sys, sc.sys.size(), sc.state, sc.topology,
+                                                        sc.materials, fss);
+        interactions::FiberContactStepParams pf, ps;
+        if (proj)
+        {
+            // Проекция: ядро нить-нить даёт нормальные слоты вместо силы (закон 1, только геометрия).
+            interactions::compute_fiber_bead_dt_ref(exec, sc.state, sc.topology, sc.materials, bead_dt);
+            pf.law.type = 1;
+            pf.bead_dt_ref = &bead_dt;
+            pf.normal_ff = &normal_ff;
+            pf.normal_ff_parts = &normal_parts;
+        }
+        if (list)
+        {
+            pf.fric_active = &ff_act;
+            pf.fric_active_parts = &ff_parts;
+            ps.fric_active = &fs_act;
+            ps.fric_active_parts = &fs_parts;
+        }
+        out.has_ff = interactions::compute_fiber_contact_contributions(exec, sc.state, sc.materials, ffs.primitives,
+                                                                       k_fbuf, ff_slots, pf);
+        out.has_fs = interactions::compute_fiber_solid_contact_contributions(
+            exec, sc.mats, sc.sys, sc.state, sc.materials, fss.primitives, k_fbuf2, k_sbuf, fs_slots, ps);
+        if (proj)
+        {
+            // Нормальные импульсы P -- синтетические (часть нулевых: слот трения не создаётся).
+            for (std::size_t j = 0; j < normal_ff.size(); ++j)
+                normal_ff[j].P = (j % 4 == 0) ? 0.0 : 2.0e-4 * static_cast<double>(1 + j % 3);
+            out.has_ff = interactions::fill_friction_slots_from_normal_ff(exec, h, normal_ff, ff_slots,
+                                                                         list ? &ff_act : nullptr);
+        }
+        const std::size_t nf = sc.state.size(), ns = sc.sys.size();
+        const auto* ffa = list ? &ff_act : nullptr;
+        const auto* fsa = list ? &fs_act : nullptr;
+        if (nf > 0 && (out.has_ff || out.has_fs))
+        {
+            out.stage = true;
+            interactions::compute_friction_counts(exec, nf, ns, ff_slots, fs_slots, fcb, scb, out.bcnt, out.scnt,
+                                                  fcd, scd, scratch, ffa, fsa);
+            interactions::compute_friction_contributions(exec, sc.state, sc.fupd, sc.dv, ff_slots, sc.sys, sc.supd,
+                                                         sc.dvx, fs_slots, out.bcnt, out.scnt, false, st_fbuf,
+                                                         st_sbuf, ffa, fsa);
+            out.fdelta = rhs::reduce_contributions(exec, st_fbuf, nf);
+            out.sdelta = rhs::reduce_contributions(exec, st_sbuf, ns);
+        }
+        out.ff = ff_slots;
+        out.fs = fs_slots;
+        for (const auto& c : ff_slots) out.n_active_ff += c.active ? 1u : 0u;
+        for (const auto& c : fs_slots) out.n_active_fs += c.active ? 1u : 0u;
+        if (list)
+        {
+            // Инварианты списка: возрастание k, число записей == число активных слотов, только активные.
+            bool ok = ff_act.size() == out.n_active_ff && fs_act.size() == out.n_active_fs;
+            for (std::size_t j = 0; j < ff_act.size(); ++j)
+                ok = ok && ff_act[j].k < ff_slots.size() && ff_slots[ff_act[j].k].active && (j == 0 || ff_act[j - 1].k < ff_act[j].k);
+            for (std::size_t j = 0; j < fs_act.size(); ++j)
+                ok = ok && fs_act[j].k < fs_slots.size() && fs_slots[fs_act[j].k].active && (j == 0 || fs_act[j - 1].k < fs_act[j].k);
+            if (!ok) ++failures;
+        }
+        return out;
+    }
+};
+
+bool pipe_out_eq(const PipeOut& a, const PipeOut& b)
+{
+    bool eq = a.has_ff == b.has_ff && a.has_fs == b.has_fs && a.stage == b.stage && slots_eq(a.ff, b.ff) &&
+              slots_eq(a.fs, b.fs);
+    if (a.stage && b.stage)
+    {
+        eq = eq && vec_bits_eq(a.bcnt, b.bcnt) && vec_bits_eq(a.scnt, b.scnt) && a.fdelta.size() == b.fdelta.size() &&
+             a.sdelta.size() == b.sdelta.size();
+        if (eq)
+        {
+            for (std::size_t i = 0; i < a.fdelta.size(); ++i)
+                for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.fdelta[i].dv[d], b.fdelta[i].dv[d]);
+            for (std::size_t i = 0; i < a.sdelta.size(); ++i)
+                for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.sdelta[i].dv[d], b.sdelta[i].dv[d]);
+        }
+    }
+    return eq;
+}
+
+void test_active_list_vs_full(bool projection)
+{
+    std::printf("test_active_list_vs_full (%s):\n", projection ? "проекция нить-нить" : "силовой путь");
+    for (int nt : {1, 2, 7, 8})
+    {
+        rhs::CpuExecutor exec(nt);
+        ListScene sc;
+        sc.init();
+        Pipe full, lst;
+        full.proj = lst.proj = projection;
+        lst.list = true;
+        bool all_eq = true;
+        std::size_t min_active = static_cast<std::size_t>(-1), max_active = 0;
+        bool changed = false;
+        std::size_t prev_active = 0;
+        for (int st = 0; st < 6; ++st)
+        {
+            sc.set_step(st);
+            const PipeOut a = full.step(exec, sc, 1.0e-6);
+            const PipeOut b = lst.step(exec, sc, 1.0e-6);
+            if (!pipe_out_eq(a, b)) all_eq = false;
+            const std::size_t act = a.n_active_ff + a.n_active_fs;
+            min_active = std::min(min_active, act);
+            max_active = std::max(max_active, act);
+            if (st > 0 && act != prev_active) changed = true;
+            prev_active = act;
+        }
+        const std::string lab = "потоков " + std::to_string(nt) + ": ";
+        std::printf("    %sактивных слотов за 6 шагов: min=%zu, max=%zu\n", lab.c_str(), min_active, max_active);
+        check(all_eq, lab + "слоты, флаги, c_k/c_s и a^f в режиме списка побитово равны полному проходу");
+        check(max_active > 0, lab + "в сценах есть активные слоты (предпосылка)");
+        check(changed, lab + "множество активных слотов меняется между шагами (предпосылка)");
+    }
+}
+
+// compute_fiber_bead_dt_ref с executor побитово равен прежней последовательной версии.
+void test_bead_dt_ref_exec()
+{
+    std::printf("test_bead_dt_ref_exec:\n");
+    ListScene sc;
+    sc.init();
+    sc.materials.push_back(sc.materials[0]);
+    sc.materials[1].E = 7.0e8;
+    sc.materials[1].d = 0.8e-3;
+    for (std::size_t i = 0; i < sc.state.size(); ++i) sc.state.material_id[i] = static_cast<int>((i / 12) % 2);
+    std::vector<double> ref;
+    interactions::compute_fiber_bead_dt_ref(sc.state, sc.topology, sc.materials, ref);
+    bool eq = true;
+    for (int nt : {1, 2, 7, 8})
+    {
+        rhs::CpuExecutor exec(nt);
+        std::vector<double> got;
+        interactions::compute_fiber_bead_dt_ref(exec, sc.state, sc.topology, sc.materials, got);
+        eq = eq && vec_bits_eq(ref, got);
+    }
+    check(eq && !ref.empty(), "compute_fiber_bead_dt_ref(exec, ...) == прежняя версия (побитово, 1/2/7/8 потоков)");
+}
+
+// ============================================================================
+// Поиск с отсечкой (FiberContactBuildOptions::cull_apart) против полного: конвейер нить-нить
+// (ядро -> [проекция: нормальные слоты, тёплый старт, run_normal_projection -> слоты трения] -> c_k ->
+// вклады трения -> reduce) на сцене ListScene, шаги с разным числом primitive (в т. ч. m = 0 при n_full > 0
+// и пустой поиск), 1/2/7/8 потоков, режим списка слотов и плотный режим (для плотного culled -- seg_bound).
+// Побитово: нормальные слоты (prim -> k через prim_k, seg, delta, key, mu, P), stage_stats проекции,
+// Δv после стадии, слоты трения (слот j культ. == слот prim_k[j] полного, остальные полного неактивны),
+// c_k, вклады трения.
+// ============================================================================
+
+struct CullStep
+{
+    bool has_ff = false, stage = false;
+    std::vector<interactions::FiberNormalContact> normal; // prim переведён в полный индекс k
+    interactions::NormalProjectionStats st;
+    std::vector<double> dvp[dim];
+    std::vector<interactions::FiberFrictionContact> slots; // развёрнуты в полный индекс k
+    std::vector<double> bcnt;
+    std::vector<fiber::FiberDelta> fdelta;
+    std::size_t m = 0, n_full = 0;
+};
+
+struct CullPipe
+{
+    bool culled = false, list = false, proj = false;
+    std::vector<interactions::FiberFrictionContact> ff_slots;
+    std::vector<interactions::FrictionActiveRef> ff_act;
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FrictionActiveRef>> ff_parts;
+    std::vector<interactions::FiberNormalContact> normal_ff;
+    std::vector<rhs::CpuExecutor::SegPart<interactions::FiberNormalContact>> normal_parts;
+    interactions::NormalProjectionWorkspace ws;
+    interactions::NormalWarmStart warm;
+    std::vector<double> bead_dt;
+    std::vector<rhs::ContributionBuffer<fiber::FiberDelta>> kbuf, st_fbuf;
+    std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> st_sbuf;
+    std::vector<rhs::ContributionBuffer<interactions::FiberCountDelta>> fcb;
+    std::vector<rhs::ContributionBuffer<interactions::SolidCountDelta>> scb;
+    std::vector<interactions::FiberCountDelta> fcd;
+    std::vector<interactions::SolidCountDelta> scd;
+    rhs::ReduceScratch scratch;
+    interactions::FiberContactSearchResult ffs; // живёт между шагами (рабочая память сборки переиспользуется)
+    bool list_ok = true;
+
+    CullStep step(const rhs::CpuExecutor& exec, ListScene& sc, double h)
+    {
+        CullStep out;
+        interactions::FiberContactBuildOptions opt;
+        opt.cull_apart = culled;
+        interactions::build_fiber_contact_search(exec, sc.state, sc.topology, sc.materials, ffs, opt);
+        out.m = ffs.primitives.size();
+        out.n_full = culled ? ffs.n_full : ffs.primitives.size();
+        const auto view = interactions::fiber_contact_view(ffs);
+        interactions::FiberContactStepParams pf;
+        if (proj)
+        {
+            interactions::compute_fiber_bead_dt_ref(exec, sc.state, sc.topology, sc.materials, bead_dt);
+            pf.law.type = 1;
+            pf.bead_dt_ref = &bead_dt;
+            pf.normal_ff = &normal_ff;
+            pf.normal_ff_parts = &normal_parts;
+        }
+        if (list)
+        {
+            pf.fric_active = &ff_act;
+            pf.fric_active_parts = &ff_parts;
+        }
+        out.has_ff = interactions::compute_fiber_contact_contributions(exec, sc.state, sc.materials, view, kbuf,
+                                                                       ff_slots, pf);
+        const std::size_t nf = sc.state.size(), ns = sc.sys.size();
+        if (proj)
+        {
+            std::vector<interactions::FiberSolidNormalContact> fs_norm; // Fiber-Solid в этом тесте не участвует
+            std::vector<double> dvp[dim];
+            for (std::size_t d = 0; d < dim; ++d) dvp[d] = sc.dv[d];
+            std::vector<std::vector<double>> dvxp = sc.dvx;
+            warm.apply(exec, normal_ff, fs_norm, h, true);
+            interactions::compute_normal_counts(exec, nf, ns, normal_ff, fs_norm, ws);
+            interactions::run_normal_projection(exec, sc.state, sc.fupd, dvp, normal_ff, sc.sys, sc.supd, dvxp,
+                                                fs_norm, 3, ws, out.st);
+            warm.rebuild(normal_ff, fs_norm, h);
+            for (std::size_t d = 0; d < dim; ++d) out.dvp[d] = dvp[d];
+            // Нормальные импульсы после стадии -> слоты трения (часть P может быть нулевой).
+            out.has_ff = interactions::fill_friction_slots_from_normal_ff(exec, h, normal_ff, ff_slots,
+                                                                         list ? &ff_act : nullptr);
+        }
+        // Нормальные слоты: prim (индекс j) -> полный индекс k.
+        out.normal = normal_ff;
+        if (!proj) out.normal.clear();
+        if (culled)
+            for (auto& c : out.normal) c.prim = ffs.prim_k[c.prim];
+        // Слоты трения: развёрнуты в полный индекс k.
+        out.slots.assign(out.n_full, interactions::FiberFrictionContact{});
+        for (std::size_t j = 0; j < ff_slots.size(); ++j)
+        {
+            const std::size_t k = culled ? ffs.prim_k[j] : j;
+            if (k < out.n_full) out.slots[k] = ff_slots[j];
+        }
+        out.stage = nf > 0 && out.has_ff;
+        if (out.stage)
+        {
+            const std::vector<interactions::FiberSolidFrictionContact> no_fs;
+            const auto* ffa = list ? &ff_act : nullptr;
+            const std::size_t* sb = (!list && culled) ? ffs.seg_bound : nullptr;
+            interactions::compute_friction_counts(exec, nf, ns, ff_slots, no_fs, fcb, scb, out.bcnt, scd_dummy_count,
+                                                  fcd, scd, scratch, ffa, nullptr, sb);
+            std::vector<double> dvfr[dim];
+            for (std::size_t d = 0; d < dim; ++d) dvfr[d] = sc.dv[d];
+            interactions::compute_friction_contributions(exec, sc.state, sc.fupd, dvfr, ff_slots, sc.sys, sc.supd,
+                                                         sc.dvx, no_fs, out.bcnt, scd_dummy_count, false, st_fbuf,
+                                                         st_sbuf, ffa, nullptr, sb);
+            out.fdelta = rhs::reduce_contributions(exec, st_fbuf, nf);
+        }
+        if (list)
+        {
+            // Инварианты списка в индексах j: возрастание, только активные, размер == числу активных слотов.
+            std::size_t act = 0;
+            for (const auto& c : ff_slots) act += c.active ? 1u : 0u;
+            bool ok = ff_act.size() == act;
+            for (std::size_t q = 0; q < ff_act.size(); ++q)
+                ok = ok && ff_act[q].k < ff_slots.size() && ff_slots[ff_act[q].k].active &&
+                     (q == 0 || ff_act[q - 1].k < ff_act[q].k);
+            if (culled)
+                for (std::size_t q = 0; q < ff_act.size() && ok; ++q)
+                    ok = ok && ff_act[q].seg == rhs::CpuExecutor::seg_of_index(ffs.prim_k[ff_act[q].k], ffs.n_full);
+            if (!ok) list_ok = false;
+        }
+        return out;
+    }
+
+    std::vector<double> scd_dummy_count;
+};
+
+bool normal_eq(const interactions::FiberNormalContact& a, const interactions::FiberNormalContact& b)
+{
+    bool eq = a.active == b.active && a.a0 == b.a0 && a.a1 == b.a1 && a.b0 == b.b0 && a.b1 == b.b1 &&
+              a.prim == b.prim && a.seg == b.seg && a.warm == b.warm && a.key == b.key && bits_eq(a.s, b.s) &&
+              bits_eq(a.t, b.t) && bits_eq(a.delta, b.delta) && bits_eq(a.mu, b.mu) && bits_eq(a.P, b.P);
+    for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.n[d], b.n[d]);
+    return eq;
+}
+
+bool stats_eq(const interactions::NormalProjectionStats& a, const interactions::NormalProjectionStats& b)
+{
+    return a.enabled == b.enabled && a.n_slots_ff == b.n_slots_ff && a.n_slots_fs == b.n_slots_fs &&
+           bits_eq(a.max_ck, b.max_ck) && bits_eq(a.max_cs, b.max_cs) && bits_eq(a.resid, b.resid) &&
+           bits_eq(a.resid_rel, b.resid_rel) && bits_eq(a.resid_load, b.resid_load) &&
+           bits_eq(a.warm_frac, b.warm_frac) && bits_eq(a.W_stage, b.W_stage) && a.iters == b.iters &&
+           bits_eq(a.W_warm, b.W_warm) && bits_eq(a.warm_scale, b.warm_scale);
+}
+
+bool cull_step_eq(const CullStep& a, const CullStep& b)
+{
+    bool eq = a.has_ff == b.has_ff && a.stage == b.stage && a.n_full == b.n_full && slots_eq(a.slots, b.slots) &&
+              a.normal.size() == b.normal.size() && stats_eq(a.st, b.st) && vec_bits_eq(a.bcnt, b.bcnt) &&
+              a.fdelta.size() == b.fdelta.size();
+    if (eq)
+    {
+        for (std::size_t q = 0; q < a.normal.size(); ++q) eq = eq && normal_eq(a.normal[q], b.normal[q]);
+        for (std::size_t d = 0; d < dim; ++d) eq = eq && vec_bits_eq(a.dvp[d], b.dvp[d]);
+        for (std::size_t i = 0; i < a.fdelta.size(); ++i)
+            for (std::size_t d = 0; d < dim; ++d) eq = eq && bits_eq(a.fdelta[i].dv[d], b.fdelta[i].dv[d]);
+    }
+    return eq;
+}
+
+void test_culled_vs_full(bool projection, bool list_mode)
+{
+    std::printf("test_culled_vs_full (%s, %s):\n", projection ? "проекция" : "силовой путь",
+                list_mode ? "список слотов" : "плотный режим");
+    for (int nt : {1, 2, 7, 8})
+    {
+        rhs::CpuExecutor exec(nt);
+        ListScene sc;
+        sc.init();
+        CullPipe full, cull;
+        full.proj = cull.proj = projection;
+        full.list = cull.list = list_mode;
+        full.culled = false;
+        cull.culled = true;
+        bool all_eq = true, lists_ok = true;
+        bool saw_shrink = false, saw_empty_m = false, saw_cull = false;
+        std::size_t prev_m = 0, max_active = 0;
+        // Шаги: 0..2, «далеко» («лестница» по z: нить object_id = o сдвинута на 0.018*o; соседние нити -- бусины
+        // на ~0.020 < радиуса поиска 0.021, середины сегментов не ближе 0.018 > R = 0.011, |Δo| >= 2 -- вне
+        // радиуса: m = 0 при n_full > 0), 3, «совсем далеко» (второе семейство +0.03 по z; параллельные нити
+        // семейств остаются), 4, 5 -- число primitive меняется и вверх, и вниз.
+        const double far_shift[9] = {0.0, 0.0, 0.0, 0.018, 0.0, 0.03, 0.0, 0.0, 0.0};
+        const int step_idx[9] = {0, 1, 2, 2, 3, 3, 4, 5, 0};
+        for (int q = 0; q < 9; ++q)
+        {
+            sc.set_step(step_idx[q]);
+            if (q == 3) // «лестница»: m = 0 при n_full > 0
+                for (std::size_t i = 0; i < sc.state.size(); ++i)
+                    sc.state.x[2][i] += far_shift[q] * static_cast<double>(sc.state.object_id[i]);
+            else if (far_shift[q] != 0.0)
+                for (std::size_t i = 0; i < sc.state.size(); ++i)
+                    if (sc.state.object_id[i] >= sc.nf) sc.state.x[2][i] += far_shift[q];
+            const CullStep a = full.step(exec, sc, 1.0e-6);
+            const CullStep b = cull.step(exec, sc, 1.0e-6);
+            if (!cull_step_eq(a, b)) all_eq = false;
+            if (q > 0 && b.m < prev_m) saw_shrink = true;
+            if (b.m == 0 && b.n_full > 0) saw_empty_m = true;
+            if (b.m < b.n_full) saw_cull = true;
+            prev_m = b.m;
+            std::size_t act = 0;
+            for (const auto& c : a.slots) act += c.active ? 1u : 0u;
+            max_active = std::max(max_active, act);
+        }
+        lists_ok = full.list_ok && cull.list_ok;
+        const std::string lab = "потоков " + std::to_string(nt) + ": ";
+        check(all_eq, lab + "нормальные слоты, stats проекции, Δv, слоты трения, c_k и a^f с отсечкой побитово == полному");
+        check(lists_ok, lab + "инварианты списка слотов в индексах j (возрастание, seg == отрезок k)");
+        check(max_active > 0, lab + "в сценах есть активные слоты (предпосылка)");
+        check(saw_cull, lab + "отсечка убирает primitive (m < n_full) (предпосылка)");
+        check(saw_shrink, lab + "число primitive m уменьшается между шагами (предпосылка)");
+        check(saw_empty_m, lab + "есть шаг с m = 0 при n_full > 0 (предпосылка)");
+    }
+}
+
 } // namespace
 
 int main()
@@ -2361,6 +2931,13 @@ int main()
     test_fs_counts_and_diagnostics();
     test_fs_mass_splitting();
     test_fs_solver_interface();
+    test_active_list_vs_full(false);
+    test_active_list_vs_full(true);
+    test_bead_dt_ref_exec();
+    test_culled_vs_full(false, true);
+    test_culled_vs_full(false, false);
+    test_culled_vs_full(true, true);
+    test_culled_vs_full(true, false);
 
     std::printf("ключевые числа: 8.1 |u_t|после/до = %.3e; 8.2 |F_t|/muN-1 = %.3e; 8.3 |u_t|после/до = %.3e; "
                 "8.6 max прирост KE = %.3e; 8.7 = %.3e / %.3e\n",

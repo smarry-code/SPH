@@ -33,6 +33,7 @@
 #include "fiber/fiber_system.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
+#include "rhs/cpu_executor.hpp"
 
 namespace ode
 {
@@ -54,15 +55,16 @@ enum class SolverKind
 
 // v_min = vx; vx += (dt_prev/2) * dv. Координаты не трогаются.
 template <class N, class VxArr, class DvArr>
-void pc_predict_velocity_half_step(N n, double dt_prev, VxArr& vx, const DvArr& dv, VxArr& v_min)
+void pc_predict_velocity_half_step(const rhs::CpuExecutor& exec, N n, double dt_prev, VxArr& vx, const DvArr& dv,
+                                    VxArr& v_min)
 {
+    // Поэлементный цикл (каждый элемент пишется один раз) -- результат не зависит от числа потоков.
     for (std::size_t d = 0; d < dim; ++d)
     {
-        for (N i = 0; i < n; ++i)
-        {
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) {
             v_min[d][i] = vx[d][i];
             vx[d][i] += (dt_prev / 2.0) * dv[d][i];
-        }
+        });
     }
 }
 
@@ -72,17 +74,17 @@ void pc_predict_velocity_half_step(N n, double dt_prev, VxArr& vx, const DvArr& 
 // use_base == true  -> base = v_base (сохранённая v^n, fiber/SPH.md
 //   «Корректор»: v = v^n + dt*v̇^n + ṽ, coeff = dt).
 template <class N, class XArr, class VxArr, class DvArr, class AvArr>
-void pc_finalize_velocity_position_with_av(N n, double dt, double coeff, XArr& x, VxArr& vx, const DvArr& dv,
-                                            const VxArr& v_base, bool use_base, const AvArr& av)
+void pc_finalize_velocity_position_with_av(const rhs::CpuExecutor& exec, N n, double dt, double coeff, XArr& x,
+                                            VxArr& vx, const DvArr& dv, const VxArr& v_base, bool use_base,
+                                            const AvArr& av)
 {
     for (std::size_t d = 0; d < dim; ++d)
     {
-        for (N i = 0; i < n; ++i)
-        {
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) {
             const double base = use_base ? v_base[d][i] : vx[d][i];
             vx[d][i] = base + coeff * dv[d][i] + av[d][i];
             x[d][i] += dt * vx[d][i];
-        }
+        });
     }
 }
 
@@ -90,34 +92,33 @@ void pc_finalize_velocity_position_with_av(N n, double dt, double coeff, XArr& x
 //   vx = base + coeff*dv;  x += dt*(vx + av)
 // -- поправка av только переносит позиции, кинетическая энергия не меняется.
 template <class N, class XArr, class VxArr, class DvArr, class AvArr>
-void pc_finalize_velocity_position_xsph_position(N n, double dt, double coeff, XArr& x, VxArr& vx, const DvArr& dv,
-                                                  const VxArr& v_base, bool use_base, const AvArr& av)
+void pc_finalize_velocity_position_xsph_position(const rhs::CpuExecutor& exec, N n, double dt, double coeff,
+                                                  XArr& x, VxArr& vx, const DvArr& dv, const VxArr& v_base,
+                                                  bool use_base, const AvArr& av)
 {
     for (std::size_t d = 0; d < dim; ++d)
     {
-        for (N i = 0; i < n; ++i)
-        {
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) {
             const double base = use_base ? v_base[d][i] : vx[d][i];
             vx[d][i] = base + coeff * dv[d][i];
             x[d][i] += dt * (vx[d][i] + av[d][i]);
-        }
+        });
     }
 }
 
 // То же самое без поправки XSPH (Fiber -- fiber/SPH.md, «finalize»: у Fiber
 // XSPH не определён, только ẋ = v).
 template <class N, class XArr, class VxArr, class DvArr>
-void pc_finalize_velocity_position(N n, double dt, double coeff, XArr& x, VxArr& vx, const DvArr& dv,
-                                    const VxArr& v_base, bool use_base)
+void pc_finalize_velocity_position(const rhs::CpuExecutor& exec, N n, double dt, double coeff, XArr& x, VxArr& vx,
+                                    const DvArr& dv, const VxArr& v_base, bool use_base)
 {
     for (std::size_t d = 0; d < dim; ++d)
     {
-        for (N i = 0; i < n; ++i)
-        {
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) {
             const double base = use_base ? v_base[d][i] : vx[d][i];
             vx[d][i] = base + coeff * dv[d][i];
             x[d][i] += dt * vx[d][i];
-        }
+        });
     }
 }
 
@@ -131,25 +132,29 @@ void pc_finalize_velocity_position(N n, double dt, double coeff, XArr& x, VxArr&
 // нити берётся из fiber_coeff, чтобы step_fiber и fiber_velocity_update
 // использовали одно значение, fiber/fiber_friction_projection.md §4).
 template <class N, class XArr, class VxArr, class DvArr>
-void euler_step_position_velocity(N n, double dt, double dv_coeff, XArr& x, VxArr& vx, const DvArr& dv)
+void euler_step_position_velocity(const rhs::CpuExecutor& exec, N n, double dt, double dv_coeff, XArr& x, VxArr& vx,
+                                   const DvArr& dv)
 {
+    // Два отдельных цикла (сначала все x по старой v, затем v) -- порядок как в последовательном коде.
     for (std::size_t d = 0; d < dim; ++d)
-        for (N i = 0; i < n; ++i) x[d][i] += dt * vx[d][i]; // x^{n+1} = x^n + dt*v^n (старая скорость)
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) {
+            x[d][i] += dt * vx[d][i]; // x^{n+1} = x^n + dt*v^n (старая скорость)
+        });
     for (std::size_t d = 0; d < dim; ++d)
-        for (N i = 0; i < n; ++i) vx[d][i] += dv_coeff * dv[d][i];
+        exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) { vx[d][i] += dv_coeff * dv[d][i]; });
 }
 
 template <class N, class XArr, class VxArr, class DvArr>
-void euler_step_position_velocity(N n, double dt, XArr& x, VxArr& vx, const DvArr& dv)
+void euler_step_position_velocity(const rhs::CpuExecutor& exec, N n, double dt, XArr& x, VxArr& vx, const DvArr& dv)
 {
-    euler_step_position_velocity(n, dt, dt, x, vx, dv);
+    euler_step_position_velocity(exec, n, dt, dt, x, vx, dv);
 }
 
 // Скалярная величина (Solid: u, rho, s-компоненты): y^{n+1} = y^n + dt*dy.
 template <class N, class Arr, class DArr>
-void euler_step_scalar(N n, double dt, Arr& y, const DArr& dy)
+void euler_step_scalar(const rhs::CpuExecutor& exec, N n, double dt, Arr& y, const DArr& dy)
 {
-    for (N i = 0; i < n; ++i) y[i] += dt * dy[i];
+    exec.parallel_for(static_cast<std::size_t>(n), [&](std::size_t i) { y[i] += dt * dy[i]; });
 }
 
 // ============================================================================
@@ -274,10 +279,10 @@ public:
     // Предиктор Solid на полшага dt (по f^{n-1}, уже лежащей в solid_rhs с
     // прошлого вызова). Нет-оп на первом шаге -- fiber/SPH.md, «Первый шаг»:
     // предиктора нет вовсе.
-    void predict_solid(ParticleSystem& sys, std::size_t ntotal, double dt)
+    void predict_solid(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, double dt)
     {
         if (first_step_) return;
-        for (std::size_t i = 0; i < ntotal; ++i)
+        exec.parallel_for(ntotal, [&](std::size_t i)
         {
             u_min_[i] = sys.u[i];
             double temp_u = 0.0;
@@ -305,21 +310,28 @@ public:
             sys.sxy[i] += (dt / 2.0) * solid_rhs.dsxy[i];
             sys.syz[i] += (dt / 2.0) * solid_rhs.dsyz[i];
             sys.sxz[i] += (dt / 2.0) * solid_rhs.dsxz[i];
-        }
-        pc_predict_velocity_half_step(ntotal, dt, sys.vx, solid_rhs.dvx, v_min_);
+        });
+        pc_predict_velocity_half_step(exec, ntotal, dt, sys.vx, solid_rhs.dvx, v_min_);
     }
+
+    void predict_solid(ParticleSystem& sys, std::size_t ntotal, double dt) { predict_solid(serial_exec(), sys, ntotal, dt); }
 
     // Предиктор Fiber -- только скорость (нет u/rho/s у Fiber).
-    void predict_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
+    void predict_fiber(const rhs::CpuExecutor& exec, fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
         if (first_step_) return;
-        pc_predict_velocity_half_step(nfiber, dt, fb.vx, fiber_rhs.dv, v_min_fiber_);
+        pc_predict_velocity_half_step(exec, nfiber, dt, fb.vx, fiber_rhs.dv, v_min_fiber_);
     }
 
-    void correct_solid(ParticleSystem& sys, std::size_t ntotal, double dt)
+    void predict_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
+    {
+        predict_fiber(serial_exec(), fb, nfiber, dt);
+    }
+
+    void correct_solid(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, double dt)
     {
         const bool fs = first_step_;
-        for (std::size_t i = 0; i < ntotal; ++i)
+        const auto body = [&](std::size_t i)
         {
             double temp_u = 0.0;
             if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
@@ -366,24 +378,39 @@ public:
                 sys.syz[i] = syz_min_[i] + dt * solid_rhs.dsyz[i];
                 sys.sxz[i] = sxz_min_[i] + dt * solid_rhs.dsxz[i];
             }
-        }
+        };
+#ifdef SPH_ENERGY_LOG
+        // u_clamp_acc -- double-сумма: порядок слагаемых должен быть последовательным, цикл остаётся серийным.
+        (void)exec;
+        for (std::size_t i = 0; i < ntotal; ++i) body(i);
+#else
+        exec.parallel_for(ntotal, body);
+#endif
         // Скорость/координата -- через общий шаблон (axis-ветвление старого
         // кода арифметически совпадало в обеих ветках if/else, поэтому
         // безопасно заменено на безусловный цикл ещё в перегрузке
         // time_integration(fiber::Model&, ...), этап Ф3; здесь -- то же
         // самое, проверено tests/test_fiber_time_integration_equivalence.cpp).
         if (xsph_position)
-            pc_finalize_velocity_position_xsph_position(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx,
-                                                         v_min_, /*use_base=*/solid_use_base(), solid_rhs.av);
+            pc_finalize_velocity_position_xsph_position(exec, ntotal, dt, solid_coeff(dt), sys.x, sys.vx,
+                                                         solid_rhs.dvx, v_min_, /*use_base=*/solid_use_base(),
+                                                         solid_rhs.av);
         else
-            pc_finalize_velocity_position_with_av(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx, v_min_,
-                                                   /*use_base=*/solid_use_base(), solid_rhs.av);
+            pc_finalize_velocity_position_with_av(exec, ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx,
+                                                   v_min_, /*use_base=*/solid_use_base(), solid_rhs.av);
+    }
+
+    void correct_solid(ParticleSystem& sys, std::size_t ntotal, double dt) { correct_solid(serial_exec(), sys, ntotal, dt); }
+
+    void correct_fiber(const rhs::CpuExecutor& exec, fiber::FiberState& fb, std::size_t nfiber, double dt)
+    {
+        pc_finalize_velocity_position(exec, nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv, v_min_fiber_,
+                                       /*use_base=*/fiber_use_base());
     }
 
     void correct_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        pc_finalize_velocity_position(nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv, v_min_fiber_,
-                                       /*use_base=*/fiber_use_base());
+        correct_fiber(serial_exec(), fb, nfiber, dt);
     }
 
     // База и коэффициент обновления скорости нити ровно как в correct_fiber
@@ -424,20 +451,39 @@ public:
     // в самом цикле: predict()/advance() у EulerSolver имеют ту же сигнатуру
     // (predict() -- нет-оп, у Эйлера нет предикторной фазы).
     // ------------------------------------------------------------------
+    void predict(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb,
+                 std::size_t nfiber, double dt)
+    {
+        predict_solid(exec, sys, ntotal, dt);
+        predict_fiber(exec, fb, nfiber, dt);
+    }
+
     void predict(ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        predict_solid(sys, ntotal, dt);
-        predict_fiber(fb, nfiber, dt);
+        predict(serial_exec(), sys, ntotal, fb, nfiber, dt);
+    }
+
+    void advance(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb,
+                 std::size_t nfiber, double dt)
+    {
+        correct_solid(exec, sys, ntotal, dt);
+        correct_fiber(exec, fb, nfiber, dt);
+        mark_step_done();
     }
 
     void advance(ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        correct_solid(sys, ntotal, dt);
-        correct_fiber(fb, nfiber, dt);
-        mark_step_done();
+        advance(serial_exec(), sys, ntotal, fb, nfiber, dt);
     }
 
 private:
+    // Однопоточный исполнитель для старых сигнатур без exec (тесты и внешний код).
+    static const rhs::CpuExecutor& serial_exec()
+    {
+        static const rhs::CpuExecutor e(1);
+        return e;
+    }
+
     // Единственное место, где задаются коэффициент и признак базы обновления
     // скорости нити (используются correct_fiber и fiber_velocity_update).
     double fiber_coeff(double dt) const { return first_step_ ? dt / 2.0 : dt; }
@@ -487,9 +533,9 @@ public:
     void set_first_step(bool) {}
     bool first_step() const { return false; }
 
-    void step_solid(ParticleSystem& sys, std::size_t ntotal, double dt)
+    void step_solid(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, double dt)
     {
-        for (std::size_t i = 0; i < ntotal; ++i)
+        const auto body = [&](std::size_t i)
         {
             double temp_u = 0.0;
             if (dim == 1) temp_u = -nsym * sys.p[i] * sys.vx[0][i] / sys.x[0][i] / sys.rho[i];
@@ -517,14 +563,25 @@ public:
             sys.sxy[i] += dt * solid_rhs.dsxy[i];
             sys.syz[i] += dt * solid_rhs.dsyz[i];
             sys.sxz[i] += dt * solid_rhs.dsxz[i];
-        }
-        euler_step_position_velocity(ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx);
+        };
+#ifdef SPH_ENERGY_LOG
+        // u_clamp_acc -- double-сумма: порядок слагаемых должен быть последовательным, цикл остаётся серийным.
+        (void)exec;
+        for (std::size_t i = 0; i < ntotal; ++i) body(i);
+#else
+        exec.parallel_for(ntotal, body);
+#endif
+        euler_step_position_velocity(exec, ntotal, dt, solid_coeff(dt), sys.x, sys.vx, solid_rhs.dvx);
     }
 
-    void step_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt)
+    void step_solid(ParticleSystem& sys, std::size_t ntotal, double dt) { step_solid(serial_exec(), sys, ntotal, dt); }
+
+    void step_fiber(const rhs::CpuExecutor& exec, fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        euler_step_position_velocity(nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv);
+        euler_step_position_velocity(exec, nfiber, dt, fiber_coeff(dt), fb.x, fb.vx, fiber_rhs.dv);
     }
+
+    void step_fiber(fiber::FiberState& fb, std::size_t nfiber, double dt) { step_fiber(serial_exec(), fb, nfiber, dt); }
 
     // Эйлер: base = fb.vx (v^n), h = fiber_coeff(dt) = dt -- ровно то, что
     // делает euler_step_position_velocity (vx += dt*dv).
@@ -552,20 +609,36 @@ public:
     // PredictorCorrectorSolver::predict/advance выше). У Эйлера предикторной
     // фазы нет -- RHS вычисляется прямо в y^n, поэтому predict() -- нет-оп.
     // ------------------------------------------------------------------
-    void predict(ParticleSystem& /*sys*/, std::size_t /*ntotal*/, fiber::FiberState& /*fb*/, std::size_t /*nfiber*/,
-                 double /*dt*/)
+    void predict(const rhs::CpuExecutor& /*exec*/, ParticleSystem& /*sys*/, std::size_t /*ntotal*/,
+                 fiber::FiberState& /*fb*/, std::size_t /*nfiber*/, double /*dt*/)
     {
         // нет-оп: явный Эйлер вычисляет f = RHS(y^n) без промежуточного
         // предиктора (fiber/PLAN.md §3.9, «Явный Эйлер»).
     }
 
+    void predict(ParticleSystem& /*sys*/, std::size_t /*ntotal*/, fiber::FiberState& /*fb*/, std::size_t /*nfiber*/,
+                 double /*dt*/)
+    {
+    }
+
+    void advance(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb,
+                 std::size_t nfiber, double dt)
+    {
+        step_solid(exec, sys, ntotal, dt);
+        step_fiber(exec, fb, nfiber, dt);
+    }
+
     void advance(ParticleSystem& sys, std::size_t ntotal, fiber::FiberState& fb, std::size_t nfiber, double dt)
     {
-        step_solid(sys, ntotal, dt);
-        step_fiber(fb, nfiber, dt);
+        advance(serial_exec(), sys, ntotal, fb, nfiber, dt);
     }
 
 private:
+    static const rhs::CpuExecutor& serial_exec()
+    {
+        static const rhs::CpuExecutor e(1);
+        return e;
+    }
     double fiber_coeff(double dt) const { return dt; }
     double solid_coeff(double dt) const { return dt; }
 };
