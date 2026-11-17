@@ -131,7 +131,9 @@ z=−0.5 мм), по **21 бусине**, `l0=2 мм` (длина 40 мм, ~4× 
 - `demo_fiber_net.cpp` — драйвер сцены (цель `demo_fiber_net` в `CMakeLists.txt`).
 - `scripts/animate.py`, `scripts/make_synthetic_frames.py` — визуализация и
   синтетические кадры.
-- `data/run/` — в git: `net.fib`, `anim.gif`, PNG-снимки. Кадры
+- `data/run/` — в git: `net.fib`, PNG-снимки `anim_frameN.png`; `anim.gif` здесь и в
+  `data/v*/` с 2026-11-14 не хранится (правило объёма, `experiments/README.md` §3),
+  пересчёт — командой `scripts/animate.py` выше. Кадры
   `sph_output_*`/`fiber_output_*` (63 пары, ~10 МБ) и служебные `log.txt`,
   `sph_gp.csv` не хранятся — воспроизводятся запуском драйвера.
 - `data/synthetic/` — синтетические кадры (не хранятся, генерируются

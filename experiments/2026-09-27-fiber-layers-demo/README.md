@@ -95,7 +95,8 @@
 Fiber-Fiber-Contact «пара сегментов — одна сила» (`fiber/fiber_contact_segment_pairs.md`)
 без трения и с трением μ = 0.3 (`SPH_DEMO_MU_FF`). Каталоги
 `data/v2_mu0/{pierce,stop}` и `data/v2_mu03/{pierce,stop}`. В каждом лежат
-`anim.gif`, снимки, `energy.{csv,json,png}` и `penetration.json`.
+PNG-снимки `anim_frameN.png`, `energy.{csv,json,png}` и `penetration.json`
+(`anim.gif` с 2026-11-14 не хранится — пересчёт `scripts/animate.py`).
 
 Проверки:
 - `scripts/energy_balance.py` — полная энергия
@@ -382,6 +383,8 @@ python scripts/animate.py --run-dir data/stop   --out data/stop/anim.gif   --col
 - `scripts/animate.py` — визуализация (доработанная копия оригинала).
 - `scripts/analyze_layers.py` — числовая проверка критериев по кадрам.
 - `data/pierce/`, `data/stop/` — в git: `net.fib`, `net_layout.txt`,
-  `anim.gif`, PNG-снимки. Кадры `sph_output_*`/`fiber_output_*`, `log.txt`,
+  PNG-снимки (`anim.gif` с 2026-11-14 не хранится, правило объёма
+  `experiments/README.md` §3; пересчёт — команды `scripts/animate.py` выше).
+  Кадры `sph_output_*`/`fiber_output_*`, `log.txt`,
   `sph_gp.csv` не хранятся (см. `.gitignore`) — воспроизводятся запуском
   драйвера.

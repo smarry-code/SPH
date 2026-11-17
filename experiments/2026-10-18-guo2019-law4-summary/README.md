@@ -198,7 +198,7 @@
 | Что | Где |
 |---|---|
 | анализ причин и описание закона 4 | [2026-10-17-guo2019-1t-pinball-vbl/ANALYSIS_LAW4.md](../2026-10-17-guo2019-1t-pinball-vbl/ANALYSIS_LAW4.md) |
-| 1T, закон 4, E = 97: GIF, v_z(t), энергия по выстрелам | [2026-10-17-guo2019-1t-pinball-vbl/anim_law4/](../2026-10-17-guo2019-1t-pinball-vbl/anim_law4/) |
+| 1T, закон 4, E = 97: снимки ткани, v_z(t), энергия по выстрелам | [2026-10-17-guo2019-1t-pinball-vbl/anim_law4/](../2026-10-17-guo2019-1t-pinball-vbl/anim_law4/) |
 | 1T, закон 4, E = 78 | [2026-10-17-guo2019-1t-pinball-vbl/anim_law4_E78/](../2026-10-17-guo2019-1t-pinball-vbl/anim_law4_E78/) |
 | 1T, Swegle | [2026-10-17-guo2019-1t-pinball-vbl/anim_swegle/](../2026-10-17-guo2019-1t-pinball-vbl/anim_swegle/) |
 | 2T, закон 4 | [2026-10-18-guo2019-2t-law4/anim/](../2026-10-18-guo2019-2t-law4/anim/) |

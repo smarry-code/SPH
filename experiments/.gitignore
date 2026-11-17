@@ -16,3 +16,14 @@
 
 # 2026-11-08-guo2019-1t-law3push-mu027: GIF и PNG выстрелов 69 и 70 (37 МБ), пересчёт -- scripts/rebuild_artifacts.sh
 2026-11-08-guo2019-1t-law3push-mu027/anim/
+
+# 2026-11-14: GIF ткани, у которых в git есть PNG-снимки тех же кадров, сняты с учёта (правило объёма, §3).
+# vz_anim_*.gif (v_z(t)) остаются в git. Пересчёт — scripts/animate*.py соответствующего каталога.
+2026-09-26-fiber-net-demo/data/*/anim.gif
+2026-09-27-fiber-layers-demo/data/**/anim.gif
+2026-10-17-guo2019-1t-pinball-vbl/anim_*/**/anim_*.gif
+2026-10-18-guo2019-2t-law4/anim*/**/anim_*.gif
+
+# 2026-11-14: снимки ткани anim2_* — в git по одному (последнему) кадру на расчёт; остальные на диске.
+2026-10-17-guo2019-1t-pinball-vbl/anim_damage/*/anim2_*_frame*.png
+2026-10-18-guo2019-2t-law4/anim_damage/*/anim2_*_frame*.png
