@@ -22,7 +22,7 @@
 | [`fiber-model/`](fiber-model/) | Модель нити: постановка, план этапов Ф0–Ф9, отчёты, пластичность, повреждённость |
 | [`fiber-contact/`](fiber-contact/) | Контакт и трение нитей: законы 1–4, проекция трения, закон 3 как проекция скорости |
 | [`fabrics/`](fabrics/) | Ткани: генератор полотна, закрепление, одеяло, мозаика, серия kT |
-| [`guo2019/`](guo2019/) | Эксперименты Guo 2019 (1T, 1T/A, A/1T): ТЗ, постановка, отчёты |
+| [`guo2019/`](guo2019/) | Эксперименты Guo 2019 (1T, 1T/A, A/1T, 2T/4T): ТЗ, постановка, отчёты |
 | [`johnson-cook/`](johnson-cook/) | Модель Джонсона–Кука: анализ, план, отчёты J0–J7/E1–E5, искусственное напряжение |
 | [`jh2/`](jh2/) | JH-2: обзор кода и план исправления |
 | [`speedup/`](speedup/) | Ускорение многопоточного расчёта |
@@ -66,6 +66,7 @@
 | [fabric-kt-penetration-tz.md](fabrics/fabric-kt-penetration-tz.md) | ТЗ серии расчётов | расчёты — `experiments/2026-11-09-fabric-kT-ball1g-v550/` и далее |
 | **guo2019/** | | |
 | [guo2019-experiments-tz.md](guo2019/guo2019-experiments-tz.md) | ТЗ | реализовано (и расширено) |
+| [guo2019-2t-4t-tz.md](guo2019/guo2019-2t-4t-tz.md) | ТЗ | реализовано (2T, 4T, затем `<k>T`) |
 | [guo2019-e2e.md](guo2019/guo2019-e2e.md) | постановка | действует |
 | [exp-1t-single-ply.md](guo2019/exp-1t-single-ply.md), [exp-1t-a-fabric-front.md](guo2019/exp-1t-a-fabric-front.md), [exp-a-1t-metal-front.md](guo2019/exp-a-1t-metal-front.md) | описания опытов | справка |
 | [guo2019-plastic-1t-2t-report.md](guo2019/guo2019-plastic-1t-2t-report.md) | отчёт | исторический (2026-10-16) |

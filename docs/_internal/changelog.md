@@ -72,6 +72,9 @@
 
 ### Изменено
 
+- ТЗ 2T/4T (`fiber/TZ_GUO2019_2T_4T.md` ветки `Guo2T`) перенесено в
+  [`notes/guo2019/guo2019-2t-4t-tz.md`](../../notes/guo2019/guo2019-2t-4t-tz.md): на него ссылаются комментарии
+  кода «ТЗ 2T/4T §…» (2026-11-20).
 - Рабочие заметки (`Gia/`, `contact/`, `fiber/`, `johnson-cook/`, `jh2/`, `speedup/`, `part_0.md`,
   `Report_SPH_contact.md`) перенесены в [`notes/`](../../notes/README.md) по темам (2026-11-20), имена — kebab-case;
   ссылки в коде, `docs/`, `experiments/` и самих заметках обновлены; графики e2e — `notes/contact/e2e/`.
