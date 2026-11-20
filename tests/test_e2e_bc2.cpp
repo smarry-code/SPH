@@ -626,9 +626,9 @@ struct RunResult
 };
 
 // Конфигурация расчёта (ТЗ §3). Источник значений:
-//   «Керамика/Карбид бора/BC2/Initial_Conditions.txt».
-// Файл в кодировке cp1251 и НЕ парсится намеренно: разбор зависел бы от
-// рабочего каталога и от кодировки — обе вещи ломают тест непредсказуемо.
+//   «cases/bc2/source/initial-conditions.txt» (архив кейса, cases/bc2/README.md).
+// Архивный файл НЕ парсится намеренно: тест читает свою копию из tests/data/,
+// чтобы не зависеть от архива и рабочего каталога.
 fs::path config_path()
 {
     return fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt";

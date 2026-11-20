@@ -1,6 +1,6 @@
 // tests/test_plain_weave.cpp
 // Тесты генератора полотняного переплетения (include/fiber/plain_weave.hpp,
-// ТЗ weave/TZ_PLAIN_WEAVE_GENERATOR.md, §5). Этап 1: проверки 1-4, 8, 9
+// ТЗ notes/fabrics/plain-weave-generator-tz.md, §5). Этап 1: проверки 1-4, 8, 9
 // (+ согласованность подсчёта зажатых бусин).
 //
 // Разделы:

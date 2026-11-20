@@ -5,15 +5,15 @@
 
     python3 tools/bc6_make_reference.py
 
-Источник   : Керамика/Карбид бора/BC6/BC6.txt  (архив кейса, две колонки)
+Источник   : cases/bc6/source/reference-curve.txt  (архив кейса, две колонки)
 Результат  : tests/data/bc6_reference.txt      (три колонки + шапка)
 
 Почему отдельный скрипт, а не режим теста. У BC2 флаг --emit-reference печатает
 кривую, снятую САМИМ расчётом; здесь же речь о переносе приборной записи из
 архива. Тот же глагол для другой операции запутывал бы: приборный эталон BC2
 тоже получен внешней конвертацией (notes/contact/e2e/gold_standart.txt), а не этим
-флагом. Вдобавок источник лежит вне дерева сборки, по пути с кириллицей и среди
-файлов в cp1251 — ставить цель CMake в зависимость от него незачем.
+флагом. Вдобавок источник -- неизменяемый архив кейса (cases/bc6/), а не часть
+сборки: ставить цель CMake в зависимость от него незачем.
 
 Что делает скрипт:
   1. читает две колонки (время, с) и (скорость, м/с) — пересчёта единиц НЕТ;
@@ -30,7 +30,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SRC = os.path.join(ROOT, "Керамика", "Карбид бора", "BC6", "BC6.txt")
+SRC = os.path.join(ROOT, "cases", "bc6", "source", "reference-curve.txt")
 OUT = os.path.join(ROOT, "tests", "data", "bc6_reference.txt")
 
 MONITOR_ITYPE = 10  # B4C: монитор стоит на тыльном слое образца
@@ -94,7 +94,7 @@ def main():
     add("# и у tests/data/bc2_reference.txt, поэтому читается тем же read_curve().")
     add("# itype = %d (B4C): монитор стоит на тыльном слое образца." % MONITOR_ITYPE)
     add("#")
-    add("# Источник: Керамика/Карбид бора/BC6/BC6.txt (архив кейса).")
+    add("# Источник: cases/bc6/source/reference-curve.txt (архив кейса).")
     add("# Сгенерировано: tools/bc6_make_reference.py. Правки вносить в скрипт,")
     add("# а не в этот файл.")
     add("#")

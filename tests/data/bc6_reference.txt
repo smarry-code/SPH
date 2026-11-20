@@ -5,7 +5,7 @@
 # и у tests/data/bc2_reference.txt, поэтому читается тем же read_curve().
 # itype = 10 (B4C): монитор стоит на тыльном слое образца.
 #
-# Источник: Керамика/Карбид бора/BC6/BC6.txt (архив кейса).
+# Источник: cases/bc6/source/reference-curve.txt (архив кейса).
 # Сгенерировано: tools/bc6_make_reference.py. Правки вносить в скрипт,
 # а не в этот файл.
 #

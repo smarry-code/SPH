@@ -1,7 +1,7 @@
 // plain_weave.hpp
 // Генератор геометрии тканого полотна ПОЛОТНЯНОГО переплетения (plain weave)
 // в формате файла нитей проекта (.fib, fiber::load_fiber_file).
-// ТЗ: weave/TZ_PLAIN_WEAVE_GENERATOR.md (этап 1: геометрия, запись, сводка).
+// ТЗ: notes/fabrics/plain-weave-generator-tz.md (этап 1: геометрия, запись, сводка).
 //
 // Header-only. НЕ зависит от dim: не включает particle_system.hpp, clamp.hpp,
 // model.hpp -- только стандартную библиотеку. Бокс закрепления -- шесть чисел.

@@ -3,7 +3,7 @@
 // Общая обвязка e2e-тестов закрепления (tests/test_e2e_clamp.cpp): опции
 // прогона, запуск боевого time_integration(cfg, fiber::Model&, ...) с
 // наблюдателем шага, монитор §1.2 и общие проверки §1.3 постановки
-// (Clamp/CLAMP_TESTS.md; сцены ES*/EF* -- tests/clamp_e2e_solid.hpp и
+// (notes/fabrics/clamp-tests.md; сцены ES*/EF* -- tests/clamp_e2e_solid.hpp и
 // tests/clamp_e2e_fiber.hpp, числа кейсов -- tests/clamp_case.hpp).
 //
 // Почему наблюдатель, а не прогон по одному шагу. Каждый вызов

@@ -1,6 +1,6 @@
 #pragma once
 // tests/clamp_e2e_fiber.hpp
-// e2e-тесты закрепления бусин Fiber (Clamp/CLAMP_TESTS.md §3, Clamp/
+// e2e-тесты закрепления бусин Fiber (notes/fabrics/clamp-tests.md §3, Clamp/
 // FIBER_CLAMP_SPEC.md §8): EF1 (рывок нити от зажима) и EF1-b (разрыв у кромки
 // зажима), EF2 (натянутая струна), EF4 (трение о полностью зажатую нить),
 // EF5 (частичная маска yz), EF6 (разбор CLAMP_BOX). EF3 -- в Solid-части.

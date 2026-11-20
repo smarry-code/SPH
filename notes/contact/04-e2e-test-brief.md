@@ -6,7 +6,7 @@
 проверку, которая сейчас выполняется вручную. Тест прогоняет полный конвейер на
 реальной геометрии и сверяет результат с эталонным файлом.
 
-**Источник данных:** `Керамика/Карбид бора/BC2/`
+**Источник данных:** `Керамика/Карбид бора/BC2/` (ныне [`cases/bc2/`](../../cases/bc2/README.md); `log_*.txt` удалены)
 **Источник геометрии:** `src/input.cpp:490-596` — закомментированный блок внутри
 `shock_tube()`; переносится в тело теста.
 **Новые файлы:** `tests/test_e2e_bc2.cpp`, `tests/data/bc2_reference.txt` (заготовка создана),
@@ -111,7 +111,7 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x);
 
 ## 3. Конфигурация расчёта
 
-Брать из `Керамика/Карбид бора/BC2/Initial_Conditions.txt`:
+Брать из `Керамика/Карбид бора/BC2/Initial_Conditions.txt` (ныне `cases/bc2/source/initial-conditions.txt`):
 
 ```
 pa_sph = 2      nnps = 2      sle = 1      skf = 1

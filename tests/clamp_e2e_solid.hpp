@@ -1,6 +1,6 @@
 #pragma once
 // tests/clamp_e2e_solid.hpp
-// Solid-часть e2e-тестов закрепления (Clamp/CLAMP_TESTS.md, §2 ES1-ES4, §3 EF3,
+// Solid-часть e2e-тестов закрепления (notes/fabrics/clamp-tests.md, §2 ES1-ES4, §3 EF3,
 // §4 EK1). Числа кейсов и допуски с обоснованиями -- tests/clamp_case.hpp,
 // namespace clamp_case::solid. Общая обвязка (прогон, монитор, §1.3) --
 // tests/clamp_e2e_common.hpp. Только боевой time_integration(cfg, fiber::Model&)

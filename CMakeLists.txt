@@ -758,7 +758,7 @@ add_test(NAME fiber_contact_projection_test COMMAND test_fiber_contact_projectio
 set_tests_properties(fiber_contact_projection_test PROPERTIES LABELS "3d")
 
 # --- Кинематическое закрепление Solid/Fiber (include/interactions/clamp.hpp,
-#     fiber/TZ_CLAMP_SOLID_FIBER.md, §10). Регистрируется при 1, 2 и 4 потоках.
+#     notes/fabrics/clamp-solid-fiber-tz.md, §10). Регистрируется при 1, 2 и 4 потоках.
 add_executable(test_clamp tests/test_clamp.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_clamp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_clamp PRIVATE SPH_DIM=3)
@@ -1039,7 +1039,7 @@ add_test(NAME fabric_checks_smoke_capstan
 set_tests_properties(fabric_checks_smoke_strip fabric_checks_smoke_capstan PROPERTIES LABELS "3d;e2e" TIMEOUT 120
     ENVIRONMENT "OMP_NUM_THREADS=2")
 
-# --- Генератор полотняного переплетения (weave/TZ_PLAIN_WEAVE_GENERATOR.md):
+# --- Генератор полотняного переплетения (notes/fabrics/plain-weave-generator-tz.md):
 #     include/fiber/plain_weave.hpp (header-only), проверки геометрии.
 add_executable(test_plain_weave tests/test_plain_weave.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_plain_weave PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1057,7 +1057,7 @@ endif()
 add_test(NAME plain_weave_test COMMAND test_plain_weave)
 set_tests_properties(plain_weave_test PROPERTIES LABELS "3d" TIMEOUT 120)
 
-# --- CLI генератор полотняного переплетения (weave/TZ_PLAIN_WEAVE_GENERATOR.md, §4.2):
+# --- CLI генератор полотняного переплетения (notes/fabrics/plain-weave-generator-tz.md, §4.2):
 #     инструмент для создания геометрии с командной строки.
 add_executable(plain_weave_gen tools/plain_weave/plain_weave_gen.cpp)
 target_include_directories(plain_weave_gen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1374,7 +1374,7 @@ if(SPH_E2E_SLOW_TESTS)
 endif()
 
 # --- E2E-тесты закрепления Solid и Fiber (tests/test_e2e_clamp.cpp) ---------
-# Постановка -- Clamp/CLAMP_TESTS.md: сцены с аналитическим ответом (реакция
+# Постановка -- notes/fabrics/clamp-tests.md: сцены с аналитическим ответом (реакция
 # опоры, отражение волны, частота), только через боевой time_integration.
 # Один запуск -- один вариант (--case, --solver). Прогоны при OMP_NUM_THREADS=1
 # (остальной цикл не обязан быть побитово независим от числа потоков); ES1 и

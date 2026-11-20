@@ -1,6 +1,6 @@
 // tests/test_e2e_clamp.cpp
 // Сквозные (e2e) тесты кинематического закрепления Solid и Fiber против
-// аналитических решений (постановка Clamp/CLAMP_TESTS.md; механизм --
+// аналитических решений (постановка notes/fabrics/clamp-tests.md; механизм --
 // include/interactions/clamp.hpp, точки [1]-[3] в src/time_integration.cpp).
 // Дополняют модульные и интеграционные тесты tests/test_clamp.cpp (U1-U6,
 // F1-F5, S1-S4): там проверяется «частицы стоят», здесь -- что зажим ведёт
