@@ -30,9 +30,11 @@ ctest --test-dir build --output-on-failure
 | `e2e_3d_full_contact0..3` | `test_e2e_3d --full --contact-type=N` | Тот же кейс до 3,5 мкс. Метка `slow`, по умолчанию **не регистрируются** |
 | `regression_selfcheck_3d` | `test_regression_3d --selfcheck` | Самопроверка компаратора в сборке `dim = 3` (19 полей) |
 | `regression_bc2mini3d_contact0..3` | `test_regression_3d --case=bc2mini3d --contact-type=N` | Регрессия уменьшенного BC2 в 3D: все поля всех частиц после 1 и 50 шагов. Метки `regression` и `3d` |
-| `checkpoint_test` | `test_checkpoint` | Рестарт из чекпоинта ([руководство](05-restart-checkpoints.md)): побитовое совпадение «2N шагов» и «N + рестарт + N» для предиктора–корректора и Эйлера, в том числе с разрывом связей до чекпоинта; порча, обрезание и неверная сигнатура файла; политика изменения настроек и `--force`; период и ротация `.prev`. Метка `3d` |
+| `checkpoint_test` | `test_checkpoint` | Рестарт из чекпоинта ([руководство](05-restart-checkpoints.md)): побитовое совпадение «2N шагов» и «N + рестарт + N» для предиктора–корректора и Эйлера, в том числе с разрывом связей до чекпоинта и со стежком; JC-сцена с нагревом; порча, обрезание, неверная сигнатура и чужая версия формата; политика изменения настроек и `--force`; период и ротация `.prev`; таблица тёплого старта проекции и блок `USER`; рестарт сцены с контактом нитей при заполненной таблице и независимость от числа потоков (1 и 4). Метка `3d` |
 | `checkpoint_energy_test` | `test_checkpoint_energy` | То же с `SPH_ENERGY_LOG`: CSV лога энергии после рестарта совпадает с непрерывным (один заголовок, без дублей строк) |
 | `checkpoint_cli_test` | `tests/checkpoint_cli_test.sh` | Ключи `guo2019_shot`: `--force` без `--restart` и `--checkpoint-every=0` дают код 2, `--restart` без файла — ошибку, разбитый на два запуска выстрел даёт те же итоговые кадры. Требует собранный `guo2019_shot` |
+| `stitch_kt_cli_test` | `tests/stitch_kt_cli_test.sh` | Стёганое одеяло в `guo2019_shot`: 3T smoke со стёжкой `grid` (tile 4) — 144 стежка, рестарт побайтно равен непрерывному, рестарт с другой стёжкой отклонён, `grid` на 1T — код 2, `--stitch-patch=3` ≡ `--stitch-tile=4`, 11 нитей: `P = 4` — код 2, `P = 5` — 88 стежков |
+| `mosaic_kt_cli_test` | `tests/mosaic_kt_cli_test.sh` | Мозаичная ткань в `guo2019_shot` (2T smoke, `--random-cut=4 --layers-per-cut=2`): стежки в слое и сквозные, `cut.json`, столбцы стежков в `monitor.csv`, рестарт побайтно, рестарт с другим `--cut-seed` отклонён, ошибки ключей — код 2 |
 
 !!! note "Почему по тесту на тип контакта"
     Прежде один тест делал базовый прогон и следом три сценария §6. Обрыв любого
@@ -56,6 +58,8 @@ ctest --test-dir build --output-on-failure
 |---|---|---|
 | `fiber_model_test` | `test_fiber_model` | Модель данных нитей: разбор `.fib`, топология, `l0`/`l_break`, масса бусин, `fiber_output` |
 | `fiber_bond_test`, `fiber_break_test` | `test_fiber_bond`, `test_fiber_break` | Сила и предел шага связи Fiber-Bond; разрыв ровно при `l > l_break` |
+| `fiber_contact_projection_test` | `test_fiber_contact_projection` | Нормальный контакт как проекция скорости (законы 1–3 при `*_contact_predictor = 1`): формула одного контакта, тёплый старт, слоты трения (U1–U6); статика под нагрузкой, лобовой удар, связанные контакты, энергия и импульс стадии (Т1–Т7) |
+| `fiber_stitch_test` | `test_fiber_stitch` | Директива `BOND` и материал связи `mat`: разбор и ошибки, сила стежка $E_1A_1(l-l_0)/l_0$ и ноль при сжатии, разрыв стежка без изменения `prev`/`next`/`object_id` |
 | `fiber_contact_test`, `fiber_contact_types_test`, `fiber_friction_test` | `test_fiber_contact`, `test_fiber_contact_types`, `test_fiber_friction` | Контакт нить–нить (пары сегментов), законы нормальной силы (Герц, пинбол, Свигл, импульсный; закон 4 «Герц + демпфер» — `include/interactions/fiber_contact_law.hpp`, отдельного теста по имени в списке не проверялось), трение проекцией скоростей |
 | `fiber_solid_test`, `fiber_solid_types_test` | `test_fiber_solid`, `test_fiber_solid_types` | Контакт нить–Solid и его законы нормальной силы |
 | `fiber_plasticity_test`, `fiber_plasticity_integration_test`, `fiber_plasticity_validation_test`, `fiber_input_inelastic_test`, `fiber_damage_test` | `test_fiber_plasticity`, `..._integration`, `..._validation`, `test_fiber_input_inelastic`, `test_fiber_damage` | Пластичность, вязкость и повреждённость связи, директивы `PLASTIC`/`RATE`/`VISCO`/`FAILURE`/`DAMAGE` в `.fib` |
@@ -64,18 +68,23 @@ ctest --test-dir build --output-on-failure
 | `fiber_time_integration_equivalence_test`, `ode_solver_test` | `test_fiber_time_integration_equivalence`, `test_ode_solver` | Эквивалентность Solid-цикла двух перегрузок `time_integration`; Euler и предиктор–корректор |
 | `sph_body_isolation_test` | `test_sph_body_isolation` | Опция `sph_same_body_only`: SPH-пары Solid только внутри одного тела |
 | `clamp_test_t1/t2/t4` | `test_clamp` | Кинематическое закрепление: список, проекция, реакция, `CLAMP_BOX`; при 1, 2 и 4 потоках |
-| `e2e_clamp_<ES1..ES3,EF1..EF6,EK1>_...smoke` | `test_e2e_clamp --case=...` | Закрепления против аналитики (реакция опоры, отражение волны, частота). Полные прогоны `e2e_clamp_<ES1,ES2,ES3,EF1,EF2,EF3>_pc_full` — метка `slow` |
+| `e2e_clamp_<ES1..ES3,EF1..EF6,EK1>_...smoke` | `test_e2e_clamp --case=...` | Закрепления против аналитики (реакция опоры, отражение волны, частота); дополнительно `e2e_clamp_EF1b_pc_smoke` (разрыв у кромки зажима) и `e2e_clamp_{ES1,EF1}_pc_smoke_t4` (4 потока). Полные прогоны `e2e_clamp_<ES1,ES2,ES3,EF1,EF2,EF3>_pc_full` — метка `slow` |
 | `e2e_fiber_contact_test`, `e2e_fiber_solid_test`, `e2e_fiber_frames_selfcheck` | `test_e2e_fiber_contact`, `test_e2e_fiber_solid`, `test_e2e_fiber_frames` | Две нити отскакивают без проникания; нить не проникает в пластину; читатель кадров нитей |
 | `e2e_guo2019_smoke_{A,1T,1T_A,A_1T,2T,4T}` | `test_e2e_guo2019 --config=...` | Сцены Guo 2019 (шар, ткань, Al-пластина) на уровне smoke, 2 потока (метки `3d;e2e`) |
 | `energy_log_test` | `test_energy_log` | Лог механической энергии (формат CSV, замыкание баланса); цель всегда собрана с `SPH_ENERGY_LOG` |
 | `fabric_checks_smoke_strip`, `fabric_checks_smoke_capstan` | `fabric_checks` (`tools/fabric_checks/`) | Короткие прогоны проверочных сцен ткани: растяжение полоски, капстан |
 | `plain_weave_test`, `plain_weave_gen_cli_test` | `test_plain_weave`, `plain_weave_gen` | Геометрия генератора плетения ([руководство](02-plain-weave-generator.md)) и его CLI |
+| `plain_weave_quilt_test` | `test_plain_weave_quilt` | Стёганое одеяло: полотно из патчей побитово равно сплошному, метки патчей, линии шва, стежки `grid` (число, вертикальность, соседние слои) и `seam` ([ткани](../04-explanation/models/07-fabrics.md)) |
+| `plain_weave_random_cut_test` | `test_plain_weave_random_cut` | Мозаика (случайная раскройка): детерминизм по `seed`, площади ячеек, зазор между фрагментами, хорды, стежки в слое и сквозные, пакеты с `layers_per_cut`, зажим, `.cut.json` |
 | `k_reader_test`, `k_parts_test` | `test_k_reader`, `test_k_parts` | Чтение LS-DYNA `.k`; таблица деталей |
 | `k_solid_{1d,2d,3d}_test` | `test_k_solid_{1d,2d,3d}` (один исходник `test_k_solid.cpp`) | Сборка Solid из `.k` для `SPH_DIM` = 1, 2, 3 |
 | `k_legacy_equiv_test`, `k_fiber_test`, `k_clamp_test`, `k_solid_elements_test`, `k_e2e_test` | одноимённые `test_k_*` | Эквивалентность прежнему разбору; нити из `*ELEMENT_BEAM`; закрепления из `*BOUNDARY_SPC_*`; `*ELEMENT_SOLID` в частицы; сквозной импорт `.k` через `input()` и `time_integration` |
-| `jc_strength_{1,2,3}d_test`, `jc_eos_test`, `jc_urs_consistency_test` | `test_jc_strength_Nd`, `test_jc_eos`, `test_jc_urs_consistency` | Модель Джонсона–Кука: прочность и разрушение (U1–U14), УРС Linear/Shock (U15–U17), совпадение `urs()` и `solid_eos()` ([руководство](06-johnson-cook-material.md)) |
-| `jc_integration_{1d,3d,3d_elog}_test` | `test_jc_integration_*` | Интеграционные проверки I1–I8 через `apply_material_strength`; вариант `3d_elog` собран с `SPH_ENERGY_LOG` |
+| `jc_strength_{1,2,3}d_test`, `jc_eos_test`, `jc_urs_consistency_test` | `test_jc_strength_Nd`, `test_jc_eos`, `test_jc_urs_consistency` | Модель Джонсона–Кука: прочность и разрушение (U1–U14), УРС Linear/Shock (U15–U20), совпадение `urs()` и `solid_eos()` ([руководство](06-johnson-cook-material.md)) |
+| `jc_integration_{1d,3d,3d_elog}_test` | `test_jc_integration_*` | Интеграционные проверки I1–I9 (в том числе нагрев Тейлора–Куинни) через `apply_material_strength`; вариант `3d_elog` собран с `SPH_ENERGY_LOG` |
 | `e2e_jc_hel`, `e2e_jc_spall_nodamage`, `e2e_jc_spall` | `test_e2e_jc_plate --case=...` | Плоский удар стали 4340 (`SPH_DIM=1`): упругий предвестник, откол без разрушения и с ним (метки `e2e;jc`) |
+| `art_stress_{1,2,3}d_test` | `test_art_stress_{1,2,3}d` | Искусственное напряжение Монагана: чистые функции (A1–A5) и член в конвейере — при `art_stress_eps = 0` результат побитово прежний, сохранение импульса и энергии, нулевой вклад при сжатии (P1–P5). Метка `jc` |
+| `jh2_test` | `test_jh2` | Керамика JH-2 (`SPH_DIM=1`, B₄C): приращение пластической деформации, `sigma_i` в плоском случае, разрыхление и повреждение, флаги `jh2_clamp_low_rate` и `jh2_efmin` (T1–T7, [ADR-010](../04-explanation/decisions/adr-010-jh2-fix.md)) |
+| `jh2_element_test` | `test_jh2_element` | Одноэлементный приёмочный расчёт JH-2: одномерное сжатие B₄C со скоростью $10^5$ с⁻¹ до $\mu = 0{,}1$ и разгрузка |
 | `e2e_jc_taylor_smoke` | `test_e2e_jc_taylor --case=smoke` | Короткий прогон теста Тейлора (`SPH_DIM=2`). Полные `e2e_jc_taylor_e4` (цель `test_e2e_jc_taylor_elog`) и `e2e_jc_taylor_e5` — метка `slow` |
 
 Медленные тесты (`slow`) регистрируются только при `-DSPH_E2E_SLOW_TESTS=ON`; сюда входят и

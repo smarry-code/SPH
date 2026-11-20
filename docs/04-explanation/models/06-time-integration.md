@@ -143,6 +143,7 @@ $$
 | 4 | если есть нити: RHS Fiber-Bond, Fiber-Fiber-Contact, Fiber-Solid-Contact; пределы $\Delta t$ от них | `time_integration.cpp` |
 | 5 | [1] проекция закрепления (clamp) на $\mathbf a$ и $\mathrm{av}$, реакция опоры | `clamp.hpp` |
 | 6 | $\Delta t=\min(\dots)$ (раздел 4) | `time_integration.cpp` |
+| 6а | при `fiber_*_contact_predictor = 1` (законы 1–3): **проекция нормального контакта** — тёплый старт, $K$ итераций Якоби, $\Delta v/h$ в ускорения, [3] повторная проекция зажимов, слоты трения из нормальных | `fiber_normal_projection.hpp` |
 | 7 | стадия трения нить-нить и Fiber-Solid ([2] $c=0$ у зажатых; [3] повторная проекция) | `fiber_friction.hpp` |
 | 8 | (при `SPH_ENERGY_LOG`) накопление каналов потерь за шаг | `energy_log.hpp` |
 | 9 | `solver.advance` — корректор (или шаг Эйлера) Solid и Fiber | `ode_solver.hpp` |
@@ -160,7 +161,10 @@ $$
 (owner-computes, диапазон индексов режется на шарды) суммирует вклады каждой
 частицы без мьютексов и атомиков. Порядок суммирования канонический и не зависит
 от числа потоков (`parallel_for_segments`, `kDetSegments`), поэтому результат
-детерминирован.
+детерминирован. Параллельны и поэлементные циклы решателя (`predict`/`correct`/`advance`, шаг
+Эйлера, режим `xsph_mode = position`), `build_solid_extended`, `SpatialIndex::build` и
+`Diagnostics::validate`; результат побитово прежний (последовательным остаётся накопление
+`u_clamp_acc` при `SPH_ENERGY_LOG`) — см. [Параллелизм](../architecture/parallelism.md).
 
 **Solid** (`single_step`, один `reduce_contributions_into`):
 
@@ -189,6 +193,11 @@ Fiber-Solid в частицу Solid прибавляется к `solid_rhs.dvx`.
 типа 3 (импульсный) строятся по $\Delta t_{n-1}$ (`fiber_*_params.dt_prev = dt`
 на этот момент — шаг прошлого цикла): новый шаг в момент RHS ещё неизвестен;
 то же верно для Solid-Solid-контакта (`single_step` получает `dt` предыдущего цикла).
+
+Для видов контакта с `predictor = 1` ядро силы не даёт, а заполняет нормальные слоты; сила
+(точнее, импульс $P$, $N=P/h$) определяется отдельной стадией 6а **после** выбора $\Delta t$ и
+до трения (она читает $h$ решателя и добавляет $\Delta v/h$ в `fiber_rhs.dv` и `solid_rhs.dvx`).
+Параметр $\Delta t_{n-1}$ для такого вида не используется (см. [05-fiber-contact](05-fiber-contact.md#7-нормальный-контакт-как-проекция-скорости)).
 
 После стадии трения (пункт 7) в `dvx` и `dv` лежит **полное ускорение шага**; именно оно
 становится $f^{n-1}$ для предиктора следующего шага. Стадия трения и её
@@ -249,6 +258,8 @@ $\mathrm{CFL}\,h_k/(c_k+|\mathbf v_k|)$ (`solid_contact_pair_dt_ref`; $10^{30}$ 
 - контакт нить-нить, `compute_fiber_contact_dt_limit`: Герц —
   $0.8/\sqrt{k_{\rm eff}/m_{\rm red}}$, $k_{\rm eff}=1.5F/\delta$ по эффективным массам точек контакта,
   только при $\delta>0$; законы 1–4 — `res.dt_limit` из слота пары (см. [05-fiber-contact](05-fiber-contact.md));
+  **в режиме проекции** (`predictor = 1`) слот пары получает `kNoLimit`: нормальный контакт $\Delta t$ не
+  ограничивает (жёсткости у контакта нет), шаг определяют связи, CFL и контакт другого вида;
 - контакт Fiber-Solid, `compute_fiber_solid_contact_dt_limit`: та же формула, $m_{\rm red}=m_am_s/(m_a+m_s)$.
 
 Известное ограничение (комментарий в коде): предел контакта считается по одному
@@ -405,7 +416,7 @@ $$
 | `D_friction` | $-W$ ускорения трения (приращение $\mathbf a$ за стадию трения, Fiber и Solid) | потеря $>0$ |
 | `D_xsph` | $-W$ поправки $\tilde{\mathbf v}$ (у Euler и при `xsph_mode = position` — 0) | потеря |
 | `D_contact_ss` | $-W$ ускорения контакта Solid-Solid (после проекции зажимов) | потеря |
-| `D_contact_fiber` | $-W$ нормальной силы контактов нитей законов 1–3; у закона 4 — только демпфера (отдельный проход ядра `damper_only`); у Герца — 0 | потеря |
+| `D_contact_fiber` | $-W$ нормальной силы контактов нитей законов 1–3; в режиме проекции (`predictor = 1`) — $-W$ ускорения стадии проекции (приращение после проекции зажимов, т. е. работа нормальных импульсов); у закона 4 — только демпфера (отдельный проход ядра `damper_only`); у Герца — 0. Положительная работа стадии за шаг (теоретически 0) видна в мониторе Guo как `W_proj_pos_max` | потеря |
 | `D_break` | $\sum$ `fiber_bond_stored_energy` порвавшихся связей по состоянию после шага | $>0$ |
 | `D_break_contact` | $U_{\rm hertz}^{\rm до}-U_{\rm hertz}^{\rm после}$ удаления связей (исчезающий/появляющийся контактный потенциал) | знаковая |
 | `S_u_clamp` | $\sum w_i\,(-e_i)$ при отсечке $e<0\to0$ в корректоре/Эйлере | источник $>0$ |
@@ -523,6 +534,7 @@ $\sum w_i\,h\,\dot e_{X,i}$. Строка 0 использует вес $w_i=$ `
 | Редукция вкладов | [contributions.hpp](../../../include/rhs/contributions.hpp), [cpu_executor.hpp](../../../include/rhs/cpu_executor.hpp) | `reduce_contributions_into`, `CpuExecutor::parallel_for/parallel_reduce` |
 | Предел шага контакта Solid | [solid_contact.hpp](../../../include/interactions/solid_contact.hpp) | `compute_solid_contact_diagnostics`, `solid_contact_pair_dt_ref` |
 | Предел шага связей | [fiber_bond.hpp](../../../include/interactions/fiber_bond.hpp) | `compute_fiber_bond_dt_limit`, `fiber_bond_pair_dt` |
+| Проекция нормального контакта (стадия 6а) | [fiber_normal_projection.hpp](../../../include/interactions/fiber_normal_projection.hpp) | `NormalWarmStart::apply/rebuild`, `compute_normal_counts`, `run_normal_projection`, `normal_projection_post_residual`, `fill_friction_slots_from_normal_*` |
 | Пределы шага контактов нитей | [fiber_contact.hpp](../../../include/interactions/fiber_contact.hpp), [fiber_solid_contact.hpp](../../../include/interactions/fiber_solid_contact.hpp) | `compute_fiber_contact_dt_limit`, `compute_fiber_solid_contact_dt_limit` |
 | Законы контакта (`dt_limit`) | [contact_force.hpp](../../../include/contact_force.hpp) | `pinball_force`, `impulse_force` и др. |
 | Пересчёт $h$ | [postprocessing.hpp](../../../include/interactions/postprocessing.hpp), [h_upgrade.cpp](../../../src/h_upgrade.cpp) | `update_smoothing_length`, `h_upgrade` |

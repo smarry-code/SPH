@@ -12,9 +12,16 @@
 `sph_output_` + 5-значный номер шага с ведущими нулями + `.txt`:
 
 ```
-sph_output_00000.txt
+sph_output_00001.txt
 sph_output_00050.txt
 ```
+
+Номер — счётчик шагов цикла (`current_ts`), который увеличивается в начале шага, поэтому первый
+кадр (время 0, состояние после первого шага) имеет номер `00001`, а не `00000`. После выхода из
+цикла `main()` дописывает ещё один кадр с номером `maxtimestep` (3000). У `guo2019_shot` пробный
+кадр конечного состояния (`--probe-frame`) имеет номер `99999`. Переменная окружения
+`SPH_FRAME_PRECISION=<n>` задаёт число значащих цифр кадра (отладка расхождения траекторий;
+действует и на `fiber_output_*.txt`).
 
 !!! note "Расширение файлов"
     В коде ([`output.cpp`](../../../src/output.cpp:23)) создаётся `.txt`. В
@@ -86,7 +93,7 @@ $$
 
 - сообщения об ошибках инициализации;
 - строку мониторинга на каждом шаге цикла (дозапись из
-  [`time_integration.cpp`](../../../src/time_integration.cpp:208)):
+  [`time_integration.cpp`](../../../src/time_integration.cpp:983)):
   `<time> <v> <itype>` — время, осевая компонента скорости мониторной частицы
   (`vx[dim-1]`) и её материал.
 
@@ -101,12 +108,16 @@ $$
   затем диагностические каналы мощности `P_*` (по механизмам; вариант с массой кольца
   и вариант `_flat`) и `closure`. При рестарте файл дописывается без заголовка.
 - `monitor.csv` — построчный монитор сценария Guo 2019 (тестовый харнесс,
-  [`guo2019_monitor.hpp`](../../../tests/guo2019_monitor.hpp:250)):
+  [`guo2019_monitor.hpp`](../../../tests/guo2019_monitor.hpp:385), `open_csv_fresh`):
   `step,t,dt,z_c,v_z,KE_s,KE_p,KE_f,U_b,U_int,E_tot,Fs_x,Fs_y,Fs_z,Ff_x,Ff_y,Ff_z,n_bonds,n_broken_v,n_broken_h,w_f,w_p`
-  (для многослойной ткани добавляются `n_broken_v_pK`, `n_broken_h_pK`, `w_f_pK`);
+  (для многослойной ткани добавляются `n_broken_v_pK`, `n_broken_h_pK`, `w_f_pK`; затем
+  `Fs_norm,Fs_abs_sum,Fs_abs_max,Ff_norm,Ff_abs_sum,Ff_abs_max` — модули реакций зажимов;
+  в режиме проекции нормального контакта `proj_n_ff,…,W_proj_pos_max,proj_resid_load,proj_resid_post,proj_warm_scale_min`;
+  со стёжкой или мозаикой последними `n_stitch,n_stitch_broken,F_stitch_max,F_stitch_sum,slip_mean,gap_mean`;
+  полный список и `shot.txt`, `scene_id.txt` — в [справочнике `guo2019_shot`](../guo2019-shot.md));
   рядом пишется `guo2019_fabric_layout.txt` — раскладка нитей.
 - `checkpoint.ckpt` и `checkpoint.ckpt.prev` — бинарный чекпоинт (сигнатура `SPHCKPT`,
-  версия формата 3, [`checkpoint.cpp`](../../../src/checkpoint.cpp:35));
+  версия формата 6 — единственная, старые не читаются, [`checkpoint.cpp`](../../../src/checkpoint.cpp:35));
   см. [рестарт](../../02-how-to/05-restart-checkpoints.md).
 - `contact_stats.csv`, `contact_stats_summary.txt` — диагностика контактов нитей, только
   при `-DSPH_CONTACT_STATS=ON` (ключи `contact_stats_*`).

@@ -68,7 +68,7 @@ t_total = 3.0e-6
 save_t = 2.5e-8
 ```
 
-- Значения по умолчанию ([`SimulationConfig`](../../include/simulation_config.hpp:116)): `k_mode = solid`,
+- Значения по умолчанию ([`SimulationConfig`](../../include/simulation_config.hpp:127)): `k_mode = solid`,
   `k_solid_elements = skip`, `k_length_scale = k_mass_scale = 1`, `k_monitor_nid = -1` (не задан).
   Масштабы должны быть положительными, неверное значение режима — ошибка разбора.
 - `k_mode = solid_fiber` — нити из `*ELEMENT_BEAM`; нужен `SPH_DIM=3`.

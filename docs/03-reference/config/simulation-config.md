@@ -1,8 +1,8 @@
 # Справочник `SimulationConfig`
 
-Объект [`SimulationConfig`](../../../include/simulation_config.hpp:26)
+Объект [`SimulationConfig`](../../../include/simulation_config.hpp:31)
 инкапсулирует runtime-параметры расчёта. Значения по умолчанию задаются в
-[`apply_defaults()`](../../../include/simulation_config.hpp:171) (и дублируются
+[`apply_defaults()`](../../../include/simulation_config.hpp:189) (и дублируются
 инициализаторами полей) и могут быть переопределены в
 [`Initial_Conditions.txt`](initial-conditions.md). Колонка «Ключ» ниже показывает,
 читается ли поле из файла: «да» — одноимённый ключ, «нет» — поле задаётся только
@@ -48,6 +48,20 @@
 | `fiber_fiber_contact_impulse_push_tau` | double | `0.0` | То же для Fiber-Fiber |
 | `fiber_contact_impulse_push_depth` | double | `0.1` | Глубина выталкивания — доля суммы радиусов пары |
 | `fiber_contact_impulse_push_vmax` | double | `0.0` | Предел скорости выталкивания, м/с; `0` — без предела |
+| `fiber_fiber_contact_predictor` | int | `0` | `1` — нормальный контакт Fiber-Fiber законов 1–3 как проекция скорости (стадия между выбором $\Delta t$ и трением); `0` — прежняя явная сила, побитово. Требует закона 1–3 |
+| `fiber_solid_contact_predictor` | int | `0` | То же для Fiber-Solid |
+| `fiber_contact_projection_iters` | int | `8` | Число итераций Якоби $K$, `1..100` |
+| `fiber_contact_projection_warm` | int | `1` | Тёплый старт импульсов (`1`) или холодный (`0`, предупреждение) |
+
+Правила проверки ([`validate_fiber_contact_projection`](../../../include/simulation_config.hpp:224),
+исключение `std::runtime_error`; при обоих `*_predictor = 0` не выполняется; вызывается из конца
+`parse_sph_config`, из `guo2019_shot` и в начале `run_time_integration`, поэтому предупреждения
+печатаются один раз за процесс): `*_predictor` — только 0/1;
+`predictor = 1` требует закона контакта 1, 2 или 3; при `predictor = 1` значение
+`*_contact_impulse_push_tau > 0` — ошибка; `*_contact_impulse_gamma != 1` — предупреждение, $\gamma$ игнорируется
+(проекция требует $\gamma = 1$); `iters` вне 1..100 и `warm` не 0/1 — ошибка; `warm = 0` — предупреждение.
+Все четыре поля сверяются при рестарте (менять только с `restart_force`). Описание метода —
+[Контакт нитей, §7](../../04-explanation/models/05-fiber-contact.md#7-нормальный-контакт-как-проекция-скорости).
 
 ### Шаг по времени и вывод
 
@@ -68,6 +82,8 @@
 | `etq` | double | `0.01` | да | Параметр отсечки псевдовязкости |
 | `epsilon` | double | `0.3` | да | Усреднение скоростей (XSPH) |
 | `xsph_mode` | int | `0` | да (`velocity`/`position`) | Куда входит поправка XSPH: 0 — в скорость (прежнее), 1 — только в перенос позиций (классический XSPH); только предиктор-корректор |
+| `art_stress_eps` | double | `0.0` | да | Коэффициент $\varepsilon$ искусственного напряжения Монагана (только твёрдые, `itype` > 2); `0` — выключено (побитово прежнее), типично `0.3`; $\ge 0$. Для каждого растягивающего главного напряжения $\sigma'_k>0$ добавка $R'_k=-\varepsilon\sigma'_k$. В осесимметрии учитывается окружная компонента |
+| `art_stress_n` | double | `4.0` | да | Показатель $n$ в $f^n$, $f = W(r)/W(\Delta p)$, $\Delta p=(m/\rho_0)^{1/\dim}$; $> 0$ |
 | `xi` | double | `0.001` | нет | Интенсивность диффузии плотности |
 | `epsilon_h` | double | `0.01` | нет | Регуляризатор знаменателя `psi_ij` |
 
@@ -115,9 +131,15 @@
 | `restart_file` | string | `""` | Файл, с которого продолжить расчёт; пусто — старт с нуля |
 | `restart_force` | bool | `false` | Разрешить менять физические настройки при рестарте (`--force`) |
 
-Без изменения этих полей поведение цикла прежнее. Остальные поля `SimulationConfig` сохраняются
-в чекпоинте целиком; при рестарте свободно меняются только `t_total`, `save_t`, `print_step`,
-`num_threads`, `energy_log_*` и `contact_stats_*`, остальные — только с `restart_force`.
+Без изменения этих полей поведение цикла прежнее. Остальные поля `SimulationConfig` перечислены в
+`visit_cfg` и сохраняются в блоке `CONF` чекпоинта (единственный формат — версия 6; старые версии не читаются;
+из `mats` туда входят только `G`, `sigy`, `aa`, `zz`, `gamm`, `const_JH_2`, константы Джонсона–Кука — нет); при рестарте свободно
+меняются только `t_total`, `save_t`, `print_step`, `num_threads`, `energy_log_*` и `contact_stats_*`,
+остальные — только с `restart_force`. Среди сверяемых — четыре поля проекции нормального контакта
+(`fiber_*_contact_predictor`, `fiber_contact_projection_iters`, `fiber_contact_projection_warm`), `jc_heating`,
+`jc_chi`, `xsph_mode`, `art_stress_eps` и `art_stress_n`
+(`visit_cfg` в [checkpoint.cpp](../../../src/checkpoint.cpp)). Число полей записывается в чекпоинт и
+сверяется при чтении («другой состав настроек» — ошибка).
 
 ### Диагностика (только в особых сборках)
 

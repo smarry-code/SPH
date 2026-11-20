@@ -18,7 +18,7 @@
 ## Решение
 
 Параметры собраны в один конфиг-объект
-[`SimulationConfig`](../../../include/simulation_config.hpp:26):
+[`SimulationConfig`](../../../include/simulation_config.hpp:31):
 
 - создаётся в [`run_sph()`](../../../src/main.cpp:65) (вызывается из `main()`);
 - наполняется значениями по умолчанию (`apply_defaults()`) и из
@@ -45,7 +45,7 @@
 
 ## Связанные файлы
 
-- [`simulation_config.hpp`](../../../include/simulation_config.hpp:26): определение структуры.
+- [`simulation_config.hpp`](../../../include/simulation_config.hpp:31): определение структуры.
 - [`input.cpp`](../../../src/input.cpp:110): `parse_sph_config()`.
 
 ## Актуальное состояние (2026-11)

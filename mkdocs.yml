@@ -98,13 +98,14 @@ nav:
       - Быстрый старт: 01-tutorials/01-quick-start.md
   - Практика:
       - Запуск тестов: 02-how-to/01-run-tests.md
-      - Генератор полотняного переплетения: 02-how-to/02-plain-weave-generator.md
+      - Генератор ткани, стёжка и мозаика: 02-how-to/02-plain-weave-generator.md
       - Из LS-PrePost в расчёт: 02-how-to/03-ls-prepost-to-calculation.md
       - Визуализация в ParaView: 02-how-to/04-paraview.md
       - Рестарт из чекпоинта: 02-how-to/05-restart-checkpoints.md
       - Модель Джонсона-Кука: 02-how-to/06-johnson-cook-material.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
+      - Утилита guo2019_shot: 03-reference/guo2019-shot.md
       - Конфигурация:
           - Initial_Conditions.txt: 03-reference/config/initial-conditions.md
           - SimulationConfig: 03-reference/config/simulation-config.md
@@ -112,6 +113,7 @@ nav:
       - Форматы файлов:
           - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
           - Файл нитей (.fib) и вывод нитей: 03-reference/file-formats/fib-file.md
+          - Файл раскройки (.cut.json): 03-reference/file-formats/cut-json.md
           - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
           - Таблица деталей для .k: 03-reference/file-formats/k-parts.md
       - Материалы:
@@ -126,6 +128,7 @@ nav:
           - "4. Механика нитей": 04-explanation/models/04-fiber-mechanics.md
           - "5. Контакт нитей": 04-explanation/models/05-fiber-contact.md
           - "6. Интегрирование по времени": 04-explanation/models/06-time-integration.md
+          - "7. Ткани: одеяло и мозаика": 04-explanation/models/07-fabrics.md
       - Архитектура:
           - Обзор конвейера: 04-explanation/architecture/pipeline-overview.md
           - Раскладка данных (SoA): 04-explanation/architecture/data-layout-soa.md
@@ -142,6 +145,7 @@ nav:
           - "ADR-007: Контактные силы (типы 1-3)": 04-explanation/decisions/adr-007-contact-force-types.md
           - "ADR-008: Архитектура RHS и нити": 04-explanation/decisions/adr-008-rhs-architecture-fiber.md
           - "ADR-009: Модель Джонсона-Кука": 04-explanation/decisions/adr-009-johnson-cook.md
+          - "ADR-010: Исправление JH-2": 04-explanation/decisions/adr-010-jh2-fix.md
   - Внутреннее:
       - Глоссарий: _internal/glossary.md
       - Журнал изменений: _internal/changelog.md
