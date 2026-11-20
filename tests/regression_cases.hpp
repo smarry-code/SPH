@@ -1,12 +1,13 @@
 #pragma once
 // regression_cases.hpp
 // Подготовка кейсов для регрессионного теста (tests/test_regression.cpp):
-// BC2 и BC6 при dim = 2, уменьшенный BC2 (tests/bc2_mini3d_geometry.hpp) при
+// BC2 и BC6 при dim = 2, уменьшенный BC2 (cases/bc2/regression/bc2_mini3d_geometry.hpp) при
 // dim = 3. Кейс другой размерности в сборке просто недоступен.
 //
 // Постановка ровно та же, что у smoke-режима сквозных тестов: та же геометрия
-// (tests/bc2_geometry.hpp, tests/bc6_geometry.hpp), тот же шаг решётки
-// Δx = 8e-4, те же конфиги tests/data/bc{2,6}_initial_conditions.txt, тот же
+// (cases/bc2/regression/bc2_geometry.hpp, cases/bc6/regression/bc6_geometry.hpp),
+// тот же шаг решётки Δx = 8e-4, те же конфиги
+// cases/bc{2,6}/regression/initial_conditions.txt, тот же
 // порядок подготовки, что в prepare_run() из tests/test_e2e_bc6.cpp:
 //   умолчания -> разбор конфига -> геометрия -> запас под зеркальные частицы
 //   -> УРС (заполняет c) -> начальный шаг по Куранту.
@@ -59,11 +60,23 @@ inline size_t case_dim(Case c) { return c == Case::BC2_MINI3D ? 3u : 2u; }
 // частиц: прогон занимает секунды, эталон — порядка мегабайта на точку.
 inline double case_delta_x(Case) { return 8e-4; }
 
-// Уменьшенный BC2 берёт конфиг BC2: те же материалы и параметры решателя.
-inline std::filesystem::path default_config(Case c, const std::filesystem::path& data_dir)
+// Каталог постановки кейса: cases/<кейс>/regression/ (cases/README.md).
+// Уменьшенный BC2 живёт в каталоге BC2 и берёт его конфиг: те же материалы
+// и параметры решателя.
+inline std::filesystem::path case_dir(Case c, const std::filesystem::path& cases_dir)
 {
-    return data_dir / (c == Case::BC6 ? "bc6_initial_conditions.txt"
-                                      : "bc2_initial_conditions.txt");
+    return cases_dir / (c == Case::BC6 ? "bc6" : "bc2") / "regression";
+}
+
+inline std::filesystem::path default_config(Case c, const std::filesystem::path& cases_dir)
+{
+    return case_dir(c, cases_dir) / "initial_conditions.txt";
+}
+
+// Эталоны регрессии кейса: cases/<кейс>/regression/snapshots/.
+inline std::filesystem::path default_golden_dir(Case c, const std::filesystem::path& cases_dir)
+{
+    return case_dir(c, cases_dir) / "snapshots";
 }
 
 struct Prepared

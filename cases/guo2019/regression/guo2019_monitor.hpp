@@ -20,7 +20,27 @@
 
 #include "guo2019_scene.hpp"
 
-#include "clamp_e2e_common.hpp"
+#include "energy.hpp"
+// Заголовки, которые прежде приходили транзитивно через tests/clamp_e2e_common.hpp.
+#include "e2e_harness.hpp"
+#include "input.hpp"
+#include "interactions/clamp.hpp"
+#include "interactions/fiber_bond.hpp"
+#include "particle_system.hpp"
+#include "simulation_config.hpp"
+#include "time_integration.hpp"
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <sstream>
+#include <string>
+#include <vector>
 #include "fiber/model.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "interactions/solid_contact.hpp"
@@ -347,7 +367,7 @@ public:
         }
         last_bonds_ = st_.n_bonds_0;
 
-        U_int0_ = clamp_e2e::internal_solid(s, nt_);
+        U_int0_ = sph_energy::internal_solid(s, nt_);
         const Energies e = energies();
         st_.KE_s_0 = e.ke_s;
         st_.E_tot_0 = e.ke_s + e.ke_p + e.ke_f + e.u_b; // U_int = 0 по определению
@@ -467,7 +487,7 @@ public:
         r.KE_p = e.ke_p;
         r.KE_f = e.ke_f;
         r.U_b = e.u_b;
-        r.U_int = clamp_e2e::internal_solid(s, nt_) - U_int0_;
+        r.U_int = sph_energy::internal_solid(s, nt_) - U_int0_;
         r.E_tot = r.KE_s + r.KE_p + r.KE_f + r.U_b + r.U_int;
         st_.E_tot_max = std::max(st_.E_tot_max, r.E_tot);
 
@@ -1008,9 +1028,9 @@ private:
         Energies e;
         e.ke_s = ke_range(sc_.ball_begin, sc_.ball_end);
         e.ke_p = ke_range(sc_.plate_begin, sc_.plate_end);
-        e.ke_f = clamp_e2e::kinetic_fiber(m_.fiber);
+        e.ke_f = sph_energy::kinetic_fiber(m_.fiber);
         // bond_energy: sum 1/2 (EA/l0)(l - l0)^2 по растянутым связям = sum 1/2 E A l0 eps^2
-        e.u_b = clamp_e2e::bond_energy(m_);
+        e.u_b = sph_energy::bond_energy(m_);
         return e;
     }
 

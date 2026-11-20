@@ -631,6 +631,7 @@ set_tests_properties(fiber_plasticity_validation_test PROPERTIES LABELS "3d" TIM
 #     ctest; без аргументов). С аргументами (--level/--config/--v0/--t-max/--out)
 #     -- длинный прогон с таблицей summary.txt (experiments/...-fiber-plasticity-guo).
 add_executable(test_fiber_plasticity_guo tests/test_fiber_plasticity_guo.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_fiber_plasticity_guo guo2019 regression)
 target_include_directories(test_fiber_plasticity_guo PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -872,6 +873,7 @@ set_tests_properties(fiber_solid_types_test PROPERTIES LABELS "3d")
 # --- E2E-критерий готовности Ф6 (notes/fiber-model/fiber-plan.md: «smoke одного Solid в 3D,
 #     затем нить, падающая на пластину, без проникания»).
 add_executable(test_e2e_fiber_solid tests/test_e2e_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_e2e_fiber_solid bc2 regression)
 target_include_directories(test_e2e_fiber_solid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_e2e_fiber_solid PRIVATE
     SPH_DIM=3
@@ -892,6 +894,7 @@ set_tests_properties(e2e_fiber_solid_test PROPERTIES LABELS "3d" TIMEOUT 300)
 # --- Опция ядра sph_same_body_only: изоляция SPH-пар Solid по телам
 #     (ТЗ эксперименты Guo 2019, §4.2).
 add_executable(test_sph_body_isolation tests/test_sph_body_isolation.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_sph_body_isolation bc2 regression)
 target_include_directories(test_sph_body_isolation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_sph_body_isolation PRIVATE
     SPH_DIM=3
@@ -929,6 +932,7 @@ set_tests_properties(e2e_fiber_frames_selfcheck PROPERTIES LABELS "3d;e2e" TIMEO
 # --- Smoke-тест сцен Guo 2019 (ТЗ Guo 2019 §9): шар + ткань + Al-пластина,
 #     по одной регистрации на конфигурацию мишени.
 add_executable(test_e2e_guo2019 tests/test_e2e_guo2019.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_e2e_guo2019 guo2019 regression)
 target_include_directories(test_e2e_guo2019 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_e2e_guo2019 PRIVATE
     SPH_DIM=3
@@ -957,6 +961,7 @@ endforeach()
 #     сравнения до/после (tests/fiber_t0_dump.cpp), без add_test. Инструмент:
 #     EXCLUDE_FROM_ALL, собирается явно (--target fiber_t0_dump).
 add_executable(fiber_t0_dump EXCLUDE_FROM_ALL tests/fiber_t0_dump.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(fiber_t0_dump guo2019 regression)
 target_include_directories(fiber_t0_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(fiber_t0_dump PRIVATE
     SPH_DIM=3
@@ -973,6 +978,7 @@ endif()
 #     формат CSV, сверка запасов, замыкание баланса, лог не возмущает расчёт.
 #     Собирается с SPH_ENERGY_LOG всегда, независимо от опции.
 add_executable(test_energy_log tests/test_energy_log.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_energy_log guo2019 regression)
 target_include_directories(test_energy_log PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_energy_log PRIVATE
     SPH_DIM=3
@@ -993,6 +999,7 @@ set_tests_properties(energy_log_test PROPERTIES LABELS "3d;e2e" TIMEOUT 600 ENVI
 
 # --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
 add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(guo2019_shot guo2019 regression)
 target_include_directories(guo2019_shot PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1028,6 +1035,7 @@ set_tests_properties(mosaic_kt_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIR
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
 add_executable(fabric_checks tools/fabric_checks/fabric_checks.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(fabric_checks guo2019 regression)
 target_include_directories(fabric_checks PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -1088,6 +1096,7 @@ set_tests_properties(plain_weave_gen_cli_test PROPERTIES LABELS "3d" TIMEOUT 60)
 
 # --- Ткань-«одеяло» из патчей и сетка стёжки слоёв (include/fiber/plain_weave_quilt.hpp).
 add_executable(test_plain_weave_quilt tests/test_plain_weave_quilt.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_plain_weave_quilt guo2019 regression)
 target_include_directories(test_plain_weave_quilt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_plain_weave_quilt PRIVATE SPH_DIM=3)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -1130,6 +1139,7 @@ set_tests_properties(plain_weave_random_cut_test PROPERTIES LABELS "3d" TIMEOUT 
 #     (tests/bc2_mini3d_geometry.hpp), та же, что использует test_e2e_3d.
 add_executable(test_fiber_time_integration_equivalence
     tests/test_fiber_time_integration_equivalence.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_fiber_time_integration_equivalence bc2 regression)
 target_include_directories(test_fiber_time_integration_equivalence PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_fiber_time_integration_equivalence PRIVATE
     SPH_DIM=3
@@ -1166,6 +1176,7 @@ add_test(NAME fiber_dim_guard_test COMMAND test_fiber_dim_guard)
 option(SPH_E2E_SLOW_TESTS "Регистрировать в ctest медленные полные прогоны BC2 и BC6 (метка slow)" OFF)
 
 add_executable(test_e2e_bc2 tests/test_e2e_bc2.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_e2e_bc2 bc2 regression)
 target_include_directories(test_e2e_bc2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # SPH_TEST_DATA_DIR — АБСОЛЮТНЫЙ путь от каталога исходников, а не от рабочего:
 # тест запускается из каталога сборки (ctest) и из временного каталога прогона.
@@ -1275,6 +1286,7 @@ add_custom_target(bc2_plot
 # Общая обвязка вынесена в tests/e2e_*.hpp; tests/test_e2e_bc2.cpp НЕ изменён
 # и продолжает жить со своими копиями.
 add_executable(test_e2e_bc6 tests/test_e2e_bc6.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_e2e_bc6 bc6 regression)
 target_include_directories(test_e2e_bc6 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_e2e_bc6 PRIVATE
     SPH_DIM=2
@@ -1354,6 +1366,7 @@ add_custom_target(bc6_plot
 # сохранение массы, импульса и энергии, симметрию решётки, приход волны.
 # Свои объектники конвейера с SPH_DIM=3 (решение E1).
 add_executable(test_e2e_3d tests/test_e2e_3d.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_e2e_3d bc2 regression)
 target_include_directories(test_e2e_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_e2e_3d PRIVATE
     SPH_DIM=3
@@ -1523,10 +1536,12 @@ endif()
 # --- Регрессионный тест на кейсах BC2 и BC6 (tests/test_regression.cpp) ----
 # Сквозные тесты выше сверяют расчёт с ПРИБОРНЫМ эталоном в грубых воротах и
 # ловят только кратную поломку. Регрессия сверяет все поля каждой частицы после
-# N = 1 и N = K шагов с эталоном, снятым этим же кодом (tests/data/regression/),
+# N = 1 и N = K шагов с эталоном, снятым этим же кодом (cases/<кейс>/regression/snapshots/),
 # и ловит любое изменение расчёта сверх допуска. Сборка — как у e2e: свои
 # объектники конвейера с SPH_DIM=2 (решение E1).
 add_executable(test_regression tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_regression bc2 regression)
+sph_case(test_regression bc6 regression)
 target_include_directories(test_regression PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_regression PRIVATE
     SPH_DIM=2
@@ -1560,6 +1575,7 @@ endforeach()
 # Нужна, чтобы перенос Solid на новую схему RHS (notes/fiber-model/fiber-plan.md, Ф4) не сломал
 # ветку dim = 3, в которой будут жить нити.
 add_executable(test_regression_3d tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_regression_3d bc2 regression)
 target_include_directories(test_regression_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_regression_3d PRIVATE
     SPH_DIM=3
@@ -1593,12 +1609,12 @@ add_custom_target(regression_golden
     COMMAND ${CMAKE_COMMAND}
             -DSPH_REG_EXE=$<TARGET_FILE:test_regression>
             -DSPH_REG_EXE_3D=$<TARGET_FILE:test_regression_3d>
-            "-DSPH_REG_OUT=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/regression"
+            "-DSPH_REG_CASES_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cases"
             "-DSPH_REG_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/regression_golden.cmake"
     DEPENDS test_regression test_regression_3d
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    COMMENT "Перегенерация регрессионных эталонов в tests/data/regression"
+    COMMENT "Перегенерация регрессионных эталонов в cases/<кейс>/regression/snapshots"
     USES_TERMINAL VERBATIM)
 
 # --- Предупреждения: воспроизводим -Weverything (Clang) с прежними подавлениями

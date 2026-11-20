@@ -80,8 +80,9 @@
 
 static_assert(dim == 3, "test_e2e_fiber_solid требует сборки с SPH_DIM=3");
 
-#ifndef SPH_TEST_DATA_DIR
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -98,7 +99,7 @@ void test_smoke_solid_only_3d()
 {
     std::printf("test_smoke_solid_only_3d:\n");
 
-    fs::path config_path = fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt";
+    fs::path config_path = fs::path(SPH_CASES_DIR) / "bc2" / "regression" / "initial_conditions.txt";
     if (!fs::exists(config_path))
     {
         check(false, "не найден конфиг теста: " + config_path.string());

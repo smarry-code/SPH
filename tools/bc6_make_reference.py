@@ -6,7 +6,7 @@
     python3 tools/bc6_make_reference.py
 
 Источник   : cases/bc6/source/reference-curve.txt  (архив кейса, две колонки)
-Результат  : tests/data/bc6_reference.txt      (три колонки + шапка)
+Результат  : cases/bc6/regression/reference.txt  (три колонки + шапка)
 
 Почему отдельный скрипт, а не режим теста. У BC2 флаг --emit-reference печатает
 кривую, снятую САМИМ расчётом; здесь же речь о переносе приборной записи из
@@ -31,7 +31,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SRC = os.path.join(ROOT, "cases", "bc6", "source", "reference-curve.txt")
-OUT = os.path.join(ROOT, "tests", "data", "bc6_reference.txt")
+OUT = os.path.join(ROOT, "cases", "bc6", "regression", "reference.txt")
 
 MONITOR_ITYPE = 10  # B4C: монитор стоит на тыльном слое образца
 
@@ -91,7 +91,7 @@ def main():
     add("# Приборный эталон кейса BC6: осевая скорость границы «керамика / окно».")
     add("#")
     add("# Формат: <время, с>  <v_z, м/с>  <itype>   — тот же, что у log.txt расчёта")
-    add("# и у tests/data/bc2_reference.txt, поэтому читается тем же read_curve().")
+    add("# и у cases/bc2/regression/reference.txt, поэтому читается тем же read_curve().")
     add("# itype = %d (B4C): монитор стоит на тыльном слое образца." % MONITOR_ITYPE)
     add("#")
     add("# Источник: cases/bc6/source/reference-curve.txt (архив кейса).")

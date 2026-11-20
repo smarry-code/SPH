@@ -67,8 +67,9 @@
 
 static_assert(dim == 3, "test_e2e_3d требует сборки с -DSPH_DIM=3");
 
-#ifndef SPH_TEST_DATA_DIR
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -90,7 +91,7 @@ constexpr double kSmokeTTotal = 1.0e-6;
 // изменения постановки (960 + 400 + 880 + 1408).
 constexpr size_t kSmokeNtotal = 3648;
 
-fs::path config_path() { return fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt"; }
+fs::path config_path() { return fs::path(SPH_CASES_DIR) / "bc2" / "regression" / "initial_conditions.txt"; }
 
 struct RunSettings
 {
@@ -543,7 +544,7 @@ void print_usage()
     std::printf(
         "Использование: test_e2e_3d [--full] [--contact-type=N] [ключи]\n"
         "  (без аргументов)  smoke: до t = %g с\n"
-        "  --full            до t_total из tests/data/bc2_initial_conditions.txt\n"
+        "  --full            до t_total из cases/bc2/regression/initial_conditions.txt\n"
         "  --contact-type=N  contact_force_type, N = 0..3 (по умолчанию 0)\n"
         "  --no-xsph         epsilon = 0: проверка сохранения полной энергии\n"
         "  --verbose         не глушить вывод конвейера\n"

@@ -68,8 +68,9 @@
 
 static_assert(dim == 3, "test_sph_body_isolation требует сборки с SPH_DIM=3");
 
-#ifndef SPH_TEST_DATA_DIR
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -94,7 +95,7 @@ SimulationConfig make_config(bool same_body_only, int contact_type)
 {
     SimulationConfig cfg;
     cfg.apply_defaults();
-    const fs::path config_path = fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt";
+    const fs::path config_path = fs::path(SPH_CASES_DIR) / "bc2" / "regression" / "initial_conditions.txt";
     if (fs::exists(config_path))
     {
         e2e::ScopedSilence silence(true);

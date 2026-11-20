@@ -75,10 +75,9 @@
 static_assert(dim == 2, "test_e2e_bc2 требует сборки с -DSPH_DIM=2 (решение E1, ТЗ §2)");
 static_assert(axis_sim, "test_e2e_bc2 требует axis_sim = true (осесимметричная постановка BC2)");
 
-#ifndef SPH_TEST_DATA_DIR
-// Задаётся из CMake (target_compile_definitions). Фолбэк нужен только для
-// сборки вне CMake и заведомо неверен — тест сообщит об отсутствии эталона.
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -631,7 +630,7 @@ struct RunResult
 // чтобы не зависеть от архива и рабочего каталога.
 fs::path config_path()
 {
-    return fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt";
+    return fs::path(SPH_CASES_DIR) / "bc2" / "regression" / "initial_conditions.txt";
 }
 
 // t_total физического кейса — из файла конфигурации, а не из литерала в коде:
@@ -1112,7 +1111,7 @@ double case_delta_x(bool full)
 
 fs::path reference_path(bool full)
 {
-    return fs::path(SPH_TEST_DATA_DIR) / (full ? "bc2_reference.txt" : "bc2_reference_smoke.txt");
+    return fs::path(SPH_CASES_DIR) / "bc2" / "regression" / (full ? "reference.txt" : "reference_smoke.txt");
 }
 
 void emit_reference(const RunResult& r, const RunSettings& rs, bool full)

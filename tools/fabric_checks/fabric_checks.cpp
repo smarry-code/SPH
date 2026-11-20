@@ -134,7 +134,7 @@ struct Scene
 
 SimulationConfig make_cfg(std::size_t ntotal)
 {
-    const fs::path p = fs::path(SPH_TEST_DATA_DIR) / "guo2019_initial_conditions.txt";
+    const fs::path p = fs::path(SPH_CASES_DIR) / "guo2019" / "regression" / "initial_conditions.txt";
     if (!fs::exists(p)) throw std::runtime_error("нет файла конфигурации " + p.string());
     SimulationConfig cfg;
     cfg.apply_defaults();

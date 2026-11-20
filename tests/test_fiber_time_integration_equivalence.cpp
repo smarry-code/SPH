@@ -55,8 +55,9 @@
 
 static_assert(dim == 3, "test_fiber_time_integration_equivalence требует сборки с -DSPH_DIM=3");
 
-#ifndef SPH_TEST_DATA_DIR
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -68,7 +69,7 @@ namespace
 
 constexpr size_t kSteps = 6; // достаточно, чтобы пройти и первый шаг (особая ветка), и n>=2 (предиктор-корректор)
 
-fs::path config_path() { return fs::path(SPH_TEST_DATA_DIR) / "bc2_initial_conditions.txt"; }
+fs::path config_path() { return fs::path(SPH_CASES_DIR) / "bc2" / "regression" / "initial_conditions.txt"; }
 
 // Готовит ParticleSystem и SimulationConfig ровно как test_e2e_3d.cpp
 // (tests/test_e2e_3d.cpp, run_case): один и тот же детерминированный

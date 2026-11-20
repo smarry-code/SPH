@@ -71,10 +71,9 @@
 static_assert(dim == 2, "test_e2e_bc6 требует сборки с -DSPH_DIM=2 (решение E1)");
 static_assert(axis_sim, "test_e2e_bc6 требует axis_sim = true (осесимметричная постановка)");
 
-#ifndef SPH_TEST_DATA_DIR
-// Задаётся из CMake (target_compile_definitions). Фолбэк нужен только для
-// сборки вне CMake и заведомо неверен — тест сообщит об отсутствии эталона.
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -93,10 +92,10 @@ constexpr const char* kCasePrefix = "bc6";
 // 1. Пути и параметры прогона
 // ===========================================================================
 
-fs::path config_path()    { return fs::path(SPH_TEST_DATA_DIR) / "bc6_initial_conditions.txt"; }
+fs::path config_path()    { return fs::path(SPH_CASES_DIR) / "bc6" / "regression" / "initial_conditions.txt"; }
 // Эталон ОДИН на оба режима: приборная запись не зависит от разрешения
 // расчётной сетки. В smoke она просто не используется для сверки.
-fs::path reference_path() { return fs::path(SPH_TEST_DATA_DIR) / "bc6_reference.txt"; }
+fs::path reference_path() { return fs::path(SPH_CASES_DIR) / "bc6" / "regression" / "reference.txt"; }
 
 double case_delta_x(bool full) { return full ? bc6::kDxFull : bc6::kDxSmoke; }
 

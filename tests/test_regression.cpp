@@ -13,7 +13,7 @@
 // шагов сторожа, а не по t_total, чтобы при чуть разошедшемся dt сравнивались
 // состояния после одинакового числа шагов. Затем все поля всех частиц
 // снимаются прямо из памяти и сверяются с эталоном из
-// tests/data/regression/ по относительным нормам с допуском
+// cases/<кейс>/regression/snapshots/ по относительным нормам с допуском
 // (tests/regression_snapshot.hpp).
 //
 // ДВЕ КОНТРОЛЬНЫЕ ТОЧКИ, два независимых прогона:
@@ -63,12 +63,13 @@
 
 // Одна и та же программа собирается дважды: test_regression (SPH_DIM=2,
 // кейсы BC2 и BC6 в осесимметричной постановке) и test_regression_3d
-// (SPH_DIM=3, уменьшенный BC2 в полном 3D, tests/bc2_mini3d_geometry.hpp).
+// (SPH_DIM=3, уменьшенный BC2 в полном 3D, cases/bc2/regression/bc2_mini3d_geometry.hpp).
 static_assert(dim == 2 || dim == 3, "test_regression собирается с -DSPH_DIM=2 или 3");
 static_assert(dim != 2 || axis_sim, "кейсы BC2/BC6 требуют axis_sim = true");
 
-#ifndef SPH_TEST_DATA_DIR
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 namespace fs = std::filesystem;
@@ -150,7 +151,6 @@ reg::Tolerances tolerances_for(size_t steps)
     return t;
 }
 
-fs::path golden_dir_default() { return fs::path(SPH_TEST_DATA_DIR) / "regression"; }
 
 std::string golden_name(reg::Case c, int contact, size_t steps)
 {
@@ -417,7 +417,7 @@ struct Options
     int contact = 0;
     std::vector<size_t> steps{kStepsShort, kStepsLong};
     fs::path emit_dir;
-    fs::path golden_dir = golden_dir_default();
+    fs::path golden_dir;   // пусто -- cases/<кейс>/regression/snapshots (reg::default_golden_dir)
     fs::path config;
     std::vector<std::pair<std::string, std::string>> meta;
     bool verbose = false;
@@ -496,7 +496,8 @@ void print_usage()
         "                     снимается при OMP_NUM_THREADS=1; готовая цель:\n"
         "                     cmake --build build --target regression_golden)\n"
         "  --meta=КЛЮЧ=ЗНАЧ   строка шапки эталона (commit, date, ...), повторяемый\n"
-        "  --golden-dir=DIR   откуда читать эталоны (по умолчанию tests/data/regression)\n"
+        "  --golden-dir=DIR   откуда читать эталоны (по умолчанию\n"
+        "                     cases/<кейс>/regression/snapshots)\n"
         "  --config=ФАЙЛ      другой конфиг решателя (проверка чувствительности:\n"
         "                     копия конфига с изменённым параметром обязана\n"
         "                     провалить сверку)\n"
@@ -582,7 +583,8 @@ bool parse_args(int argc, char** argv, Options& o, int& exit_code)
         exit_code = 2;
         return false;
     }
-    if (o.config.empty()) o.config = reg::default_config(o.kase, SPH_TEST_DATA_DIR);
+    if (o.config.empty()) o.config = reg::default_config(o.kase, SPH_CASES_DIR);
+    if (o.golden_dir.empty()) o.golden_dir = reg::default_golden_dir(o.kase, SPH_CASES_DIR);
     return true;
 }
 

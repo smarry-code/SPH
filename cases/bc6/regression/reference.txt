@@ -2,7 +2,7 @@
 # Приборный эталон кейса BC6: осевая скорость границы «керамика / окно».
 #
 # Формат: <время, с>  <v_z, м/с>  <itype>   — тот же, что у log.txt расчёта
-# и у tests/data/bc2_reference.txt, поэтому читается тем же read_curve().
+# и у cases/bc2/regression/reference.txt, поэтому читается тем же read_curve().
 # itype = 10 (B4C): монитор стоит на тыльном слое образца.
 #
 # Источник: cases/bc6/source/reference-curve.txt (архив кейса).

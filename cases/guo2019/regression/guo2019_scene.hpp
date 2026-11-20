@@ -40,7 +40,7 @@
 
 #include "e2e_harness.hpp"
 #include "guo2019_case.hpp"
-#include "bc2_geometry.hpp"
+#include "lattice.hpp"
 
 #include "fiber/fiber_input.hpp"
 #include "fiber/model.hpp"
@@ -72,9 +72,9 @@
 #include <unordered_map>
 #include <vector>
 
-#ifndef SPH_TEST_DATA_DIR
-// Запуск из корня репозитория без CMake: путь относительно текущего каталога.
-#define SPH_TEST_DATA_DIR "tests/data"
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
 #endif
 
 static_assert(dim == 3, "guo2019_scene.hpp: сцена Guo 2019 требует SPH_DIM=3");
@@ -641,9 +641,9 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         sc.plate_clamp_edge = L.plate_clamp_edge;
         sc.plate_nz = static_cast<std::size_t>(L.n_z);
         sc.dx_p = plate_t / static_cast<double>(L.n_z);
-        // Правило bc2_geometry.hpp (cell_count): целое число ячеек, ближайшее к L/dx, шаг подгоняется.
-        sc.plate_nx = bc2::cell_count(2.0 * sc.plate_half_x, sc.dx_p);
-        sc.plate_ny = bc2::cell_count(2.0 * sc.plate_half_y, sc.dx_p);
+        // Правило lattice.hpp (cell_count, как у BC2): целое число ячеек, ближайшее к L/dx, шаг подгоняется.
+        sc.plate_nx = lattice::cell_count(2.0 * sc.plate_half_x, sc.dx_p);
+        sc.plate_ny = lattice::cell_count(2.0 * sc.plate_half_y, sc.dx_p);
         sc.dx_p_axis[0] = 2.0 * sc.plate_half_x / static_cast<double>(sc.plate_nx);
         sc.dx_p_axis[1] = 2.0 * sc.plate_half_y / static_cast<double>(sc.plate_ny);
         sc.dx_p_axis[2] = plate_t / static_cast<double>(sc.plate_nz);
@@ -659,7 +659,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
 
     // ----------------------------------------------------- конфиг решателя
     {
-        const std::filesystem::path p = std::filesystem::path(SPH_TEST_DATA_DIR) / "guo2019_initial_conditions.txt";
+        const std::filesystem::path p = std::filesystem::path(SPH_CASES_DIR) / "guo2019" / "regression" / "initial_conditions.txt";
         if (!std::filesystem::exists(p)) throw std::runtime_error("guo2019: нет файла конфигурации " + p.string());
         sc.cfg.apply_defaults();
         {
