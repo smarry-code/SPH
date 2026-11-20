@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 
+#include "lattice.hpp"
 #include "param.hpp"
 #include "particle_system.hpp"
 
@@ -67,21 +68,8 @@ struct Bc2Geometry
 };
 
 // Разбиение отрезка длиной L на целое число ячеек, ближайшее к L/dx.
-// Узлы ставятся по ЦЕНТРАМ ячеек: lo + (i + 0.5)*d, i = 0..n-1, d = L/n.
-// Зачем именно центры ячеек:
-//   - слой воспроизводит свою НОМИНАЛЬНУЮ толщину точно (узловая схема
-//     lo + i*dx отбрасывала хвост короче dx: слой 2 при dx = 0.2 мм давал
-//     3.600 мм вместо 3.917 мм — на 8 % короче, то есть короче был и
-//     нагружающий импульс);
-//   - соседние слои получаются в КОНТАКТЕ без искусственных зазоров:
-//     последний узел слоя и первый узел следующего отстоят ровно на шаг
-//     решётки, то есть ровно так же, как два соседних узла внутри слоя.
-inline size_t cell_count(double L, double dx)
-{
-    if (!(L > 0.0) || !(dx > 0.0)) return 1;
-    const long n = std::lround(L / dx);
-    return n < 1 ? 1u : static_cast<size_t>(n);
-}
+// Правило числа ячеек -- общая библиотека cases/common/lattice.hpp.
+using lattice::cell_count;
 
 inline std::array<LayerSpec, 4> bc2_layers()
 {

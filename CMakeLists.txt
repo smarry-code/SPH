@@ -63,6 +63,21 @@ file(GLOB SPH_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 # список исходников в переменной, без второго file(GLOB)).
 set(SPH_PIPELINE_SOURCES ${SPH_SOURCES})
 list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+# --- Постановки кейсов (cases/README.md) ------------------------------------
+#     cases/common/ — общая библиотека постановок (обвязка, энергии, решётка);
+#     имена её заголовков не пересекаются с кейсовыми, поэтому путь общий.
+#     cases/<кейс>/regression/ — замороженная постановка для ctest,
+#     cases/<кейс>/experiment/ — живая постановка экспериментов. Цель получает
+#     ровно одну копию кейса: заголовки копий называются одинаково.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/cases/common)
+function(sph_case target kase role)
+    if(NOT role STREQUAL "regression" AND NOT role STREQUAL "experiment")
+        message(FATAL_ERROR "sph_case(${target} ${kase} ${role}): роль — regression или experiment")
+    endif()
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cases/${kase}/${role})
+    target_compile_definitions(${target} PRIVATE SPH_CASES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cases")
+endfunction()
+
 # --- Исполняемый модуль (имя SPH.exe на Windows — как прежде) ----------------
 add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
