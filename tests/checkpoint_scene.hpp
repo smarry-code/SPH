@@ -45,6 +45,11 @@
 #include <stdexcept>
 #include <string>
 
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
+#endif
+
 // Готовая к запуску сцена. dt и delta_x передаются в time_integration по ссылке
 // и по значению соответственно; dt меняется во время прогона (это ожидаемо).
 struct CkptScene
@@ -150,7 +155,7 @@ inline std::string make_fiber_file(double eps_break, bool contact)
 // Initial_Conditions.txt: общая часть из tests/data + ключи импорта.
 inline void write_ic(const std::string& extra)
 {
-    std::string base = read_all(std::string(SPH_TEST_DATA_DIR) + "/guo2019_initial_conditions.txt");
+    std::string base = read_all(std::string(SPH_CASES_DIR) + "/guo2019/regression/initial_conditions.txt");
     write_file("Initial_Conditions.txt", base + "\n" + extra + "\n");
 }
 

@@ -389,6 +389,7 @@ set_tests_properties(k_fiber_test PROPERTIES LABELS "3d")
 
 # --- Сквозной тест подключения импорта .k к input()/time_integration (этап K6).
 add_executable(test_k_e2e tests/test_k_e2e.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_k_e2e guo2019 regression)
 target_include_directories(test_k_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_k_e2e PRIVATE SPH_DIM=3
     SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
@@ -409,6 +410,7 @@ set_tests_properties(k_e2e_test PROPERTIES LABELS "3d")
 #     пластичностью и повреждённостью). Заготовка: тесты будут добавляться в
 #     tests/test_checkpoint.cpp. Вторая цель -- та же программа со SPH_ENERGY_LOG.
 add_executable(test_checkpoint tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_checkpoint guo2019 regression)
 target_include_directories(test_checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_checkpoint PRIVATE SPH_DIM=3
     SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
@@ -427,6 +429,7 @@ set_tests_properties(checkpoint_test PROPERTIES LABELS "3d" TIMEOUT 600
     ENVIRONMENT OMP_NUM_THREADS=1)
 
 add_executable(test_checkpoint_energy tests/test_checkpoint.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(test_checkpoint_energy guo2019 regression)
 target_include_directories(test_checkpoint_energy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_checkpoint_energy PRIVATE SPH_DIM=3
     SPH_ENERGY_LOG

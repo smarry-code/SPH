@@ -20,6 +20,11 @@
 #include <stdexcept>
 #include <string>
 
+#ifndef SPH_CASES_DIR
+// Задаётся из CMake (функция sph_case). Фолбэк -- запуск из корня репозитория.
+#define SPH_CASES_DIR "cases"
+#endif
+
 namespace fs = std::filesystem;
 
 namespace
@@ -115,7 +120,7 @@ const char* kFib =
 // Initial_Conditions.txt: общая часть из tests/data + ключи k_*.
 void write_ic(const std::string& extra)
 {
-    std::string base = read_all(std::string(SPH_TEST_DATA_DIR) + "/guo2019_initial_conditions.txt");
+    std::string base = read_all(std::string(SPH_CASES_DIR) + "/guo2019/regression/initial_conditions.txt");
     write_file("Initial_Conditions.txt", base + "\n" + extra + "\n");
 }
 
