@@ -1,6 +1,6 @@
 #pragma once
 // fiber/model.hpp
-// Model — объединение всех compute-структур одного расчёта (fiber/PLAN.md
+// Model — объединение всех compute-структур одного расчёта (notes/fiber-model/fiber-plan.md
 // §3.1: «Model объединяет SolidState, FiberState, FiberTopology и таблицу
 // материалов»).
 //
@@ -24,7 +24,7 @@ struct Model
     FiberTopology topology;
     std::vector<FiberMaterial> materials;
     // Кинематическое закрепление частиц Solid и бусин Fiber (interactions/
-    // clamp.hpp, fiber/SPH.md, «Clamp (кинематическое закрепление)»). Пустой
+    // clamp.hpp, notes/fiber-model/fiber-problem-statement.md, «Clamp (кинематическое закрепление)»). Пустой
     // набор -- зажимов нет, цикл по времени побитово прежний. Поля -- в конце,
     // чтобы агрегатная инициализация Model в тестах не менялась.
     interactions::ClampSet clamps;

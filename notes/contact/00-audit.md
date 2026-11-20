@@ -1,6 +1,6 @@
-# Аудит `Report_SPH_contact.md` против кодовой базы
+# Аудит `notes/contact/report-sph-contact.md` против кодовой базы
 
-> **Примечание (2026-11-14):** документ — снимок на `a4147b9` (2026-09-18). Он сверяет `Report_SPH_contact.md` с тогдашней базой и не описывает текущий код: старый путь RHS (`direct_find`, `PairGraph`, `FlatGrid`) удалён в a4ce0b9 (этап Ф4-B2), ссылки на эти файлы убраны. Контакт внедрён и описан в [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md) и [contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md).
+> **Примечание (2026-11-14):** документ — снимок на `a4147b9` (2026-09-18). Он сверяет `notes/contact/report-sph-contact.md` с тогдашней базой и не описывает текущий код: старый путь RHS (`direct_find`, `PairGraph`, `FlatGrid`) удалён в a4ce0b9 (этап Ф4-B2), ссылки на эти файлы убраны. Контакт внедрён и описан в [Контакт Solid–Solid](../../docs/04-explanation/models/03-solid-contact.md) и [contact-particle-particle.md](../../docs/04-explanation/architecture/contact-particle-particle.md).
 
 **Дата проверки:** 2026-09-18
 **Проверенное состояние:** ветка `master`, HEAD `a4147b9`, рабочее дерево чистое
@@ -17,19 +17,19 @@ ADR-011, `test_contact.cpp`, ограничитель шага, диагност
 
 | # | Утверждение Report | Факт в репозитории | Статус |
 |---|---|---|---|
-| 1 | `src/ext_force.cpp`: ветка `cfg.contact_on` в `ext_force()`, фильтры пар, `PairGeom`, `Spring`, нормальная сила, трение | Файл содержит только пристеночное отталкивание (Леннард-Джонс-подобное, [ext_force.cpp:99-111](../src/ext_force.cpp#L99-L111)) и самогравитацию. Ветка `is_contact_pair_` захардкожена в `false` ([ext_force.cpp:116](../src/ext_force.cpp#L116)) и содержит черновую степенную силу, а не Wang | ❌ ложно |
-| 2 | `include/simulation_config.hpp`: `contact_on`, `DFAC`, `mu_static`, `mu_dynamic`, `contact_friction_heat` | Ни одного из этих полей нет ([simulation_config.hpp:25-60](../include/simulation_config.hpp#L25-L60)) | ❌ ложно |
-| 3 | `src/input.cpp`: парсинг ключей `contact_on`, `DFAC` | Цепочка `else if` в `parse_sph_config` заканчивается на `print_step` ([input.cpp:328](../src/input.cpp#L328)) | ❌ ложно |
+| 1 | `src/ext_force.cpp`: ветка `cfg.contact_on` в `ext_force()`, фильтры пар, `PairGeom`, `Spring`, нормальная сила, трение | Файл содержит только пристеночное отталкивание (Леннард-Джонс-подобное, [ext_force.cpp:99-111](../../src/ext_force.cpp#L99-L111)) и самогравитацию. Ветка `is_contact_pair_` захардкожена в `false` ([ext_force.cpp:116](../../src/ext_force.cpp#L116)) и содержит черновую степенную силу, а не Wang | ❌ ложно |
+| 2 | `include/simulation_config.hpp`: `contact_on`, `DFAC`, `mu_static`, `mu_dynamic`, `contact_friction_heat` | Ни одного из этих полей нет ([simulation_config.hpp:25-60](../../include/simulation_config.hpp#L25-L60)) | ❌ ложно |
+| 3 | `src/input.cpp`: парсинг ключей `contact_on`, `DFAC` | Цепочка `else if` в `parse_sph_config` заканчивается на `print_step` ([input.cpp:328](../../src/input.cpp#L328)) | ❌ ложно |
 | 4 | `Initial_Conditions.txt` документирует контактные ключи | 13 строк, контактных ключей нет | ❌ ложно |
-| 5 | `time_integration.cpp:206-213`: `dt = min(dt_CFL, wb.min_dt_force)` | Шаг: `dt = compute_cfl_timestep(...)` — [time_integration.cpp:144](../src/time_integration.cpp#L144), без каких-либо ограничителей. Строки 206-213 — обновление девиатора напряжений | ❌ ложно |
-| 6 | `include/buffers.hpp`: `contact_pair_count`, `contact_max_delta`, `min_dt_force` | `WorkBuffers` = шесть тензорных буферов `txx..tyz` + `ensure`/`clear_tensor` ([buffers.hpp:25-60](../include/buffers.hpp#L25-L60)) | ❌ ложно |
-| 7 | `src/single_step.cpp:201`: `ext_force(...)` при `cfg.ex_force` | Вызов есть, но на [single_step.cpp:205](../src/single_step.cpp#L205), и условие — compile-time константа `ex_force` из [param.hpp:255](../include/param.hpp#L255), не поле конфига | ⚠️ частично |
-| 8 | `test_contact.cpp` + цель CMake `test_contact` («уже в CMake») | Ни файла, ни цели. Тесты: `test_flat_grid`, `test_pair_graph`, `test_particle_system` ([CMakeLists.txt:38-60](../CMakeLists.txt#L38-L60)) | ❌ ложно |
+| 5 | `time_integration.cpp:206-213`: `dt = min(dt_CFL, wb.min_dt_force)` | Шаг: `dt = compute_cfl_timestep(...)` — [time_integration.cpp:144](../../src/time_integration.cpp#L144), без каких-либо ограничителей. Строки 206-213 — обновление девиатора напряжений | ❌ ложно |
+| 6 | `include/buffers.hpp`: `contact_pair_count`, `contact_max_delta`, `min_dt_force` | `WorkBuffers` = шесть тензорных буферов `txx..tyz` + `ensure`/`clear_tensor` ([buffers.hpp:25-60](../../include/buffers.hpp#L25-L60)) | ❌ ложно |
+| 7 | `src/single_step.cpp:201`: `ext_force(...)` при `cfg.ex_force` | Вызов есть, но на [single_step.cpp:205](../../src/single_step.cpp#L205), и условие — compile-time константа `ex_force` из [param.hpp:255](../../include/param.hpp#L255), не поле конфига | ⚠️ частично |
+| 8 | `test_contact.cpp` + цель CMake `test_contact` («уже в CMake») | Ни файла, ни цели. Тесты: `test_flat_grid`, `test_pair_graph`, `test_particle_system` ([CMakeLists.txt:38-60](../../CMakeLists.txt#L38-L60)) | ❌ ложно |
 | 9 | ADR-011 (контакт Wang) | ADR доведены до 006; следующий свободный номер — **007**, не 012 | ❌ ложно |
 | 10 | `docs/04-explanation/architecture/contact-particle-particle.md` | Файла нет | ❌ ложно |
-| 11 | Материалы: `mats.G` (itype 3-9), `const_JH_2[itype-10][1]` (10-11), **`mats.jc[0].G` (12)** | Первые два верны. Поля `jc` в `Materials` **не существует**, itype 12 в реестре нет ([materials.hpp:20-40](../include/materials.hpp#L20-L40)) | ⚠️ частично |
-| 12 | Диспетчер `G` в `int_force.cpp`, строки 582-603 | Фактически [int_force.cpp:636-652](../src/int_force.cpp#L636-L652) | ⚠️ смещение |
-| 13 | `include/particle_system.hpp`: `mass`, `rho`, `hsml`, `c`, `vx[dim]`, `itype` | Подтверждено ([particle_system.hpp:38-54](../include/particle_system.hpp#L38-L54)) | ✅ верно |
+| 11 | Материалы: `mats.G` (itype 3-9), `const_JH_2[itype-10][1]` (10-11), **`mats.jc[0].G` (12)** | Первые два верны. Поля `jc` в `Materials` **не существует**, itype 12 в реестре нет ([materials.hpp:20-40](../../include/materials.hpp#L20-L40)) | ⚠️ частично |
+| 12 | Диспетчер `G` в `int_force.cpp`, строки 582-603 | Фактически [int_force.cpp:636-652](../../src/int_force.cpp#L636-L652) | ⚠️ смещение |
+| 13 | `include/particle_system.hpp`: `mass`, `rho`, `hsml`, `c`, `vx[dim]`, `itype` | Подтверждено ([particle_system.hpp:38-54](../../include/particle_system.hpp#L38-L54)) | ✅ верно |
 | 14 | `contact_pair_geometry()` вычисляет проникание по линии центров — «точно по (2.1)» | Функции нет нигде в репозитории | ❌ ложно |
 | 15 | «Внедрение новых типов — добавление стратегий без изменения оркестратора» | Оркестратора контакта не существует; его надо написать целиком | ❌ ложно |
 
@@ -44,14 +44,14 @@ ADR-011, `test_contact.cpp`, ограничитель шага, диагност
 
 1. **Сигнатура `ext_force` не пропускает ни конфиг, ни шаг, ни буферы.**
    Сейчас: `ext_force(ParticleSystem&, ntotal, niac, pair_i, pair_j, dvxdt)`
-   ([ext_force.hpp:16](../include/ext_force.hpp#L16)). Формулам типов 1-3 нужны
+   ([ext_force.hpp:16](../../include/ext_force.hpp#L16)). Формулам типов 1-3 нужны
    `cfg` (тип силы, `K_p`, `CFL`), `dt` (тип 3) и `WorkBuffers` (ограничитель шага,
    диагностика). Сигнатуру и точку вызова придётся менять.
 
 2. **Нет идентификатора тела.** Report говорит про «фильтр: одно тело не
    взаимодействует», но в `ParticleSystem` нет поля тела/детали. При чтении k-файла
-   part id кладётся в `itype` ([input.cpp:230](../src/input.cpp#L230)) и затем
-   **перезаписывается** номером материала ([input.cpp:786-807](../src/input.cpp#L786-L807)),
+   part id кладётся в `itype` ([input.cpp:230](../../src/input.cpp#L230)) и затем
+   **перезаписывается** номером материала ([input.cpp:786-807](../../src/input.cpp#L786-L807)),
    то есть исходный pid теряется. Два тела из одного материала различить нечем.
 
 3. **Нет механизма ограничения шага.** Ни поля в `WorkBuffers`, ни строки в
@@ -60,10 +60,10 @@ ADR-011, `test_contact.cpp`, ограничитель шага, диагност
 
 4. **`Δt_ref` («из существующего кода») не существует.** Локального CFL-шага пары в
    проекте нет, есть только глобальный минимум `compute_cfl_timestep`
-   ([time_integration.cpp:13-27](../src/time_integration.cpp#L13-L27)). Определение
+   ([time_integration.cpp:13-27](../../src/time_integration.cpp#L13-L27)). Определение
    `Δt_ref` надо ввести — а именно от него зависит весь аргумент устойчивости.
 
-5. **`dim` — compile-time константа, сейчас `dim = 1`** ([param.hpp:8](../include/param.hpp#L8)).
+5. **`dim` — compile-time константа, сейчас `dim = 1`** ([param.hpp:8](../../include/param.hpp#L8)).
    Алгоритм «частица-частица» — 2D/3D по постановке статьи. Тесты, собираемые в этом
    дереве, получат `dim = 1`; чтобы это не блокировало проверку формул, чистую
    математику надо вынести в dim-независимый вид (скалярные величины), чего эскиз
@@ -95,10 +95,10 @@ ADR-011, `test_contact.cpp`, ограничитель шага, диагност
    молча исчезает. Нужна явная ветка отката (см. план, шаг 2).
 
 4. **Опечатка (2.7)/(2.8) — диагноз Report верен.** Проверено по
-   [part_0.md:289-291](../part_0.md#L289-L291): обе формулы помечены $F_1$, тогда как
+   [notes/sources/sph-contact-article.md:289-291](../sources/sph-contact-article.md#L289-L291): обе формулы помечены $F_1$, тогда как
    (2.6) использует $\max(F_1,F_2)$. Вторая — действительно $F_2$.
    Дополнительно: текст §2.3 статьи дважды ссылается на «(2.5)» там, где по смыслу
-   (2.8) и (2.9) ([part_0.md:307,310](../part_0.md#L307-L310)) — нумерация первоисточника
+   (2.8) и (2.9) ([notes/sources/sph-contact-article.md:307,310](../sources/sph-contact-article.md#L307-L310)) — нумерация первоисточника
    в этом разделе в целом ненадёжна.
 
 5. **Нумерация разделов Report сбита:** §2.6 → §2.8 (нет §2.7), при этом §3.5 ссылается
@@ -126,7 +126,7 @@ ADR-011, `test_contact.cpp`, ограничитель шага, диагност
 - **Отложить (2.2) «средняя нормаль» и §2.4 «свободная поверхность»** — обе требуют
   нормалей к поверхности, которых в проекте нет.
 - **Выбор `min`/`max` и обнуление при $\dot p \le 0$** — проверено по первоисточнику
-  ([part_0.md:259-319](../part_0.md#L259-L319)), воспроизведено верно.
+  ([notes/sources/sph-contact-article.md:259-319](../sources/sph-contact-article.md#L259-L319)), воспроизведено верно.
 
 ---
 
@@ -142,9 +142,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   →  ошибка сборки 
 
 | Блокер | Место | Причина |
 |---|---|---|
-| `error: extra qualification on member 'Particle'` | [param.hpp:12](../include/param.hpp#L12) — `Particle::Particle();` | Принимается MSVC, отвергается Clang. Структура `Particle` — мёртвый код (первичное хранилище — `ParticleSystem`) |
+| `error: extra qualification on member 'Particle'` | [param.hpp:12](../../include/param.hpp#L12) — `Particle::Particle();` | Принимается MSVC, отвергается Clang. Структура `Particle` — мёртвый код (первичное хранилище — `ParticleSystem`) |
 | `fatal error: 'omp.h' file not found` | pair_graph.hpp:29 — `#include <omp.h>` без охраны | Apple Clang требует `-Xpreprocessor -fopenmp` и путей Homebrew libomp; голый `-fopenmp` отвергается (`unsupported option`) |
-| `fatal error: 'windows.h' file not found` | [main.cpp:13](../src/main.cpp#L13) | Единственный незащищённый `#include <windows.h>`; во всех остальных модулях он под `#ifdef _WIN32` |
+| `fatal error: 'windows.h' file not found` | [main.cpp:13](../../src/main.cpp#L13) | Единственный незащищённый `#include <windows.h>`; во всех остальных модулях он под `#ifdef _WIN32` |
 
 **Проверено:** после трёх правок (`Particle();`, `#ifdef _WIN32` вокруг `windows.h`,
 флаги libomp) собираются все цели, включая `SPH` — exit 0. `libomp` в системе есть
@@ -154,20 +154,20 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   →  ошибка сборки 
 
 ## 6. Полезные факты, установленные при проверке (нужны плану)
 
-- **Порядок в шаге:** `int_force` ([single_step.cpp:189](../src/single_step.cpp#L189))
-  обновляет `sys.c[i]` через EOS ([int_force.cpp:19-31](../src/int_force.cpp#L19-L31))
-  **до** вызова `ext_force` ([single_step.cpp:205](../src/single_step.cpp#L205)) —
+- **Порядок в шаге:** `int_force` ([single_step.cpp:189](../../src/single_step.cpp#L189))
+  обновляет `sys.c[i]` через EOS ([int_force.cpp:19-31](../../src/int_force.cpp#L19-L31))
+  **до** вызова `ext_force` ([single_step.cpp:205](../../src/single_step.cpp#L205)) —
   скорость звука на момент расчёта контакта актуальна.
 - **Контактные пары гарантированно есть в списке соседей.** Радиус поиска —
   `scale_k * (h_i+h_j)/2`, для кубического сплайна `scale_k = 2`
   (direct_find.cpp:12,34-37), то есть `h_i+h_j`.
   Порог контакта `(h_i+h_j)/2` — ровно вдвое меньше. Отдельный поиск не нужен.
-- **`dvxdt` — ускорения, не силы** ([ext_force.cpp:105-110](../src/ext_force.cpp#L105-L110)),
+- **`dvxdt` — ускорения, не силы** ([ext_force.cpp:105-110](../../src/ext_force.cpp#L105-L110)),
   пары обрабатываются последовательно (OpenMP в `ext_force` нет) — гонок при
   накоплении контакта не будет.
 - **`ext_force` вызывается для `ntotal + nvirt`**, пары включают виртуальные частицы
   (`itype < 0`) — фильтр обязан требовать `itype > 0` с обеих сторон.
 - **Стиль тестов:** без фреймворка — `int main()`, счётчик `failures`, `std::printf`
-  ([test_particle_system.cpp:12-20](../tests/test_particle_system.cpp#L12-L20)).
+  ([test_particle_system.cpp:12-20](../../tests/test_particle_system.cpp#L12-L20)).
 - **Следующий свободный номер ADR — 007**; в `mkdocs.yml` есть явный `nav`
-  ([mkdocs.yml:116-123](../mkdocs.yml#L116-L123)), новый ADR надо в него вписать.
+  ([mkdocs.yml:116-123](../../mkdocs.yml#L116-L123)), новый ADR надо в него вписать.

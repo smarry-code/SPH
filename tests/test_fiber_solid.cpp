@@ -1,5 +1,5 @@
 // tests/test_fiber_solid.cpp
-// Unit-тесты Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6; fiber/SPH.md,
+// Unit-тесты Fiber-Solid-Contact (notes/fiber-model/fiber-plan.md, этап Ф6; notes/fiber-model/fiber-problem-statement.md,
 // раздел «Fiber-Solid-Contact»):
 //   - lambda и clamp (середина сегмента, t<0, t>=1 -- обычный/первый/последний
 //     сегмент);
@@ -369,7 +369,7 @@ void test_momentum_conservation()
 }
 
 // -----------------------------------------------------------------------
-// 5) E, nu против справочных значений (fiber/PLAN.md, этап Ф6, пункт 1).
+// 5) E, nu против справочных значений (notes/fiber-model/fiber-plan.md, этап Ф6, пункт 1).
 //    Источник сравнения: справочные диапазоны для конструкционных
 //    материалов (см. комментарии у каждой проверки) -- допуск НЕ калибровка,
 //    а sanity-check порядка величины и физичности 0<nu<0.5.
@@ -429,7 +429,7 @@ void test_elastic_by_itype_reference_values()
 }
 
 // =======================================================================
-// Тесты fiber/fiber_solid_contact_fix.md, §3.1-§3.5. Общие правила:
+// Тесты notes/fiber-contact/fiber-solid-contact-fix.md, §3.1-§3.5. Общие правила:
 //   - primitives строятся РЕАЛЬНЫМ поиском build_fiber_solid_contact_search
 //     (реальный радиус, реальное правило "сегмент принадлежит первой бусине");
 //   - все проверки сил -- по суммарным вкладам после reduce_contributions по
@@ -895,7 +895,7 @@ void test_stretched_bonds()
 }
 
 // -----------------------------------------------------------------------
-// Слоты трения Fiber-Solid (fiber/fiber_solid_friction_implementation.md,
+// Слоты трения Fiber-Solid (notes/fiber-contact/fiber-solid-friction-implementation.md,
 // §2, §5.1): kernel compute_fiber_solid_contact_contributions считает ТОЛЬКО
 // нормальную силу и дополнительно заполняет по одному слоту
 // FiberSolidFrictionContact на primitive (запись по индексу k).

@@ -1,22 +1,22 @@
 #pragma once
 // interactions/solid_sph.hpp
-// Solid-SPH: новая схема RHS для сплошной среды (fiber/SPH.md, разделы
+// Solid-SPH: новая схема RHS для сплошной среды (notes/fiber-model/fiber-problem-statement.md, разделы
 // "Solid -- Solid" / "Solid-SPH", "Общие уравнения динамики" -> "Solid";
-// fiber/PLAN.md, этап Ф4, часть A).
+// notes/fiber-model/fiber-plan.md, этап Ф4, часть A).
 //
 // ЭТО ЧАСТЬ A этапа Ф4: новый путь строится РЯДОМ со старым (src/density.cpp,
 // src/int_force.cpp, src/art_visc.cpp, src/av_vel.cpp, src/virt_part.cpp,
 // src/eos.cpp) и переиспользует их МАТЕМАТИКУ построчно, не меняя старые
 // файлы и не переключая продовые вызовы (это будет часть Б, после ревью).
 //
-// Архитектурный контракт (SPH.md, "Основные требования к interaction kernel"):
+// Архитектурный контракт (fiber-problem-statement.md, "Основные требования к interaction kernel"):
 //   - Search и primitive creation — только readonly доступ к состоянию;
 //   - Compute interaction kernel не пишет напрямую в общий RHS, а формирует
 //     typed Contribution<SolidDelta> через ContributionWriter;
 //   - Reduce (rhs::reduce_contributions) суммирует contributions по частицам;
 //   - Finalize — отдельный parallel_for по частицам, вне кернела.
 //
-// Что перестаёт писаться в sys (PLAN.md §3.6):
+// Что перестаёт писаться в sys (fiber-plan.md §3.6):
 //   - p, c (EOS) -> SolidDerived, стадия "Solid derived";
 //   - exx..eyz, rxy..ryz -> накопители SolidDelta, затем finalize;
 //   - виртуальные (зеркальные) частицы -> GhostSet + SolidExtended, а не
@@ -66,7 +66,7 @@ constexpr std::uint32_t kSolidSphInteractionType = 10;
 
 // ----------------------------------------------------------------------
 // SolidDelta -- то, что суммируется по primitives обоих interaction types,
-// формирующих вклад в Solid (fiber/PLAN.md §3.3):
+// формирующих вклад в Solid (notes/fiber-model/fiber-plan.md §3.3):
 //     dv[dim]      ускорение (ФИНАЛЬНОЕ -- не требует постобработки:
 //                  int_force momentum + art_visc momentum + contact
 //                  складываются напрямую, как в single_step.cpp:
@@ -90,12 +90,12 @@ constexpr std::uint32_t kSolidSphInteractionType = 10;
 //                  требует умножения на cfg.epsilon -- часть A этот
 //                  постпроцессинг не выполняет (поле не входит в сравниваемый
 //                  набор производных, av_vel не производная времени);
-//     dh           зарезервировано под sle == 2 (PLAN.md §3.3); в части A не
+//     dh           зарезервировано под sle == 2 (fiber-plan.md §3.3); в части A не
 //                  заполняется -- BC2/BC6 используют sle == 1, а sle == 1
 //                  физически не производит производной (h пересчитывается
 //                  напрямую из массы/плотности, переезжает в Postprocessing
-//                  этапа Ф7, PLAN.md §3.6). Поле оставлено для интерфейсной
-//                  полноты по SPH.md/PLAN.md §3.3.
+//                  этапа Ф7, fiber-plan.md §3.6). Поле оставлено для интерфейсной
+//                  полноты по fiber-problem-statement.md/PLAN.md §3.3.
 // ----------------------------------------------------------------------
 struct SolidDelta
 {
@@ -141,7 +141,7 @@ struct SolidDelta
 // Итог finalize -- поля, что сравниваются test_rhs_equivalence со старым
 // путём (drho, du, dv[dim], dsxx..dsxz), ПЛЮС "сырые" скорости деформаций/
 // поворота (exx..eyz, rxy..ryz), которые test_rhs_equivalence не сравнивает,
-// но которые нужны fiber/PLAN.md, этап Ф4-B1: временный шим совместимости
+// но которые нужны notes/fiber-model/fiber-plan.md, этап Ф4-B1: временный шим совместимости
 // пишет их обратно в sys для prochnost_cem_JH2 (src/ppochnost.cpp читает
 // sys.exx.. и sys.rxy.. напрямую).
 //
@@ -151,7 +151,7 @@ struct SolidDelta
 // она по-прежнему читает sys.exx.. / sys.rxy.. напрямую (см. комментарий у
 // single_step() в src/single_step.cpp и у apply_material_strength в
 // interactions/postprocessing.hpp). Шим НЕ временный до Ф7 -- он остаётся
-// как минимум до этапа Ф8 (унификация ODESolver, fiber/PLAN.md §3.9), где
+// как минимум до этапа Ф8 (унификация ODESolver, notes/fiber-model/fiber-plan.md §3.9), где
 // его наконец стоит убрать вместе с переводом prochnost_cem_JH2 на явные
 // параметры. ПОСЛЕ ИСПРАВЛЕНИЯ JH-2 (ветка fiber_johnson_holmquist, этап B):
 // prochnost_cem_JH2 читает из sys только exx..eyz (скорость деформации для
@@ -180,7 +180,7 @@ struct SolidFinal
 };
 
 // ----------------------------------------------------------------------
-// Solid derived: EOS (p, c) -- fiber/PLAN.md §3.6, "стадия Solid derived:
+// Solid derived: EOS (p, c) -- notes/fiber-model/fiber-plan.md §3.6, "стадия Solid derived:
 // EOS в RhsWorkspace". Реализация -- ТОЧНАЯ копия диспетчера urs()
 // (src/int_force.cpp), но пишет в переданные p/c по ссылке, а не в sys.p/
 // sys.c: старое urs() мутирует ParticleSystem и поэтому не годится для
@@ -282,7 +282,7 @@ inline void compute_solid_derived(const rhs::CpuExecutor& exec, const Materials&
 
 // ----------------------------------------------------------------------
 // GhostSet -- виртуальные (зеркальные) частицы у оси при axis_sim && dim==2
-// (fiber/PLAN.md §3.6: "GhostSet в RhsWorkspace; вкладов к виртуальным
+// (notes/fiber-model/fiber-plan.md §3.6: "GhostSet в RhsWorkspace; вкладов к виртуальным
 // частицам нет"). Условие отбора -- БУКВАЛЬНО как в src/virt_part.cpp
 // ("sys.x[0][i] < 2 * sys.hsml[i]"). Хранит только индекс исходной реальной
 // частицы: координаты/скорости/масса/напряжения зеркала выводятся из него в
@@ -447,10 +447,10 @@ inline void build_art_stress(const rhs::CpuExecutor& exec, const SimulationConfi
 }
 
 // ----------------------------------------------------------------------
-// SolidSphPrimitive = (i, j, W_ij, grad_i W_ij) -- fiber/SPH.md, "Solid-SPH".
+// SolidSphPrimitive = (i, j, W_ij, grad_i W_ij) -- notes/fiber-model/fiber-problem-statement.md, "Solid-SPH".
 // i -- всегда реальная частица (i < ext.nreal); j -- реальная ИЛИ ghost.
 // Метаданные (W, grad W) вычисляются при построении primitive из readonly
-// состояния -- SPH.md: "вычисляются... и хранятся в нём как metadata".
+// состояния -- fiber-problem-statement.md: "вычисляются... и хранятся в нём как metadata".
 // ----------------------------------------------------------------------
 struct SolidSphPrimitive
 {
@@ -495,7 +495,7 @@ struct SolidSphSearchResult
 };
 
 // Поиск пар -- та же логика, что был у прежнего прямого поиска соседей
-// (direct_find, удалён на fiber/PLAN.md, этапе Ф4-B2): канонический порядок
+// (direct_find, удалён на notes/fiber-model/fiber-plan.md, этапе Ф4-B2): канонический порядок
 // i<j, критерий r < scale_k*(h_i+h_j)/2 (scale_k = 2 для кубического сплайна,
 // 3 для гаусса/квинтического). SpatialIndex даёт БРОУЗ-фазу с фиксированным
 // радиусом (rhs/spatial_index.hpp поддерживает только его), точный per-pair
@@ -1085,7 +1085,7 @@ inline void compute_solid_sph_contributions(
 }
 
 // ----------------------------------------------------------------------
-// Finalize -- parallel_for по РЕАЛЬНЫМ частицам (fiber/PLAN.md §3.3):
+// Finalize -- parallel_for по РЕАЛЬНЫМ частицам (notes/fiber-model/fiber-plan.md §3.3):
 // осевые члены (dim==2), закон Гука с производной Яуманна (ИСПРАВЛЕННЫЙ
 // знак у syz*ryz, как в текущем src/int_force.cpp), девиаторная работа
 // s:eps/rho в du, домножение накопленной энергии на 0.5.
@@ -1147,7 +1147,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
 
         for (std::size_t dd = 0; dd < dim; ++dd) f.dv[dd] = d.dv[dd];
 
-        // Шим совместимости (fiber/PLAN.md, этап Ф4-B1) -- ровно те значения,
+        // Шим совместимости (notes/fiber-model/fiber-plan.md, этап Ф4-B1) -- ровно те значения,
         // что старый int_force.cpp пишет в sys.exx.. и sys.rxy.. (те же
         // локальные exx/eyy/ezz(с осевым переопределением)/exy/exz/eyz/rxy/
         // rxz/ryz, что участвуют в формулах dsxx.. ниже).
@@ -1174,7 +1174,7 @@ inline void finalize_solid(const rhs::CpuExecutor& exec, const Materials& mats,
             // div v = (плоская дивергенция, она в парной сумме d.du) + v_r/r.
             // Парная сумма окружную часть не содержит; без этого члена p
             // меняется с ezz через rho (drho выше), а u -- нет
-            // (johnson-cook/03-pmin-energy.md, §2.2). Аналог temp_u в 1D (nsym).
+            // (notes/johnson-cook/03-pmin-energy.md, §2.2). Аналог temp_u в 1D (nsym).
             f.du -= p[i] / sys.rho[i] * sys.vx[0][i] / sys.x[0][i];
         }
 #ifdef SPH_ENERGY_LOG

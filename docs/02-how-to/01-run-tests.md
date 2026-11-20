@@ -150,8 +150,8 @@ ctest --test-dir build -R e2e_bc6_full --output-on-failure -j1
 ### Графики для отчётов
 
 ```bash
-cmake --build build --target bc2_plot   # contact/e2e/bc2_monitor_velocity.svg
-cmake --build build --target bc6_plot   # contact/e2e/bc6_monitor_velocity.svg
+cmake --build build --target bc2_plot   # notes/contact/e2e/bc2_monitor_velocity.svg
+cmake --build build --target bc6_plot   # notes/contact/e2e/bc6_monitor_velocity.svg
 ```
 
 Каждая цель делает четыре полных прогона (по одному на `contact_force_type`)
@@ -172,7 +172,7 @@ ctest --test-dir build -R "kinematics_3d|e2e_3d|_3d$|bc2mini3d" --output-on-fail
 Сквозные тесты BC2 и BC6 и 2D-регрессия считают только осесимметричную
 постановку. Ветка `dim = 3` проходит через конвейер другими путями: шесть
 компонент девиатора, три поворота, трёхмерная сетка поиска соседей, контакт
-без зеркальных частиц. Нити (fiber/PLAN.md) живут только в 3D, поэтому эта
+без зеркальных частиц. Нити (notes/fiber-model/fiber-plan.md) живут только в 3D, поэтому эта
 ветка проверена отдельно, тремя программами со своими объектниками конвейера
 (`SPH_DIM=3`):
 
@@ -285,4 +285,4 @@ sed -i 's/^alpha = .*/alpha = 1.001/' /tmp/bc2_alpha.txt
 
 ## Бенчмарк
 
-Отдельного бенчмарка в сборке нет; замеры ускорения лежат в `speedup/*.md`.
+Отдельного бенчмарка в сборке нет; замеры ускорения лежат в `notes/speedup/*.md`.

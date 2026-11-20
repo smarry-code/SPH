@@ -1,5 +1,5 @@
 // tests/test_spatial_index.cpp
-// Этап Ф1 (fiber/PLAN.md): unit-тест SpatialIndex<Dim> (include/rhs/spatial_index.hpp).
+// Этап Ф1 (notes/fiber-model/fiber-plan.md): unit-тест SpatialIndex<Dim> (include/rhs/spatial_index.hpp).
 // Проверяет, что пары, найденные SpatialIndex, совпадают с результатом
 // полного перебора (brute force) — для "своего типа" (внутри одного набора)
 // и для "чужого типа" (между двумя разными наборами), на нескольких
@@ -604,7 +604,7 @@ int main()
 #ifdef _WIN32
     SetConsoleOutputCP(65001);
 #endif
-    std::printf("=== test_spatial_index: SpatialIndex<Dim> (fiber/PLAN.md, этап Ф1) ===\n");
+    std::printf("=== test_spatial_index: SpatialIndex<Dim> (notes/fiber-model/fiber-plan.md, этап Ф1) ===\n");
 
     test_same_type<2>();
     test_same_type<3>();

@@ -56,7 +56,7 @@
 #include <windows.h>
 #endif
 
-static_assert(dim == 3, "demo_fiber_net требует сборки с SPH_DIM=3 (нити -- только в 3D, fiber/SPH.md)");
+static_assert(dim == 3, "demo_fiber_net требует сборки с SPH_DIM=3 (нити -- только в 3D, notes/fiber-model/fiber-problem-statement.md)");
 
 namespace fs = std::filesystem;
 
@@ -114,7 +114,7 @@ void write_net_file(const std::string& path, double E, double nu, double d, doub
 // образцу tests/bc2_mini3d_geometry.hpp::build_geometry() (узлы
 // x=(i+0.5)*dx), без отбора по радиусу -- куб, а не шар (постановка,
 // раздел 3). Обязательно заполняет sys.body[k] (=itype[k]) -- без этого
-// Solid-Solid-Contact/фильтры по телу не работают (fiber/PLAN.md §3.1).
+// Solid-Solid-Contact/фильтры по телу не работают (notes/fiber-model/fiber-plan.md §3.1).
 // ---------------------------------------------------------------------
 std::size_t build_projectile_cube(ParticleSystem& sys, int n_side, double dx, double rho0, double cx, double cy,
                                    double cz, double vz0)
@@ -135,7 +135,7 @@ std::size_t build_projectile_cube(ParticleSystem& sys, int n_side, double dx, do
                 sys.x[2][k] = cz + (static_cast<double>(iz) + 0.5) * dx;
                 sys.vx[2][k] = vz0;
                 sys.itype[k] = 4; // алюминий (materials.hpp)
-                sys.body[k]  = 4; // body[]=itype[] -- fiber/PLAN.md §3.1
+                sys.body[k]  = 4; // body[]=itype[] -- notes/fiber-model/fiber-plan.md §3.1
                 sys.rho[k]   = rho0;
                 sys.rho_0[k] = rho0;
                 sys.hsml[k]  = 2.0 * dx;

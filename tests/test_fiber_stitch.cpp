@@ -1,5 +1,5 @@
 // tests/test_fiber_stitch.cpp
-// Связи-стежки (fiber/plan-quilt-fabric.md, разделы 10-12, этап 2a): директива
+// Связи-стежки (notes/fabrics/plan-quilt-fabric.md, разделы 10-12, этап 2a): директива
 // BOND в .fib, собственный материал связи (FiberBond::mat), только растяжение,
 // разрыв связи вне цепочки (apply_fiber_break_events не трогает prev/next и
 // object_id). Стиль -- по образцу tests/test_fiber_bond.cpp и

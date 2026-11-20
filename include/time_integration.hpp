@@ -28,12 +28,12 @@ double compute_cfl_timestep(const SimulationConfig& cfg, ParticleSystem& sys, si
 void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, double& dt, double& time, double delta_x,
                       RunGuard* guard = nullptr);
 
-// Перегрузка для fiber::Model (fiber/PLAN.md, этап Ф2, пункт 7 — сигнатура;
+// Перегрузка для fiber::Model (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 7 — сигнатура;
 // этап Ф3 — физика; этап Ф8 — унификация). Интегрирует Solid (model.solid) и
 // нити (model.fiber/model.topology) одновременно: на каждом шаге считается
 // RHS Fiber-Bond/Fiber-Fiber-Contact/Fiber-Solid-Contact
 // (include/interactions/) и их dt_limit, итоговый шаг — общий минимум
-// CFL/контакта Solid и dt_limit нитей (fiber/SPH.md, «Шаг по времени»).
+// CFL/контакта Solid и dt_limit нитей (notes/fiber-model/fiber-problem-statement.md, «Шаг по времени»).
 // Решатель — ode::PredictorCorrectorSolver (по умолчанию) или ode::EulerSolver
 // (include/ode/ode_solver.hpp), выбор — по cfg.ode_solver.
 //

@@ -42,7 +42,7 @@
 
 - Ключ `xsph_mode = velocity | position` (по умолчанию `velocity`, поведение прежнее): `position` —
   классический XSPH Монагана, диагностический режим; без стабилизатора расчёты Тейлора и BC2/BC6
-  обрываются по $\rho<0$ (см. `johnson-cook/05-xsph-axisym-energy.md`).
+  обрываются по $\rho<0$ (см. `notes/johnson-cook/05-xsph-axisym-energy.md`).
 - Лог энергии (`SPH_ENERGY_LOG`): диагностические каналы мощности `P_pair_*`, `P_hoop_v`, `P_av_*`,
   `P_dev_u`, `P_pdv_u`, `P_szz_u` и `closure` (только чтение состояния).
 - Тесты `e2e_clamp_*_pc_full`: бюджет `--time-limit` 12000 с, TIMEOUT 14400 с (ES2 — 10 568 с).
@@ -52,7 +52,7 @@
   сводка замечаний к коду, найденных при сверке формул.
 - Ключи `art_stress_eps`, `art_stress_n` — искусственное напряжение Монагана (Monaghan 2000; Gray,
   Monaghan, Swift 2001), в осесимметрии с окружной компонентой; по умолчанию выключено, поведение
-  прежнее. Неустойчивость у оси в тесте Тейлора не устраняет (`johnson-cook/06-artificial-stress.md`).
+  прежнее. Неустойчивость у оси в тесте Тейлора не устраняет (`notes/johnson-cook/06-artificial-stress.md`).
   Тест `art_stress_{1,2,3}d_test`; ключи e2e Тейлора `--art-eps`, `--save-t`, `--no-damage`, `--pmin`.
 - Глава [«Ткани: одеяло и мозаика»](../04-explanation/models/07-fabrics.md) с пятью схемами
   (`docs/assets/img/fabrics/`): полотняное переплетение 1/1, пакет kT, стёганое одеяло (патчи, линии шва,
@@ -72,6 +72,9 @@
 
 ### Изменено
 
+- Рабочие заметки (`Gia/`, `contact/`, `fiber/`, `johnson-cook/`, `jh2/`, `speedup/`, `part_0.md`,
+  `Report_SPH_contact.md`) перенесены в [`notes/`](../../notes/README.md) по темам (2026-11-20), имена — kebab-case;
+  ссылки в коде, `docs/`, `experiments/` и самих заметках обновлены; графики e2e — `notes/contact/e2e/`.
 - Документация после слияния веток `fabric_penetration`, `fiber_fabric`, `fabric_mosaic`,
   `fiber_johnson_cook`, `fiber_johnson_holmquist` (2026-11-18):
   - чекпоинт: одна версия формата (6), старые не читаются; блоки `PROJ` (тёплый старт) и `USER`
@@ -88,7 +91,7 @@
 
 - STEEL 4340: `p_min` = −5,5 ГПа (было подобранное −4 ГПа) — откольная прочность 4340 RC30 по
   Bless 1981 (AFWAL-TR-81-4040); пометка `TODO(verify)` снята. Константы 4340 сверены с библиотекой
-  Autodyn (`fiber/steel-4340-autodyn-constants.md`).
+  Autodyn (`notes/sources/steel-4340-autodyn-constants.md`).
 - Аудит документации на соответствие коду `fiber_new` (2026-11-14):
   - конвейер, поиск соседей и параллелизм переписаны под `rhs::SpatialIndex`, `CpuExecutor`
     и reduce по шардам; главы о `link_list` и `FlatGrid` помечены как исторические
@@ -106,7 +109,7 @@
 
 - `README.md` переписан (возможности, сборка и запуск, тесты, ссылки на сайт документации,
   структура репозитория). Рабочие заметки (`contact/`, `fiber/`, `Gia/`, `johnson-cook/`,
-  `speedup/`, `Report_SPH_contact.md`): планы и ТЗ получили врезку «Статус (2026-11-14)»
+  `speedup/`, `Report_SPH_contact.md`; с 2026-11-20 — в `notes/`): планы и ТЗ получили врезку «Статус (2026-11-14)»
   по факту реализации, отчёты с устаревшим описанием кода — «Примечание»; индекс
   `contact/README.md` со статусами; исправлены битые относительные ссылки.
 
@@ -117,7 +120,7 @@
 - Исторические врезки о старом конвейере в главах архитектуры, раздел о `bench_color`,
   строка «Graph coloring» глоссария.
 - Рабочие заметки: `Gia/E2E_EXPERIMENT_CONTEXT.md` (принципы e2e-тестов и чек-лист автора ТЗ
-  перенесены приложениями А и Б в `Gia/TZ_GUO2019_EXPERIMENTS.md`), `Gia/E2E_CONTEXT_CODE_MAP.md`,
+  перенесены приложениями А и Б в `Gia/TZ_GUO2019_EXPERIMENTS.md`, ныне `notes/guo2019/guo2019-experiments-tz.md`), `Gia/E2E_CONTEXT_CODE_MAP.md`,
   `fiber/DEMO_VISUALIZATION_TASK.md`, `contact/03-review-brief.md`, `contact/10-debug-handoff.md`;
   ссылки на них заменены текстом с пометкой «(удалён)».
 

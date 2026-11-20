@@ -3,7 +3,7 @@
 //   E2  --case=hel            упругий предвестник (HEL) и пластическая ударная волна
 //   E3  --case=spall          откол (разрушение JC включено)
 //       --case=spall_nodamage то же с jc[0].d.enabled = false: D == 0 всюду
-// Постановка: fiber/jc-implementation-plan.md §5.3 (E2, E3), риск 5 (§6).
+// Постановка: notes/johnson-cook/jc-implementation-plan.md §5.3 (E2, E3), риск 5 (§6).
 // Сборка SPH_DIM=1 (одноосная деформация). Геометрия и разбор кадров —
 // tests/jc_plate_impact.hpp; параметры решателя — tests/data/jc_plate_initial_conditions.txt
 // (разбираются боевым parse_sph_config()).

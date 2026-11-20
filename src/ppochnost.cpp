@@ -153,7 +153,7 @@ void prochnost_cem_JH2(const Materials& mats, ParticleSystem& sys, size_t i, dou
     {
         // Радиальный возврат (Wilkins): приращение эквивалентной пластической
         // деформации за шаг d_ep = (sigma_eq_пробное - sigma_y)/(3G), без
-        // тензорных компонент и вращательных членов (jh2/jh2-code-review.md, п. 1).
+        // тензорных компонент и вращательных членов (notes/jh2/jh2-code-review.md, п. 1).
         double d_ep = (seq_tr - sigt) / (3.0 * gem);
         if ((P_n + T_n) > 0)
         {

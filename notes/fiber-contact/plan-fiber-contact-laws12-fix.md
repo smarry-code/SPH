@@ -1,6 +1,6 @@
 # План: как сделать законы контакта нитей 1 (pinball) и 2 (Swegle) рабочими
 
-> **Статус (2026-11-14):** не реализовано (заменено). Ключа `fiber_*_contact_predictor` и стадии силы по пробной скорости в коде нет; проблема проникания решена иначе: закон 4 (Герц + демпфер) и выталкивание `fiber_*_contact_impulse_push_*` для закона 3 (`include/interactions/fiber_contact_law.hpp`, `src/input.cpp`). Законы 1–2 по-прежнему дают нулевую силу при ṗ<=0. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+> **Статус (2026-11-14):** не реализовано (заменено). Ключа `fiber_*_contact_predictor` и стадии силы по пробной скорости в коде нет; проблема проникания решена иначе: закон 4 (Герц + демпфер) и выталкивание `fiber_*_contact_impulse_push_*` для закона 3 (`include/interactions/fiber_contact_law.hpp`, `src/input.cpp`). Законы 1–2 по-прежнему дают нулевую силу при ṗ<=0. Актуальное описание — [05-fiber-contact.md](../../docs/04-explanation/models/05-fiber-contact.md).
 
 **Дата:** 2026-10-20. **База:** ветка `fiber_contact_damped` (законы 0–4, коммит закона 4 — `3e62280`).
 **Цель:** при законах 1–2 нити в контакте ведут себя как при законах 0 и 4:
@@ -8,14 +8,14 @@
 - натяжение сосредоточено у шара;
 - нет хрупкого распада нити на отдельные бусины.
 
-Обоснование и вывод — в [FIBER_MODEL_REPORT.md](FIBER_MODEL_REPORT.md), разделы 9.1–9.8. Ниже только порядок
+Обоснование и вывод — в [fiber-model-report.md](../fiber-model/fiber-model-report.md), разделы 9.1–9.8. Ниже только порядок
 работ, тесты и критерии.
 
 ---
 
 ## 1. Что сломано и почему (кратко)
 
-Цепочка причин подтверждена кадрами выстрелов 1T, μ = 0,1, 70 м/с ([отчёт §9.7](FIBER_MODEL_REPORT.md)):
+Цепочка причин подтверждена кадрами выстрелов 1T, μ = 0,1, 70 м/с ([отчёт §9.7](../fiber-model/fiber-model-report.md)):
 
 1. **В покое нет силы.** Сила законов 1–2 не больше $K_p m_{red}\dot p^+/\Delta t_{ref}$, то есть при $\dot p\le0$
    она равна нулю (лемма 1, §9.1).
@@ -201,7 +201,7 @@ $$
 ## 4. Критерии успеха
 
 Метрики считаются скриптами из
-[experiments/2026-10-17-guo2019-1t-pinball-vbl/analysis_scatter/](../experiments/2026-10-17-guo2019-1t-pinball-vbl/analysis_scatter/):
+[experiments/2026-10-17-guo2019-1t-pinball-vbl/analysis_scatter/](../../experiments/2026-10-17-guo2019-1t-pinball-vbl/analysis_scatter/):
 - `yarn_tension.py` — натяжение вдоль нити;
 - `bead_scatter.py` — скорости бусин и провисшие связи;
 - `free_beads.py` — оторванные бусины.

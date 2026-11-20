@@ -14,10 +14,10 @@
 
 // ============================================================================
 // rhs/cpu_executor.hpp — CpuExecutor: единая абстракция параллельности CPU
-// backend (fiber/SPH.md, раздел "CPU executor"; fiber/PLAN.md §3.5).
+// backend (notes/fiber-model/fiber-problem-statement.md, раздел "CPU executor"; notes/fiber-model/fiber-plan.md §3.5).
 //
 // Один объект на весь расчёт. Interaction kernels никогда не видят
-// #pragma omp / mutex / atomic напрямую (SPH.md, "Основные требования к
+// #pragma omp / mutex / atomic напрямую (fiber-problem-statement.md, "Основные требования к
 // interaction kernel", п.3) — только эти примитивы:
 //
 //     parallel_for(n, grain, f)
@@ -28,7 +28,7 @@
 //     num_workers(), worker_id()
 //
 // Реализация — на OpenMP (проект уже линкуется с -fopenmp; второй пул
-// потоков конкурировал бы с ним за ядра, PLAN.md §3.5). Без -fopenmp на
+// потоков конкурировал бы с ним за ядра, fiber-plan.md §3.5). Без -fopenmp на
 // этапе компиляции (нет макроса _OPENMP) executor вырождается в
 // последовательное выполнение на вызывающем потоке — так же, как
 // include/pair_graph.hpp обходится без OpenMP (см. комментарий в
@@ -67,7 +67,7 @@ public:
 
     // ------------------------------------------------------------------
     // parallel_for(n, grain, f) — f(std::size_t i) для каждого i из [0, n)
-    // независимо; порядок и разбиение по потокам не определены (SPH.md:
+    // независимо; порядок и разбиение по потокам не определены (fiber-problem-statement.md:
     // "Kernel не содержит #pragma omp"; диапазон режется на blocks с
     // dynamic scheduling).
     // ------------------------------------------------------------------
@@ -280,7 +280,7 @@ public:
     // `out` должен иметь размер n+1. Двухпроходная блочная схема (локальные
     // суммы блоков -> последовательная свёртка по блокам -> параллельная
     // запись со сдвигом) — тот же паттерн "count -> prefix sum -> copy",
-    // что описан в SPH.md для Search и построения primitives.
+    // что описан в fiber-problem-statement.md для Search и построения primitives.
     // ------------------------------------------------------------------
     template <class T>
     void parallel_scan(const T* in, T* out, std::size_t n) const
@@ -380,9 +380,9 @@ public:
     }
 
     // ------------------------------------------------------------------
-    // task_group — запуск независимых ветвей графа RHS (SPH.md: "После
+    // task_group — запуск независимых ветвей графа RHS (fiber-problem-statement.md: "После
     // построения необходимых индексов branches различных interaction
-    // types могут выполняться независимо"; PLAN.md §3.4 — Fiber/Solid
+    // types могут выполняться независимо"; fiber-plan.md §3.4 — Fiber/Solid
     // ветви и их reduce).
     //
     // Инженерное отклонение: реализовано через std::async, а не через

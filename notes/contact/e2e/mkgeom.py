@@ -2,8 +2,8 @@
 # Схема осесимметричной геометрии кейса BC2 (меридиональное сечение).
 # Масштаб по обеим осям одинаковый — пропорции сохранены.
 #
-# Запуск:  python3 contact/e2e/mkgeom.py
-# Результат: contact/e2e/bc2_geometry.svg
+# Запуск:  python3 notes/contact/e2e/mkgeom.py
+# Результат: notes/contact/e2e/bc2_geometry.svg
 #
 # Источник чисел — bc2_layers() в tests/test_e2e_bc2.cpp. Схема иллюстративная
 # и строится по НОМИНАЛЬНЫМ границам слоёв; узлы в расчёте ставятся по центрам
@@ -14,7 +14,7 @@
 # каталоге, из-за чего схема разошлась с постановкой и полгода показывала
 # зазоры, которых уже не было.
 
-OUT = "/Users/vladimirbogachev/PycharmProjects/SPH/contact/e2e/bc2_geometry.svg"
+OUT = "/Users/vladimirbogachev/PycharmProjects/SPH/notes/contact/e2e/bc2_geometry.svg"
 
 # Опорные плоскости (мм), подтверждены статьёй Grady & Moody, SAND96-0551,
 # опыт BC2 = ориг. CE6: толщины 6,000 / 3,917 / 9,033 / 25,400 мм.

@@ -1,7 +1,7 @@
 # Закон 3 как проекция скорости: реализация, регрессия, серия Guo 1T (2026-11-07…09)
 
-**Задание:** [`fiber/TZ_LAW3_PROJECTION.md`](../../fiber/TZ_LAW3_PROJECTION.md), метод —
-[`fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md`](../../fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md).
+**Задание:** [`notes/fiber-contact/law3-projection-tz.md`](../../notes/fiber-contact/law3-projection-tz.md), метод —
+[`notes/fiber-contact/law3-projection-report.md`](../../notes/fiber-contact/law3-projection-report.md).
 **Ветка:** `contact3_fix` (от `b2cc5a5`, в ней есть `6f1b63f`). **Коммиты:** `02a76b4`, `c401e99`, `8b5cb9a`,
 правки по ревью — `6edcdc5`. **Счёт:** серия C — `claude-compute-8t` (8 выстрелов по 1 потоку),
 сборки, ctest, сравнения и анализ — `claude-compute`.

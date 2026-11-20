@@ -1,6 +1,6 @@
 // tests/test_fiber_friction.cpp
 // Unit-тесты стадии трения нить-нить -- проекции на уровне скоростей
-// (interactions/fiber_friction.hpp; fiber/fiber_friction_projection.md, §8).
+// (interactions/fiber_friction.hpp; notes/fiber-contact/fiber-friction-projection.md, §8).
 //
 // Тесты работают со стадией НАПРЯМУЮ: задаются FiberState (массы), слоты
 // FiberFrictionContact, dv_no_friction и ode::FiberVelocityUpdate{base, h};
@@ -15,7 +15,7 @@
 //   прилипания от dt; 8.8 mu=0; плюс диагностика FiberFrictionDiagnostics.
 //   (8.9 -- интерфейс решателя -- в tests/test_ode_solver.cpp.)
 //
-// Вторая часть файла (fiber/fiber_solid_friction_implementation.md, задача 4,
+// Вторая часть файла (notes/fiber-contact/fiber-solid-friction-implementation.md, задача 4,
 // §7.1) -- трение НИТЬ-SOLID: единая стадия compute_friction_contributions по
 // слотам FiberSolidFrictionContact и ode::SolidVelocityUpdate. Сцена SolidScene
 // (нить + частицы Solid), применение стадии apply_solid_stage; разделы:
@@ -918,7 +918,7 @@ void test_diagnostics()
 }
 
 // ============================================================================
-// ТРЕНИЕ НИТЬ-SOLID (fiber/fiber_solid_friction_implementation.md, задача 4,
+// ТРЕНИЕ НИТЬ-SOLID (notes/fiber-contact/fiber-solid-friction-implementation.md, задача 4,
 // §7.1). Стадия -- единый проход compute_friction_contributions (оба вида
 // контактов), c_k/c_s -- compute_friction_counts (mass splitting), пробная
 // скорость Solid -- ode::SolidVelocityUpdate: (base + h*dvx) + av. Скорость

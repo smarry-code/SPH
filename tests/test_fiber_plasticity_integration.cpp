@@ -1,5 +1,5 @@
 // tests/test_fiber_plasticity_integration.cpp
-// Этап 2 дизайна пластичности нити (fiber/fiber-plasticity-design.md, раздел
+// Этап 2 дизайна пластичности нити (notes/fiber-model/fiber-plasticity-design.md, раздел
 // 10, п. 2): поля состояния в FiberBond, RHS-ядро с bond_stress и проход
 // Postprocessing apply_fiber_bond_constitutive. Тесты раздела 8:
 //   Т0   упругий материал даёт ровно прежние силы и dt-лимит (побитово), проход

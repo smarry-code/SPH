@@ -2,7 +2,7 @@
 // Определения time_print и оркестратора одного шага симуляции (single_step).
 // Объявления — в single_step.hpp.
 //
-// fiber/PLAN.md, этап Ф4: single_step() ниже — путь RHS для Solid
+// notes/fiber-model/fiber-plan.md, этап Ф4: single_step() ниже — путь RHS для Solid
 // (interactions/solid_sph.hpp, interactions/solid_contact.hpp), подключённый
 // к продовому циклу. Обе перегрузки time_integration (ParticleSystem&,
 // fiber::Model&, src/time_integration.cpp) вызывают именно эту функцию,
@@ -64,9 +64,9 @@ void time_print()
 }
 
 // ============================================================================
-// single_step — путь RHS для Solid (fiber/PLAN.md, этап Ф4).
+// single_step — путь RHS для Solid (notes/fiber-model/fiber-plan.md, этап Ф4).
 //
-// Граф вычисления (fiber/PLAN.md §3.4): Solid derived (EOS) -> GhostSet ->
+// Граф вычисления (notes/fiber-model/fiber-plan.md §3.4): Solid derived (EOS) -> GhostSet ->
 // SolidExtended -> поиск пар (SpatialIndex) -> Solid-SPH kernel + Solid-
 // Solid-Contact kernel -> reduce_contributions -> finalize_solid -> запись
 // в выходные параметры + шим совместимости в sys.
@@ -78,12 +78,12 @@ void time_print()
 // prochnost_cem_JH2 (src/ppochnost.cpp) по-прежнему читает 9 величин
 // деформации/поворота из sys напрямую (сигнатуру не меняли — риск регрессии
 // от смены источника данных не оправдан архитектурной чистотой на этом
-// этапе, fiber/PLAN.md §Ф7 явно допускает оба варианта); compute_cfl_timestep
+// этапе, notes/fiber-model/fiber-plan.md §Ф7 явно допускает оба варианта); compute_cfl_timestep
 // (src/time_integration.cpp) читает sys.c. Оба вызываются из
 // interactions::postprocessing (interactions/postprocessing.hpp) ПОСЛЕ
 // single_step на каждом шаге.
 //
-// h_upgrade (sle) — этап Ф7 (fiber/PLAN.md §3.8: «sle=1 — Postprocessing")
+// h_upgrade (sle) — этап Ф7 (notes/fiber-model/fiber-plan.md §3.8: «sle=1 — Postprocessing")
 // вынес вызов ИЗ single_step в interactions::update_smoothing_length
 // (interactions/postprocessing.hpp), вызываемую из ОБЕИХ перегрузок
 // time_integration.cpp СРАЗУ после single_step() — см. там же подробное
@@ -116,7 +116,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     if (!wb.solid_ws) wb.solid_ws = std::make_shared<interactions::SolidStepWorkspace>();
     interactions::SolidStepWorkspace& ws = *static_cast<interactions::SolidStepWorkspace*>(wb.solid_ws.get());
 
-    // --- Solid derived: EOS (p, c) -- fiber/PLAN.md §3.6 -------------------
+    // --- Solid derived: EOS (p, c) -- notes/fiber-model/fiber-plan.md §3.6 -------------------
     interactions::SolidDerived& derived = ws.derived;
     interactions::compute_solid_derived(exec, cfg.mats, sys, ntotal, derived);
 
@@ -129,7 +129,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     interactions::build_art_stress(exec, cfg, sys, ghosts, ext);
 
     // --- Поиск пар Solid-SPH (общий для Solid-SPH и Solid-Solid-Contact,
-    // fiber/SPH.md: "Одна и та же построенная spatial structure может
+    // notes/fiber-model/fiber-problem-statement.md: "Одна и та же построенная spatial structure может
     // использоваться несколькими interaction types") --------------------
     interactions::SolidSphSearchResult& search = ws.search;
     interactions::build_solid_sph_search(exec, cfg, ext, search);
@@ -139,7 +139,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     interactions::compute_solid_contact_contributions(exec, cfg, cfg.mats, sys, derived.c, dt,
                                                         search.contact_pairs, ws.contact_buffers);
 
-    // --- Reduce (owner-computes по шардам, fiber/PLAN.md §3.5) -------------
+    // --- Reduce (owner-computes по шардам, notes/fiber-model/fiber-plan.md §3.5) -------------
     // Вклады склеиваются логически (без копирования), порядок прежний:
     // сначала Solid-SPH, затем контакт.
     rhs::reduce_contributions_into(exec, ws.sph_contribs, {&ws.contact_buffers}, ntotal, ws.reduced,
@@ -276,7 +276,7 @@ void single_step(const SimulationConfig& cfg, ParticleSystem& sys, size_t itimes
     // и поэтому обнулял [ntotal, sys.size()) в конце каждого шага, чтобы не
     // накапливать мусор. Новый путь НИКОГДА не пишет в sys за пределами
     // [0, ntotal) (зеркала живут только в interactions::SolidExtended,
-    // fiber/PLAN.md §3.6: "виртуальные частицы -> GhostSet + SolidExtended,
+    // notes/fiber-model/fiber-plan.md §3.6: "виртуальные частицы -> GhostSet + SolidExtended,
     // а не дозапись в sys"), поэтому очищать там нечего.
 }
 

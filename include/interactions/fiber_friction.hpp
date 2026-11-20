@@ -2,10 +2,10 @@
 // interactions/fiber_friction.hpp
 // Единая стадия трения нити как ПРОЕКЦИЯ НА УРОВНЕ СКОРОСТЕЙ (ограничение
 // импульса трения) для ДВУХ видов контактов: нить-нить (fiber/
-// fiber_friction_projection.md, задача 3 из 4) и нить-Solid (fiber/
-// fiber_solid_friction_implementation.md, задача 4 из 4). Заменяет
+// fiber-friction-projection.md, задача 3 из 4) и нить-Solid (fiber/
+// fiber-solid-friction-implementation.md, задача 4 из 4). Заменяет
 // разрывный закон Кулона F_t = -mu*N*v_t/|v_t| внутри RHS, который в явной
-// схеме давал дребезг (fiber/friction_chattering_analysis.md).
+// схеме давал дребезг (notes/fiber-contact/friction-chattering-analysis.md).
 //
 // ----------------------------------------------------------------------------
 // МОДЕЛЬ НИТЬ-НИТЬ (§2 спецификации задачи 3). Для принятого контакта известны

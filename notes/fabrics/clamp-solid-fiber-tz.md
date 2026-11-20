@@ -1,6 +1,6 @@
 # ТЗ: кинематическое закрепление частиц Solid и Fiber
 
-> **Статус (2026-11-14):** реализовано. `include/interactions/clamp.hpp` (`ClampSet`, `ClampList`, `ClampReport`, `ClampWorkspace`, `build_clamp_list`, `validate_clamps`, `apply_clamp_projection`, `apply_clamp_friction_counts`, `mark_clamp_box`, `kClampReduceBlock`, `kClampSerialThreshold = 8192`), поля `Model::clamps`/`clamp_report` (`include/fiber/model.hpp`), точки [1]–[3] в `src/time_integration.cpp`, директива `CLAMP_BOX` в `src/fiber_input.cpp`, тесты `tests/test_clamp.cpp` (`clamp_test_t1/t2/t4`). Сверх плана: добавлены `prepare_clamp_workspace`, `clamp_report_counts`; открытый п. 14.2 (закрепления из k-файла) закрыт — `*BOUNDARY_SPC_*`, тест `k_clamp_test`. Номера строк в ТЗ относятся к `a642103` и устарели; §15 («Статус реализации») не заполнен. Актуальное описание — [Закрепление (Clamp)](../docs/04-explanation/models/03-solid-contact.md).
+> **Статус (2026-11-14):** реализовано. `include/interactions/clamp.hpp` (`ClampSet`, `ClampList`, `ClampReport`, `ClampWorkspace`, `build_clamp_list`, `validate_clamps`, `apply_clamp_projection`, `apply_clamp_friction_counts`, `mark_clamp_box`, `kClampReduceBlock`, `kClampSerialThreshold = 8192`), поля `Model::clamps`/`clamp_report` (`include/fiber/model.hpp`), точки [1]–[3] в `src/time_integration.cpp`, директива `CLAMP_BOX` в `src/fiber_input.cpp`, тесты `tests/test_clamp.cpp` (`clamp_test_t1/t2/t4`). Сверх плана: добавлены `prepare_clamp_workspace`, `clamp_report_counts`; открытый п. 14.2 (закрепления из k-файла) закрыт — `*BOUNDARY_SPC_*`, тест `k_clamp_test`. Номера строк в ТЗ относятся к `a642103` и устарели; §15 («Статус реализации») не заполнен. Актуальное описание — [Закрепление (Clamp)](../../docs/04-explanation/models/03-solid-contact.md).
 
 **Исполнитель:** Claude Code в локальном репозитории SPH, ветка `fiber_new` (сверено на HEAD `a642103`, 2026-09-30). Номера строк — на этом коммите; если код сдвинулся, искать по контексту, приведённому рядом.
 **Язык кода и комментариев:** как в проекте (комментарии по-русски, стиль заголовков `include/interactions/*.hpp`, тесты с `int main` и счётчиком `failures`).
@@ -8,9 +8,9 @@
 
 Источники (лежат рядом с этим файлом, в репозиторий не копировать, ссылаться по имени):
 - `CLAMP_MECHANISM_PROPOSAL.md` — принятый механизм и его обоснование; это ТЗ его реализует;
-- `FIBER_CLAMP_SPEC.md` — постановка зажима нитей в стиле `fiber/SPH.md` (§1–§7 переносятся в документацию, §9 этого ТЗ);
+- `FIBER_CLAMP_SPEC.md` — постановка зажима нитей в стиле `notes/fiber-model/fiber-problem-statement.md` (§1–§7 переносятся в документацию, §9 этого ТЗ);
 - `FIBER_CLAMP_PROPOSAL.md`, `LIT_REVIEW_SPH_CLAMPING.md`, `LIT_SOLID_CLAMP_SPH.md` — литература;
-- `TZ_GUO2019_EXPERIMENTS.md` §4.1 — хук шага; связь с ним в §13.
+- `guo2019-experiments-tz.md` §4.1 — хук шага; связь с ним в §13.
 
 ---
 
@@ -23,7 +23,7 @@
 2. Три вставки в `src/time_integration.cpp` и новые параметры `detail::run_time_integration`.
 3. Поля `fiber::Model::clamps`, `fiber::Model::clamp_report`.
 4. Директива `CLAMP_BOX` в файле нитей (`src/fiber_input.cpp`).
-5. Тесты `tests/test_clamp.cpp` (включая проверку параллельного детерминизма) и документация в `fiber/SPH.md`.
+5. Тесты `tests/test_clamp.cpp` (включая проверку параллельного детерминизма) и документация в `notes/fiber-model/fiber-problem-statement.md`.
 
 **Не входит** (открытые решения, §14): заданная ненулевая скорость зажима; `*BOUNDARY_SPC_NODE` в k-файле; запрет накопления повреждения у зажатых частиц; исключение полностью зажатых примитивов из поиска контактов и из `dt`; проскальзывание в зажиме; сцены экспериментов Guo.
 
@@ -57,7 +57,7 @@
 
 ## 4. Данные и API (`include/interactions/clamp.hpp`)
 
-Заголовок самодостаточный, в стиле `fiber_friction.hpp`: шапка с описанием, ссылка на `fiber/SPH.md` (раздел из §9), `#pragma once`. Ниже — обязательные имена и семантика; внутреннее устройство на усмотрение исполнителя, если выполнены требования §6.
+Заголовок самодостаточный, в стиле `fiber_friction.hpp`: шапка с описанием, ссылка на `notes/fiber-model/fiber-problem-statement.md` (раздел из §9), `#pragma once`. Ниже — обязательные имена и семантика; внутреннее устройство на усмотрение исполнителя, если выполнены требования §6.
 
 ```cpp
 namespace interactions {
@@ -184,11 +184,11 @@ if (!clamps.empty())
 
 ## 6. Параллелизм
 
-Проект требует, чтобы параллелизм жил только в `rhs::CpuExecutor`, а physics-код не содержал `#pragma omp`, mutex и atomics (`fiber/SPH.md`, «CPU executor», «Основные требования к interaction kernel»; `include/rhs/cpu_executor.hpp:15-36`). Закрепление обязано следовать тем же правилам и не ломать детерминизм по числу потоков.
+Проект требует, чтобы параллелизм жил только в `rhs::CpuExecutor`, а physics-код не содержал `#pragma omp`, mutex и atomics (`notes/fiber-model/fiber-problem-statement.md`, «CPU executor», «Основные требования к interaction kernel»; `include/rhs/cpu_executor.hpp:15-36`). Закрепление обязано следовать тем же правилам и не ломать детерминизм по числу потоков.
 
 ### 6.1. Место в конвейере
 
-Закрепление — не interaction type и не kernel. Это отдельная стадия **constraint** над уже сведённым RHS: она начинается после того, как `Reduce` всех вкладов и их сложение в `dvx`/`dv` полностью завершены, и заканчивается до того, как RHS станет входом стадии трения или решателя. В `fiber/SPH.md` («ODE solver»: «после полного завершения Reduce сформированный RHS является неизменяемым входом») добавить оговорку про эту стадию (§9).
+Закрепление — не interaction type и не kernel. Это отдельная стадия **constraint** над уже сведённым RHS: она начинается после того, как `Reduce` всех вкладов и их сложение в `dvx`/`dv` полностью завершены, и заканчивается до того, как RHS станет входом стадии трения или решателя. В `notes/fiber-model/fiber-problem-statement.md` («ODE solver»: «после полного завершения Reduce сформированный RHS является неизменяемым входом») добавить оговорку про эту стадию (§9).
 
 Требования:
 1. Все функции `clamp.hpp` вызываются с главного потока цикла, между стадиями. Не из ветки `task_group` и не изнутри другого `parallel_for` (вложенных параллельных регионов нет).
@@ -262,9 +262,9 @@ CLAMP_BOX <xmin> <ymin> <zmin> <xmax> <ymax> <zmax> [<mask>]
 
 ## 9. Документация
 
-1. `fiber/SPH.md`: новый раздел «Clamp (кинематическое закрепление)» после «Постановка проекта: трение нить–Solid» и перед «Solid -- Solid». Основа — `FIBER_CLAMP_SPEC.md` §1–§7, обобщённые на Solid (маска Solid, `av`, живые частицы Solid, §3.4 этого ТЗ). Без конкретных координат и значений.
-2. `fiber/SPH.md`, «Описание алгоритмов и структур данных» / порядок шага: точки [1]–[3].
-3. `fiber/SPH.md`, «ODE solver» и «Детерминизм»: оговорка про стадию constraint (§6.1) и детерминированную сумму реакции (§6.4).
+1. `notes/fiber-model/fiber-problem-statement.md`: новый раздел «Clamp (кинематическое закрепление)» после «Постановка проекта: трение нить–Solid» и перед «Solid -- Solid». Основа — `FIBER_CLAMP_SPEC.md` §1–§7, обобщённые на Solid (маска Solid, `av`, живые частицы Solid, §3.4 этого ТЗ). Без конкретных координат и значений.
+2. `notes/fiber-model/fiber-problem-statement.md`, «Описание алгоритмов и структур данных» / порядок шага: точки [1]–[3].
+3. `notes/fiber-model/fiber-problem-statement.md`, «ODE solver» и «Детерминизм»: оговорка про стадию constraint (§6.1) и детерминированную сумму реакции (§6.4).
 4. Шапка `src/time_integration.cpp` (`:62-72`, «Порядок одного шага»): добавить точки [1]–[3].
 5. Шапка `fiber_friction.hpp` (`:112-115`, «КИНЕМАТИЧЕСКОЕ SOLID-ТЕЛО»): одна строка, что в боевом цикле тот же эффект по частицам даёт `c_s = 0` из `clamp.hpp`.
 
@@ -314,7 +314,7 @@ CLAMP_BOX <xmin> <ymin> <zmin> <xmax> <ymax> <zmax> [<mask>]
 - Поля `ParticleSystem`, `FiberState`, `FiberTopology`, `FiberMaterial`.
 - Флаг `solid_kinematic` и тесты, которые его используют.
 
-## 13. Связь с `TZ_GUO2019_EXPERIMENTS.md`
+## 13. Связь с `guo2019-experiments-tz.md`
 
 - Это ТЗ выполняется **до** ТЗ Guo или независимо от него. Оно заменяет абзац «Кинематическое закрепление» в §4.1 ТЗ Guo: зажимы сцены Guo задаются через `model.clamps`, а `StepHook` остаётся только для монитора, реакции (из `model.clamp_report`) и досрочного останова. Вместо сброса `x ← x_0, v ← 0` хук проверяет, что зажатые частицы не сдвинулись (должно быть no-op).
 - Энергобаланс ТЗ Guo: член `W_clamp` становится тождественно 0; вместо него в `monitor.csv` писать реакцию `F_clamp_*`.

@@ -15,9 +15,9 @@
 // ============================================================================
 // rhs/spatial_index.hpp — SpatialIndex<Dim>: обобщение прежней фиксированной
 // сетки поиска соседей (FlatGrid, удалена вместе со старым путём на
-// fiber/PLAN.md, этапе Ф4-B2) под требования fiber/SPH.md
+// notes/fiber-model/fiber-plan.md, этапе Ф4-B2) под требования notes/fiber-model/fiber-problem-statement.md
 // ("SpatialIndex<Fiber>", "SpatialIndex<Solid>", раздел "Search") и
-// fiber/PLAN.md §3.2/§3.5.
+// notes/fiber-model/fiber-plan.md §3.2/§3.5.
 //
 // В отличие от прежней сетки:
 //   - строится по SoA-массивам координат (не по ParticleSystem);
@@ -25,7 +25,7 @@
 //     hsml/scale_k;
 //   - размерность — параметр шаблона (не завязан на глобальный constexpr
 //     `dim` из param.hpp), поэтому один и тот же код обслуживает и Solid
-//     (dim=2/3 проекта), и Fiber (dim=3, PLAN.md Р9), без привязки к
+//     (dim=2/3 проекта), и Fiber (dim=3, fiber-plan.md Р9), без привязки к
 //     конкретной compute-структуре;
 //   - умеет запросы "свой тип" (пары внутри одного набора, канонический
 //     порядок i<j) и "чужой тип" (пары между двумя разными наборами,
@@ -252,7 +252,7 @@ public:
     // "Чужой тип": пары (a, b), a — индекс во внешнем множестве other_coords
     // (n_other частиц), b — индекс в this (проиндексированном множестве).
     // |x_a - x_b| <= radius, accept(a, b). Направление a -> b не создаёт
-    // дублей естественно, так как a и b принадлежат разным наборам (SPH.md:
+    // дублей естественно, так как a и b принадлежат разным наборам (fiber-problem-statement.md:
     // "Fiber -> Solid само обеспечивает однократную генерацию пары").
     template <class Accept = bool (*)(index_t, index_t)>
     std::vector<std::pair<index_t, index_t>> find_pairs_cross(
@@ -265,7 +265,7 @@ public:
         return out;
     }
 
-    // Параллельные варианты (SPH.md, "Search": каждый worker пишет найденные
+    // Параллельные варианты (fiber-problem-statement.md, "Search": каждый worker пишет найденные
     // пары в собственный буфер, затем буферы объединяются в один непрерывный
     // массив). Итоговое МНОЖЕСТВО пар совпадает с последовательными
     // find_pairs*/find_pairs_cross с точностью до порядка следования.

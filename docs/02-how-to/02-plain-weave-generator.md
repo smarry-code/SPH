@@ -247,7 +247,7 @@ seam = c + (t·P − 1/2 − (n − 1)/2)·p,   n = ny (вдоль x) или nx 
 - профиль — полуэллипсы, что в генераторе соответствует `--profile=arcs`;
 - расчёты Guo 2019 используют профиль `cos`, поэтому сравнивать можно только вершины (пики и нули волны). SCL делит дугу элементами `elgenerate beam bycurve`, генератор — хордами равной длины.
 
-Соответствие осей (из плана `fiber/plan-quilt-fabric.md`, раздел 6):
+Соответствие осей (из плана `notes/fabrics/plan-quilt-fabric.md`, раздел 6):
 
 ```text
 x_gen = x_scl,   y_gen = −z_scl,   z_gen = y_scl
@@ -352,7 +352,7 @@ BOND <i> <j> 1
 
 ## Случайная раскройка
 
-Режим `--random-cut=N` строит ткань из N фрагментов полотняного переплетения, вырезанных по случайной диаграмме Вороного, а не из одной сетки. Модель и обоснование — на странице [«Ткани»](../04-explanation/models/07-fabrics.md); постановка — в `fiber/tz-random-cut-quilt.md`, код — в `include/fiber/plain_weave_random_cut.hpp`. Мозаика в сцене Guo 2019 описана ниже в разделе «Мозаика в `guo2019_shot`» и в [справочнике](../03-reference/guo2019-shot.md). Формат `.cut.json` — на [отдельной странице](../03-reference/file-formats/cut-json.md).
+Режим `--random-cut=N` строит ткань из N фрагментов полотняного переплетения, вырезанных по случайной диаграмме Вороного, а не из одной сетки. Модель и обоснование — на странице [«Ткани»](../04-explanation/models/07-fabrics.md); постановка — в `notes/fabrics/tz-random-cut-quilt.md`, код — в `include/fiber/plain_weave_random_cut.hpp`. Мозаика в сцене Guo 2019 описана ниже в разделе «Мозаика в `guo2019_shot`» и в [справочнике](../03-reference/guo2019-shot.md). Формат `.cut.json` — на [отдельной странице](../03-reference/file-formats/cut-json.md).
 
 ### Идея
 

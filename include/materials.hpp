@@ -44,11 +44,11 @@ struct JcMaterial
     double p_min = -1.01e20;
 };
 
-// Библиотека материалов JC (fiber/jc-implementation-plan.md §3.2).
+// Библиотека материалов JC (notes/johnson-cook/jc-implementation-plan.md §3.2).
 // Источники:
 //   - значения Autodyn: скриншоты Mary от 27.10.2026 (G, A, B, n, C, m, T_m,
 //     T_r, c_p, K; на тех скриншотах разрушение у всех None, D1-D5 = 1.01e20);
-//   - STEEL 4340 целиком, включая Failure JC: fiber/steel-4340-autodyn-constants.md
+//   - STEEL 4340 целиком, включая Failure JC: notes/sources/steel-4340-autodyn-constants.md
 //     (скриншоты Mary 15.11.2026; приоритет над литературой);
 //   - Johnson & Cook 1983 (плотность Al 7039, T_r и c_p стали 1006);
 //   - Johnson & Cook 1985 (D1-D5 стали 4340, совпадают с Autodyn);
@@ -101,7 +101,7 @@ inline std::vector<JcMaterial> make_jc_library()
     std::vector<JcMaterial> v;
     // 12: STEEL 4340, Linear.
     // Все константы, включая D1-D5, Tm_f = 1793 К и edot0_f = 1 1/с, сверены с библиотекой
-    // Autodyn (fiber/steel-4340-autodyn-constants.md, 15.11.2026); D1-D5 совпадают с JC 1985.
+    // Autodyn (notes/sources/steel-4340-autodyn-constants.md, 15.11.2026); D1-D5 совпадают с JC 1985.
     v.push_back({"STEEL 4340", 7830.0, EosKind::Linear, LinearEos{159e9}, ShockEos{},
                  strength(81.8e9, 792e6, 510e6, 0.26, 0.014, 1.03, 1793.0, 300.0),
                  damage_on(0.05, 3.44, -2.12, 0.002, 0.61, 1793.0, DamageRateForm::JC), thermal(477.0),
@@ -110,7 +110,7 @@ inline std::vector<JcMaterial> make_jc_library()
                  // DTIC ADA112445), без скоростной зависимости. Взята напрямую как предел
                  // давления (как Hydro Pmin в гидрокодах); sigma_s задан по нормальному
                  // напряжению, в пересчёте на давление при пластическом течении ~ -4.8 ГПа.
-                 // Прежнее подобранное значение -4 ГПа -- johnson-cook/03-pmin-energy.md.
+                 // Прежнее подобранное значение -4 ГПа -- notes/johnson-cook/03-pmin-energy.md.
                  -5.5e9});
     // 13: STEEL 1006, Shock.
     // TODO(verify): T_r и c_p (JC 1983); Gamma0, c0, S1 (Steinberg) -- литературные, не проверены.
@@ -158,7 +158,7 @@ struct Materials
     //     Они остались прежними и откалиброваны под ПРЕЖНИЕ K/G, поэтому
     //     формально не согласованы с упругой частью. Менять их без источника
     //     нельзя — это была бы подгонка.
-    // Флаги JH-2 (jh2/jh2-fix-plan.md, этап D); по умолчанию поведение оригинала.
+    // Флаги JH-2 (notes/jh2/jh2-fix-plan.md, этап D); по умолчанию поведение оригинала.
     //  jh2_clamp_low_rate -- eps* = max(eps_dot/eps_0, 1): множитель скорости
     //                        1 + C*ln(eps*) не опускается ниже 1;
     //  jh2_efmin          -- нижняя граница eps_f = max(D1*(P*+T*)^D2, jh2_efmin).
@@ -168,7 +168,7 @@ struct Materials
     // T_n = 0.137 отвечают AD-995 (J&H 1994) с P_HEL = 1.46 ГПа, а P_hel = 2.626 ГПа,
     // s_hel, G, B, K1, плотность -- из неустановленного набора (при P_hel = 2.626 ГПа
     // было бы T* = 0.076). Источник не установлен: использовать для расчётов только
-    // после проверки (jh2/jh2-code-review.md, п. 6.3).
+    // после проверки (notes/jh2/jh2-code-review.md, п. 6.3).
     std::vector<std::vector<double>> const_JH_2{
         {2517, 199.4e9, 8.71e9, 15.44e9, 0.03, 0.927, 0.67, 0.70, 0.85, 0.2, 0.005, 0.001, 0.5, 230.5e9, -593e9, 2800e9, 0.26e9},
         {3555, 1.165e11, 2.626e9, 3.561e9, 0.137, 0.930, 0.600, 0.110, 0.600, 1.0, 0.0, 0.005, 1.000, 1.692e11, 0.0, 0.0, 0.2e9}};
@@ -210,7 +210,7 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
     return 0.0;
 }
 
-// Упругие константы (E, nu) Solid-частицы -- fiber/SPH.md, «Fiber-Solid-
+// Упругие константы (E, nu) Solid-частицы -- notes/fiber-model/fiber-problem-statement.md, «Fiber-Solid-
 // Contact», «Постановка проекта: коэффициент K_fs»:
 //   E = 9*K*G/(3*K+G),  nu = (3*K-2*G)/(2*(3*K+G)),
 // где G -- shear_modulus_by_itype (уже реализован выше), K -- модуль
@@ -221,13 +221,13 @@ inline double shear_modulus_by_itype(const Materials& m, int itype)
 //     p=a*((rho/rho0)^z-1) -- частный случай УРС Тэта; для Ми-Грюнайзена
 //     (eos_mi_grunaizen) та же величина a*z играет роль "холодного" модуля
 //     сжатия при u=0, rho=rho0 -- используется единая формула K=a*z для
-//     обоих УРС, как того требует fiber/SPH.md);
+//     обоих УРС, как того требует notes/fiber-model/fiber-problem-statement.md);
 //   - itype 10-11 (керамика JH-2): K = K1 = const_JH_2[itype-10][13]
 //     (см. таблицу столбцов в комментарии у Materials::const_JH_2 выше);
 //   - itype 12-15 (JC): K = lin.K (Linear) или rho0*c0^2 (Shock);
 //   - itype 1-2 (газ/вода) и любой прочий itype без G или K -- НЕ ОПРЕДЕЛЕНО
 //     (std::nullopt). Fiber-Solid-Contact с такими частицами не формируется
-//     (fiber/SPH.md, тот же раздел, последний абзац подраздела K_fs).
+//     (notes/fiber-model/fiber-problem-statement.md, тот же раздел, последний абзац подраздела K_fs).
 //
 // При повреждении D>0 конкретной частицы используются НЕПОВРЕЖДЁННЫЕ
 // константы: функция принимает только itype (индекс в таблице материалов),

@@ -1,7 +1,7 @@
 // tests/test_fiber_contact_projection.cpp
 // Unit-тесты стадии нормального контакта как ПРОЕКЦИИ СКОРОСТИ
-// (interactions/fiber_normal_projection.hpp; fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md §7,
-// fiber/TZ_LAW3_PROJECTION.md §2 A5).
+// (interactions/fiber_normal_projection.hpp; notes/fiber-contact/law3-projection-report.md §7,
+// notes/fiber-contact/law3-projection-tz.md §2 A5).
 //
 // Реального поиска контактов нет: сцены крошечные, геометрия слота считается
 // простыми помощниками (точечные бусины a1 = b1 = -1 либо прямые сегменты с

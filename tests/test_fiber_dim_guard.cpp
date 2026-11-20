@@ -1,5 +1,5 @@
 // test_fiber_dim_guard.cpp
-// Проверяет ветку "dim != 3" границы Р9 (fiber/PLAN.md, этап Ф2, пункт 5):
+// Проверяет ветку "dim != 3" границы Р9 (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 5):
 // fiber::check_fiber_requires_dim3() обязана бросать std::runtime_error,
 // когда сборка сделана не с SPH_DIM=3.
 //

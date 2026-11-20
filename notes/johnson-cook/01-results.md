@@ -2,7 +2,7 @@
 
 - Дата: 2026-11-03
 - Ветка `fiber_johnson_cook`, коммиты `a64075f`, `a2060b9`, `32f2032`, `7733304` поверх `6f1b63f`
-- План: `fiber/jc-implementation-plan.md` (ТЗ), анализ: `fiber/jc-analysis.md`
+- План: `notes/johnson-cook/jc-implementation-plan.md` (ТЗ), анализ: `notes/johnson-cook/jc-analysis.md`
 - Объём этой сессии: J0–J5 и E1. E2–E5 и J7 (Тейлор-Куинни, ADR, реестр, how-to) отложены.
 
 ## Итог проверки на `claude-compute`

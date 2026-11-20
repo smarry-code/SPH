@@ -38,7 +38,7 @@
 пластичность, скоростную зависимость, вязкоупругость, дополнительные критерии разрыва и повреждённость
 (разупрочнение). Модель
 (реологическая схема, возврат на поверхность текучести, устойчивость шага) описана в
-[`fiber/fiber-plasticity-design.md`](../../../fiber/fiber-plasticity-design.md). Без этих директив результат расчёта
+[`notes/fiber-model/fiber-plasticity-design.md`](../../../notes/fiber-model/fiber-plasticity-design.md). Без этих директив результат расчёта
 не меняется (все параметры выключены).
 
 Общие правила:
@@ -153,7 +153,7 @@ DAMAGE <id> GF=<Дж/м²>          # через энергию разрушен
 Ровно один из ключей `DEPS_F`, `GF` (оба `> 0`). Требует `FAILURE ... SIGMA_U=` для того же `id`: после
 $\sigma_{ep} = \sigma_u$ связь не рвётся мгновенно, а теряет силу по линейной огибающей
 $\sigma_{env}(\kappa) = \sigma_u\,(1 - (\kappa-\varepsilon_0)/\Delta\varepsilon_f)$ до нуля, при $D = 1$ удаляется
-([`DamageParams`](../../../include/fiber/fiber_plasticity.hpp:100), [`fiber/plan-fiber-damage.md`](../../../fiber/plan-fiber-damage.md)).
+([`DamageParams`](../../../include/fiber/fiber_plasticity.hpp:100), [`notes/fiber-model/fiber-damage-plan.md`](../../../notes/fiber-model/fiber-damage-plan.md)).
 Ключ `THETA_C` (угловой критерий) зарезервирован: его указание - ошибка («пока не реализован»). Материал с
 `DAMAGE` считается неупругим (`FiberMaterial::inelastic() == true`), поэтому кадры нитей получают расширенные колонки.
 

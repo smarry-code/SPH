@@ -11,17 +11,17 @@
 с постоянным пределом текучести (`itype` 3–9) и JH-2 для керамики (`itype` 10–11).
 
 Постановка, константы Autodyn и источники разобраны в
-[`fiber/jc-analysis.md`](../../../fiber/jc-analysis.md), план внедрения — в
-[`fiber/jc-implementation-plan.md`](../../../fiber/jc-implementation-plan.md). Эталоны BC2/BC6
+[`notes/johnson-cook/jc-analysis.md`](../../../notes/johnson-cook/jc-analysis.md), план внедрения — в
+[`notes/johnson-cook/jc-implementation-plan.md`](../../../notes/johnson-cook/jc-implementation-plan.md). Эталоны BC2/BC6
 и регрессионные снимки менять нельзя, поэтому модель добавляется рядом с существующими, а
 не вместо них. Этот ADR фиксирует принятые решения и их последствия; результаты проверок —
-в [`johnson-cook/01-results.md`](../../../johnson-cook/01-results.md),
-[`02-e2e.md`](../../../johnson-cook/02-e2e.md),
-[`03-pmin-energy.md`](../../../johnson-cook/03-pmin-energy.md).
+в [`notes/johnson-cook/01-results.md`](../../../notes/johnson-cook/01-results.md),
+[`02-e2e.md`](../../../notes/johnson-cook/02-e2e.md),
+[`03-pmin-energy.md`](../../../notes/johnson-cook/03-pmin-energy.md).
 
 ## Решение
 
-Приняты решения Р1–Р6 из `fiber/jc-implementation-plan.md` §0:
+Приняты решения Р1–Р6 из `notes/johnson-cook/jc-implementation-plan.md` §0:
 
 - **Новые `itype` 12–15 (Р1).** 12 — сталь 4340, 13 — сталь 1006, 14 — Al 7039,
   15 — Al 5083-H116. Материалы `itype` 1–11 не меняются. Данные материалов лежат в
@@ -55,7 +55,7 @@
   без скоростной зависимости), взятая напрямую как предел давления. Критерий Bless задан по
   нормальному напряжению; в пересчёте на давление при пластическом течении ≈ −4,8 ГПа.
   Значение лежит в окне −2…−6 ГПа, где тест откола даёт разрушение в нужной плоскости
-  ([`03-pmin-energy.md`](../../../johnson-cook/03-pmin-energy.md); прежде было подобрано −4 ГПа).
+  ([`03-pmin-energy.md`](../../../notes/johnson-cook/03-pmin-energy.md); прежде было подобрано −4 ГПа).
   У `itype` 13–15 `p_min` не задан.
 - **`e_pl` унифицирована.** У JC `sys.e_pl` — накопленная пластическая деформация
   $\varepsilon_p$; после исправления JH-2 ([ADR-010](adr-010-jh2-fix.md)) у JH-2 это тоже
@@ -96,7 +96,7 @@
     - параметры Shock УРС для 1006 и 7039 ($\Gamma_0$, $c_0$, $S_1$, по Steinberg);
     - плотность Al 7039 (2770 кг/м³, JC 1983).
 - Константы STEEL 4340 (прочность и разрушение) сверены с библиотекой Autodyn
-  (`fiber/steel-4340-autodyn-constants.md`, 15.11.2026), но результатов расчёта Autodyn нет.
+  (`notes/sources/steel-4340-autodyn-constants.md`, 15.11.2026), но результатов расчёта Autodyn нет.
   Внешнего эталона для теста Тейлора поэтому нет: проверка опирается на
   аналитику, внутренние критерии и литературные оценки.
 - В режиме `energy` $T=T_r+u/c_p$ завышается при сильном сжатии: $u$ содержит энергию
@@ -113,8 +113,8 @@
   `position` остался, растяжение сосредоточено в колонках $i_r=0,1$, то есть вероятен дефект
   осевой схемы (ghost-зеркала, $\varepsilon^{zz}=v_r/r$, ядро у оси), а не объёмная
   tensile instability. По умолчанию член выключен; описание — разд. 7.1 главы
-  [«Ядро SPH»](../models/01-sph-core.md), результаты — `johnson-cook/06-artificial-stress.md`.
-  Подробности по энергии: `johnson-cook/05-xsph-axisym-energy.md`.
+  [«Ядро SPH»](../models/01-sph-core.md), результаты — `notes/johnson-cook/06-artificial-stress.md`.
+  Подробности по энергии: `notes/johnson-cook/05-xsph-axisym-energy.md`.
 - Ключ `xsph_mode = velocity | position` (`30f76b2`, по умолчанию `velocity`). Режим `position`
   (классический XSPH) без стабилизатора неустойчив: BC2/BC6 full обрываются по $\rho<0$, поэтому
   он пока только диагностический.
@@ -131,9 +131,9 @@
 
 ## Связанные файлы
 
-- [`fiber/jc-implementation-plan.md`](../../../fiber/jc-implementation-plan.md): план, решения Р1–Р6 (§0), физика и схема (§2).
-- [`fiber/jc-analysis.md`](../../../fiber/jc-analysis.md): анализ модели и констант.
-- [`johnson-cook/01-results.md`](../../../johnson-cook/01-results.md), [`02-e2e.md`](../../../johnson-cook/02-e2e.md), [`03-pmin-energy.md`](../../../johnson-cook/03-pmin-energy.md): результаты тестов, сквозные задачи, `p_min` и баланс энергии.
+- [`notes/johnson-cook/jc-implementation-plan.md`](../../../notes/johnson-cook/jc-implementation-plan.md): план, решения Р1–Р6 (§0), физика и схема (§2).
+- [`notes/johnson-cook/jc-analysis.md`](../../../notes/johnson-cook/jc-analysis.md): анализ модели и констант.
+- [`notes/johnson-cook/01-results.md`](../../../notes/johnson-cook/01-results.md), [`02-e2e.md`](../../../notes/johnson-cook/02-e2e.md), [`03-pmin-energy.md`](../../../notes/johnson-cook/03-pmin-energy.md): результаты тестов, сквозные задачи, `p_min` и баланс энергии.
 - [`include/strength/johnson_cook.hpp`](../../../include/strength/johnson_cook.hpp): чистые функции JC (предел текучести, возврат, ε_f, ε̇_eq).
 - [`include/materials.hpp`](../../../include/materials.hpp): `JcMaterial`, библиотека `make_jc_library()`, `is_jc_itype`.
 - [`include/interactions/jc_strength.hpp`](../../../include/interactions/jc_strength.hpp): применение прочности, температуры и разрушения в конвейере.

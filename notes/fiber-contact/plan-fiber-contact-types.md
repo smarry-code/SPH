@@ -1,6 +1,6 @@
 # План v2: законы pinball / Swegle / импульсный для Fiber–Solid и Fiber–Fiber
 
-> **Статус (2026-11-14):** реализовано, с расширением. Ключи `fiber_solid_*` / `fiber_fiber_*` (`contact_type`, `penalty_scale`, `impulse_gamma`) и закон `include/interactions/fiber_contact_law.hpp` есть (`src/input.cpp`, `simulation_config.hpp`), тесты `tests/test_fiber_solid_types.cpp`, `tests/test_fiber_contact_types.cpp`; вместо диапазона 0..3 действует 0..4 (тип 4 — Герц + демпфер), добавлены ключи `*_impulse_push_*`. Номера строк в плане устарели. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+> **Статус (2026-11-14):** реализовано, с расширением. Ключи `fiber_solid_*` / `fiber_fiber_*` (`contact_type`, `penalty_scale`, `impulse_gamma`) и закон `include/interactions/fiber_contact_law.hpp` есть (`src/input.cpp`, `simulation_config.hpp`), тесты `tests/test_fiber_solid_types.cpp`, `tests/test_fiber_contact_types.cpp`; вместо диапазона 0..3 действует 0..4 (тип 4 — Герц + демпфер), добавлены ключи `*_impulse_push_*`. Номера строк в плане устарели. Актуальное описание — [05-fiber-contact.md](../../docs/04-explanation/models/05-fiber-contact.md).
 
 Адресат: локальный агент (Claude Code на машине владельца).
 Репозиторий `smarry-code/SPH`, база `fiber_new` @ `318342c`, рабочая ветка `fiber_contact_types` (создать от базы).
@@ -155,8 +155,8 @@ contact::Result fiber_penalty_force(const FiberContactStepParams&, const contact
 - **Готово, когда:** всё зелёное, метрики п.8 напечатаны.
 
 ### Шаг 1.7. Документация и коммит
-- `fiber/SPH.md`, раздел Fiber-Solid-Contact: подраздел «Законы нормальной силы» с таблицей §2, определением `dt_ref` нити, свойством «ноль в покое и при разлёте», `F2/F_Hertz = 3(1−ν)/8`, отставанием `dt` у типа 3.
-- Запись в `contact/` по образцу `07-changes.md`: что сделано, решения §0 п.1, 4, 5, 6.
+- `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Solid-Contact: подраздел «Законы нормальной силы» с таблицей §2, определением `dt_ref` нити, свойством «ноль в покое и при разлёте», `F2/F_Hertz = 3(1−ν)/8`, отставанием `dt` у типа 3.
+- Запись в `notes/contact/` по образцу `07-changes.md`: что сделано, решения §0 п.1, 4, 5, 6.
 - Коммит, пуш в `fiber_contact_types`.
 - **Готово (этап 1), когда:** полный `ctest` зелёный, побитовая регрессия подтверждена, коммит запушен.
 
@@ -188,13 +188,13 @@ contact::Result fiber_penalty_force(const FiberContactStepParams&, const contact
 5. Баланс импульса по всем бусинам обеих сторон, `s, t ∈ {0, 0.5, 1}`, концевые и точечные сегменты.
 6. Согласованность: ядро, предел шага и диагностика дают одно `fn` и один `dt_limit` на одном наборе контактов.
 7. Трение: `slot.N == fn`; при `fn = 0` слот неактивен.
-8. e2e: крестовые нити и удар, типы 1–3. Метрики в вывод, сравнение с Герцем: энергия после контакта (ожидается **потеря**, отскока у типов 1–3 нет, см. §0 п.3; ориентир Герца +0.6 % из `fiber/FRICTION_REPORT.md`), смены знака импульса трения, макс. `δ/d`, мин. `dt`, NaN.
+8. e2e: крестовые нити и удар, типы 1–3. Метрики в вывод, сравнение с Герцем: энергия после контакта (ожидается **потеря**, отскока у типов 1–3 нет, см. §0 п.3; ориентир Герца +0.6 % из `notes/fiber-contact/friction-report.md`), смены знака импульса трения, макс. `δ/d`, мин. `dt`, NaN.
 - **Готово, когда:** всё зелёное.
 
 ### Шаг 2.5. Прогоны и документация
 - Guo-smoke (`--config` A, 1T, 1T_A, A_1T) и `guo2019_shot` 20 мкс: для каждого ключа по отдельности типы 1–3, остальное по умолчанию. Критерий: нет NaN, нет обрыва по `ρ < 0`.
 - Отчёт: `experiments/<YYYY-MM-DD>-guo2019-fiber-contact-types/README.md` по образцу соседних каталогов: команда, коммит, таблица (тип × ключ: мин. `dt`, время прогона, макс. `δ/d`, энергия, NaN). Физический результат относительно Guo не интерпретировать.
-- `fiber/SPH.md`, раздел Fiber-Fiber-Contact, и `fiber/IMPLEMENTATION_REPORT.md` (или запись в `contact/`).
+- `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Fiber-Contact, и `notes/fiber-model/fiber-implementation-report.md` (или запись в `notes/contact/`).
 - **Готово (этап 2), когда:** полный `ctest` зелёный, отчёт записан, коммит запушен.
 
 ---

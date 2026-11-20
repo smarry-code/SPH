@@ -9,8 +9,8 @@
 все функции этого раздела — заглушки без эффекта.
 
 Источник истины — код `include/interactions/fiber_*.hpp` и `include/contact_force.hpp`;
-связанные отчёты (`contact/12-fiber-contact-types.md`, `fiber/fiber_contact_segment_pairs.md`,
-`fiber/SPH.md`) использованы как контекст.
+связанные отчёты (`notes/contact/12-fiber-contact-types.md`, `notes/fiber-contact/fiber-contact-segment-pairs.md`,
+`notes/fiber-model/fiber-problem-statement.md`) использованы как контекст.
 
 Обозначения. Нить — цепочка бусин $a_0, a_1, \dots$ с топологией `prev`/`next`; сегмент $(k_0, k_1)$,
 $k_1=\mathrm{next}(k_0)$. Радиус нити $r=d/2$ (поле `FiberMaterial::d` — диаметр). Параметр точки
@@ -105,7 +105,7 @@ $c=\mathbf d_1\!\cdot\!\mathbf r$, $b=\mathbf d_1\!\cdot\!\mathbf d_2$.
 - **Snapping.** Параметры у границы прижимаются: $s<\eta\Rightarrow s=0$, $s>1-\eta\Rightarrow s=1$,
   то же для $t$; $\eta=10^{-9}$ (`kFiberContactSnapEta`, общая с Fiber-Solid). Без него пересечение
   ровно в узле сети классифицируется то как внутренняя точка ($s\approx1-10^{-16}$), то как конец
-  сегмента (по отчёту `fiber/fiber_contact_segment_pairs.md` — ~6 % ошибок на 20000 случайных
+  сегмента (по отчёту `notes/fiber-contact/fiber-contact-segment-pairs.md` — ~6 % ошибок на 20000 случайных
   скрещиваний без snapping, 0 со snapping).
 
 Точки на осях: $\mathbf q_A=\mathbf x_{a_0}+s(\mathbf x_{a_1}-\mathbf x_{a_0})$,
@@ -346,7 +346,7 @@ $F=F_H(\delta)$ (§2.5, §3.3). От скорости не зависит; яд�
 ### 4.2. Тип 1 — pinball
 
 (Множитель $p$ из буквальной формулы (2.3) первоисточника опущен: иначе размерность Н·м, решение
-D1 в `contact/02-decisions.md`.) При $p>0$, $m_{\rm red}>0$, $\Delta t_{\rm ref}>0$, $K_p>0$:
+D1 в `notes/contact/02-decisions.md`.) При $p>0$, $m_{\rm red}>0$, $\Delta t_{\rm ref}>0$, $K_p>0$:
 $$
 F_1=\frac{m_{\rm red}\,\dot p}{\Delta t_{\rm ref}}\ (\dot p>0;\ \text{иначе }0),\qquad
 F_2=G_{\rm eff}\sqrt{r_{\rm eff}}\,p^{3/2}\ (G_{\rm eff}>0\wedge r_{\rm eff}>0;\ \text{иначе ветка отключена}),
@@ -462,7 +462,7 @@ $k_{\rm eff}=0$, но $c>0$: $\Delta t=0.8\cdot2m_{\rm red}/c$). Закон им
 ### 6.1. Идея и порядок в шаге
 
 Кулон $F_t=-\mu N\,\mathbf v_t/|\mathbf v_t|$ внутри RHS в явной схеме разрывен и даёт дребезг
-(`fiber/friction_chattering_analysis.md`). Поэтому трение вычисляется **после** расчёта
+(`notes/fiber-contact/friction-chattering-analysis.md`). Поэтому трение вычисляется **после** расчёта
 $\Delta t$ как **ограниченный импульс**, который останавливает касательное скольжение, но не больше
 $\mu N h$. Нормальный контакт только заполняет слоты (`FiberFrictionContact`,
 `FiberSolidFrictionContact`: бусины, веса, $\mathbf n$, $N=F$, $\mu$); слот активен при принятом
@@ -540,7 +540,7 @@ $=\max|\mathbf F_t|/(\mu N)$ (должно быть $\le1$), `shared_bead_count`
 выбирается независимо: проекция может стоять у нить–Solid и не у нить–нить. Код —
 [fiber_normal_projection.hpp](../../../include/interactions/fiber_normal_projection.hpp),
 [fiber_normal_projection_types.hpp](../../../include/interactions/fiber_normal_projection_types.hpp);
-спецификации — `fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md`, `fiber/TZ_LAW3_PROJECTION.md`.
+спецификации — `notes/fiber-contact/law3-projection-report.md`, `notes/fiber-contact/law3-projection-tz.md`.
 
 ### 7.1. Место стадии в шаге
 
@@ -619,7 +619,7 @@ $\Delta P_c$ видит только долю $1/c_k$ массы — число 
   Пара без записи (новый контакт, смена владения сегментом, первый шаг) стартует с нуля; неактивные слоты
   обнуляются. При `fiber_contact_projection_warm = 0` или пустой таблице старт холодный.
 - **Чекпоинт.** Таблица и $h_{\rm prev}$ пишутся в блок `PROJ` чекпоинта (формат 6), поэтому рестарт не
-  теряет тёплый старт (в спецификации `LAW3_VARIANT1_VELOCITY_PROJECTION.md` §4.4 сказано обратное — устарело).
+  теряет тёплый старт (в спецификации `law3-projection-report.md` §4.4 сказано обратное — устарело).
 
 ### 7.5. Снятие положительной работы стадии
 

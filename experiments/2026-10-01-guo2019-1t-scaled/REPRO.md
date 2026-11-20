@@ -29,7 +29,7 @@ Merge pull request #2 from smarry-code/weave
 | `03-guo2019-scene-monitor-smoke.patch` | `tests/guo2019_case.hpp`, `guo2019_scene.hpp`, `guo2019_monitor.hpp`, `test_e2e_guo2019.cpp`, `tests/data/guo2019_initial_conditions.txt` (новые): сцена, монитор, smoke-тест, уровни, включая `scaled` |
 | `04-guo2019-shot-tool.patch` | `tools/guo2019/guo2019_shot.cpp` (новый): инструмент одного выстрела |
 | `05-cmake-targets.patch` | `CMakeLists.txt`: цели сборки |
-| `06-docs-guo2019-e2e.patch` | `fiber/guo2019-e2e.md` (новый): документация, §8.2 с отступлениями О1–О14 |
+| `06-docs-guo2019-e2e.patch` | `notes/guo2019/guo2019-e2e.md` (новый): документация, §8.2 с отступлениями О1–О14 |
 | `HEAD.txt`, `MANIFEST.md` | хэш, автор, дата, заголовок коммита; состав и команды наложения/снятия |
 
 Наложение:

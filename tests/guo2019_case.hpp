@@ -514,7 +514,7 @@ inline constexpr double kTolGap = 1.0e-12;        // S2: зазор шар--ми
 inline constexpr double kTolMassRel = 1.0e-12;    // S1: масса шара равна заданной, отн.
 inline constexpr double kEnergyRatioFail = 1.02;  // S12: E_tot_max/E_tot_0 <= 1.02 (падение при превышении)
 inline constexpr double kEnergyRatioWarn = 1.005; // порог WARN, как energy_balance.py проекта
-inline constexpr double kDeltaOverDWarn = 0.3;    // WARN при max delta/d > 0.3 (FRICTION_REPORT.md §10 п.9)
+inline constexpr double kDeltaOverDWarn = 0.3;    // WARN при max delta/d > 0.3 (friction-report.md §10 п.9)
 inline constexpr double kDtRatioMax = 100.0;      // S5: dt_first/dt_min <= 100
 inline constexpr double kStepsFactor = 10.0;      // S5: шагов меньше, чем в 10 раз от оценки по первому dt
 inline constexpr double kMinDecel = 0.5;          // S8: |v_z(t_end)| < V_0 - 0.5 м/с

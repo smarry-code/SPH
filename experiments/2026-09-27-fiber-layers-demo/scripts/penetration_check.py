@@ -31,7 +31,7 @@ directory and reports, per frame:
      search radius (moot here -- we just brute-force every cross-fiber bond
      pair), (b) snapping s/t to the 0/1 boundary within eta=1e-9, and (c) the
      "ownership" rule that accepts exactly one primitive per physical
-     intersection (fiber/fiber_contact_segment_pairs.md SS3). Near a node
+     intersection (notes/fiber-contact/fiber-contact-segment-pairs.md SS3). Near a node
      shared by two bonds of the SAME fiber, both of that fiber's segments
      can therefore report a contact against the same segment of the other
      fiber, where the real kernel accepts only one. This inflates the raw

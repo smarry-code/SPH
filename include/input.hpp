@@ -21,5 +21,5 @@ void input(SimulationConfig& cfg, fiber::Model& model, size_t& ntotal, double& d
 
 // Внутренние парсеры/генераторы input.cpp (внешняя линковка; объявлены здесь,
 // чтобы не дублировать сигнатуры в tests/test_fiber_model.cpp — тест body[]
-// из fiber/PLAN.md, этап Ф2, проверяет их результат напрямую).
+// из notes/fiber-model/fiber-plan.md, этап Ф2, проверяет их результат напрямую).
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x);

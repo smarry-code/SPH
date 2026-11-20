@@ -1,7 +1,7 @@
 #pragma once
 // interactions/jc_strength.hpp
 // Прочность и разрушение Джонсона-Кука для одной частицы (itype 12-15):
-// fiber/jc-implementation-plan.md, разделы 2.1-2.3, 2.5, 2.6, этапы J4/J5.
+// notes/johnson-cook/jc-implementation-plan.md, разделы 2.1-2.3, 2.5, 2.6, этапы J4/J5.
 // Вызывается из interactions::apply_material_strength (postprocessing.hpp)
 // ПОСЛЕ corrector'а -- читает финальные sys.sxx.. и sys.exx.. шага. Вынесено
 // в отдельный лёгкий заголовок, чтобы тесты звали её без конвейера.

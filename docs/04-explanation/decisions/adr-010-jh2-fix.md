@@ -5,7 +5,7 @@
 
 ## Контекст
 
-Ревью реализации JH-2 (`src/ppochnost.cpp`, `jh2/jh2-code-review.md`, коммит `a4147b9`) против
+Ревью реализации JH-2 (`src/ppochnost.cpp`, `notes/jh2/jh2-code-review.md`, коммит `a4147b9`) против
 J&H 1999 (J. Appl. Phys. 85, 8060) выявило ошибки:
 
 1. **Приращение пластической деформации** считалось по «вычету» радиального возврата: упругая
@@ -27,7 +27,7 @@ Al₂O₃ не будет.
 
 ## Решение
 
-Исправление по плану `jh2/jh2-fix-plan.md`, ветка `fiber_johnson_holmquist`, этапы:
+Исправление по плану `notes/jh2/jh2-fix-plan.md`, ветка `fiber_johnson_holmquist`, этапы:
 
 - **Этап 0.** Тест-обвязка `tests/test_jh2.cpp` (`jh2_test`, `SPH_DIM=1`), красная на старом коде:
   T1 — приращение $e_{pl}=(2/3)\dot\varepsilon\,dt$; T2 — `sigma_i` в плоском случае; T3 — рост
@@ -85,6 +85,6 @@ Al₂O₃ не будет.
 - [`src/ppochnost.cpp`](../../../src/ppochnost.cpp), [`include/ppochnost.hpp`](../../../include/ppochnost.hpp): `sigma_i_general`, `jh2_strength`, `prochnost_cem_JH2`.
 - [`include/materials.hpp`](../../../include/materials.hpp): `const_JH_2`, флаги `jh2_clamp_low_rate`, `jh2_efmin`.
 - [`tests/test_jh2.cpp`](../../../tests/test_jh2.cpp), [`tests/test_jh2_element.cpp`](../../../tests/test_jh2_element.cpp): тесты.
-- [`jh2/jh2-code-review.md`](../../../jh2/jh2-code-review.md), [`jh2/jh2-fix-plan.md`](../../../jh2/jh2-fix-plan.md): ревью и план.
+- [`notes/jh2/jh2-code-review.md`](../../../notes/jh2/jh2-code-review.md), [`notes/jh2/jh2-fix-plan.md`](../../../notes/jh2/jh2-fix-plan.md): ревью и план.
 - [Определяющие соотношения, разд. 5](../models/02-constitutive.md): JH-2 после исправления.
 - [Реестр материалов](../../03-reference/materials/registry.md): константы и замечания.

@@ -1,7 +1,7 @@
 #pragma once
 // tests/clamp_integration_fiber.hpp
 // Интеграционные тесты кинематического закрепления бусин Fiber через РЕАЛЬНЫЙ
-// цикл time_integration(cfg, fiber::Model&, ...) (fiber/TZ_CLAMP_SOLID_FIBER.md,
+// цикл time_integration(cfg, fiber::Model&, ...) (notes/fabrics/clamp-solid-fiber-tz.md,
 // §3, §8, §10: F1-F5; Clamp/FIBER_CLAMP_SPEC.md, §8).
 //   F1 -- закреплённые концы нити неподвижны побитово (PC и Euler), свободные
 //         бусины движутся, кадры fiber_output без NaN/Inf;

@@ -31,7 +31,7 @@
 //
 // Проверки A1/B1/C/D — точные тождества схемы, поэтому допуск задан
 // относительно масштаба самих производных, а не абсолютным числом.
-// fiber/PLAN.md, этап Ф4-B2, шаг 1: probe_rates() ниже больше НЕ вызывает
+// notes/fiber-model/fiber-plan.md, этап Ф4-B2, шаг 1: probe_rates() ниже больше НЕ вызывает
 // старый путь (direct_find/con_density/int_force) напрямую — конвейер
 // заменён на тот же набор вызовов, что src/single_step.cpp использует для
 // продового расчёта (Solid derived -> GhostSet -> SolidExtended -> поиск ->
@@ -162,7 +162,7 @@ Rates probe_rates(const VelocityField& field,
     cfg.maxn            = n;
     cfg.max_interaction = n * 200;     // не используется новым путём (нет max_interaction-буферов), оставлено для минимальности diff
 
-    // Тот же набор вызовов, что src/single_step.cpp (новый путь, fiber/PLAN.md
+    // Тот же набор вызовов, что src/single_step.cpp (новый путь, notes/fiber-model/fiber-plan.md
     // Ф4-B1), без стадии Solid-Solid-Contact (тест не про контакт).
     rhs::CpuExecutor exec;
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Матрица шага 2.5 (fiber/plan-fiber-contact-types.md). Запуск из корня репозитория
+# Матрица шага 2.5 (notes/fiber-contact/plan-fiber-contact-types.md). Запуск из корня репозитория
 # после сборки пресетом clang-windows: bash experiments/2026-10-16-guo2019-fiber-contact-types/run.sh <каталог_вывода>
 R=${1:?каталог вывода}; X=build/guo2019_shot.exe; mkdir -p "$R"
 for cfg in A 1T 1T_A A_1T; do

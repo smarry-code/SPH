@@ -1,6 +1,6 @@
 // ext_force.cpp
 // Определения функций внешних сил (отталкивание от границы, самогравитация,
-// контакт «частица-частица» — part_0.md, ADR-007). Объявления — в ext_force.hpp.
+// контакт «частица-частица» — notes/sources/sph-contact-article.md, ADR-007). Объявления — в ext_force.hpp.
 #include "ext_force.hpp"
 #include "materials.hpp"
 #include <algorithm>

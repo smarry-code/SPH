@@ -1,8 +1,8 @@
 #pragma once
 // interactions/fiber_contact_law.hpp
 // Законы нормальной силы pinball / Swegle / импульсный для контактов нитей
-// (Fiber-Solid и Fiber-Fiber; fiber/plan-fiber-contact-types.md, §2;
-// fiber/SPH.md, «Законы нормальной силы»).
+// (Fiber-Solid и Fiber-Fiber; notes/fiber-contact/plan-fiber-contact-types.md, §2;
+// notes/fiber-model/fiber-problem-statement.md, «Законы нормальной силы»).
 //
 // Физика силы НЕ дублируется: fiber_penalty_force -- тонкая обёртка над
 // contact::penalty_force (include/contact_force.hpp), той же функцией, что у
@@ -111,7 +111,7 @@ struct FiberContactStepParams
     std::vector<double>* pair_dt_limit = nullptr;
     // Только для типа 4 и лога энергии: ядро считает лишь вязкую часть силы.
     bool damper_only = false;
-    // РЕЖИМ ПРОЕКЦИИ (законы 1-3, fiber/TZ_LAW3_PROJECTION.md): если задан, ядро НЕ считает
+    // РЕЖИМ ПРОЕКЦИИ (законы 1-3, notes/fiber-contact/law3-projection-tz.md): если задан, ядро НЕ считает
     // нормальную силу, а заполняет нормальные слоты для стадии run_normal_projection -- сжатым
     // массивом только активных контактов (delta > 0) по возрастанию primitive, с индексом
     // primitive (prim) и номером отрезка (seg); вкладов в ускорение, слота трения и предела шага

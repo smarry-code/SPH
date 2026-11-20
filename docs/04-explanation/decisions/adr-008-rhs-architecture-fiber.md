@@ -6,7 +6,7 @@
 ## Контекст
 
 В проект добавляется новая compute-структура `Fiber` (нить) — постановка
-описана в [`fiber/SPH.md`](../../../fiber/SPH.md). Нить требует поддержки
+описана в [`notes/fiber-model/fiber-problem-statement.md`](../../../notes/fiber-model/fiber-problem-statement.md). Нить требует поддержки
 топологических (не только пространственных) взаимодействий, контакта
 нить-нить и нить-твёрдое тело, и работает только при `dim = 3`
 (см. [ADR-002](adr-002-dim-constexpr.md) — там же `dim` как
@@ -26,9 +26,9 @@ compile-time константа, необходимая для новой 3D-ц�
 означало бы или городить raскраску поверх разнородных графов, или вернуться
 к `atomic` на горячем пути.
 
-Вместо расширения существующей схемы принят план [`fiber/PLAN.md`](../../../fiber/PLAN.md)
+Вместо расширения существующей схемы принят план [`notes/fiber-model/fiber-plan.md`](../../../notes/fiber-model/fiber-plan.md)
 (раздел 1 «Принятые решения», Р1–Р10), который вводит для CPU единую
-fork-join схему RHS, буквально по [`fiber/SPH.md`](../../../fiber/SPH.md)
+fork-join схему RHS, буквально по [`notes/fiber-model/fiber-problem-statement.md`](../../../notes/fiber-model/fiber-problem-statement.md)
 (разделы «Описание pipeline вычисления RHS» и «Описание интерфейса
 взаимодействия для параллельных вычислений»): поиск → построение primitives
 → interaction kernel → contributions (thread-local, без атомиков) → reduce
@@ -45,7 +45,7 @@ Rigidbody одной иерархией) предшествовал этому �
 
 ## Решение
 
-Приняты решения Р1–Р10 из `fiber/PLAN.md` §1:
+Приняты решения Р1–Р10 из `notes/fiber-model/fiber-plan.md` §1:
 
 - **Параллельность по `CpuExecutor` (Р1).** Единая схема для всех
   compute-структур: `CpuExecutor` (обёртка над уже подключённым OpenMP,
@@ -84,14 +84,14 @@ Rigidbody одной иерархией) предшествовал этому �
 - **$E$, $\nu$ Solid из $K$, $G$ (Р10).** Для `Fiber-Solid-Contact` нужны
   модуль Юнга и коэффициент Пуассона материала Solid; они выводятся из
   модуля объёмного сжатия $K$ и модуля сдвига $G$ по формулам из
-  `fiber/SPH.md` (раздел «Fiber-Solid-Contact», подраздел «Постановка
+  `notes/fiber-model/fiber-problem-statement.md` (раздел «Fiber-Solid-Contact», подраздел «Постановка
   проекта: коэффициент $K_{fs}$»). Для материалов без модуля сдвига (газ,
   вода) $E_s$ не определён, и `Fiber-Solid-Contact` с ними не формируется.
 
 Постановка уравнений `Fiber-Bond` (только растяжение, разрыв по
 расстоянию), раздела «Solid -- Solid» (`Solid-SPH` и
 `Solid-Solid-Contact`), «Общие уравнения динамики» и коэффициента $K_{fs}$
-уже зафиксированы текстом в `fiber/SPH.md` — этот ADR их не переопределяет,
+уже зафиксированы текстом в `notes/fiber-model/fiber-problem-statement.md` — этот ADR их не переопределяет,
 а фиксирует архитектурное решение, в рамках которого они будут
 реализованы.
 
@@ -108,12 +108,12 @@ contributions вместо атомарных инкрементов; `PairGraph
 - Один механизм параллелизма для всех compute-структур и всех типов
   взаимодействий, включая разнородные и многочастичные primitives нитей;
 - Interaction kernels не содержат mutex/atomic и не зависят от конкретного
-  backend (OpenMP сейчас, GPU — в перспективе, см. `fiber/SPH.md`, раздел
+  backend (OpenMP сейчас, GPU — в перспективе, см. `notes/fiber-model/fiber-problem-statement.md`, раздел
   про CPU backend);
 - Явное разделение состояния (`readonly` во время RHS) и вычисляемых
   производных величин снимает часть текущих нарушений инварианта
   (`virt_part`, `int_force`, `h_upgrade`, пишущие в `sys` — таблица в
-  `fiber/PLAN.md` §2);
+  `notes/fiber-model/fiber-plan.md` §2);
 - Черновая, архитектурно несовместимая заготовка `particle_system_new.hpp`
   убрана до начала реализации, чтобы не создавать путаницы с реальной
   архитектурой.
@@ -122,16 +122,16 @@ contributions вместо атомарных инкрементов; `PairGraph
 
 - Перенос Solid (Ф4) был крупным рискованным этапом: объём памяти под
   thread-local contributions на BC6 (~135 МБ на один вызов RHS) замерен и
-  признан приемлемым (`fiber/PLAN.md`, раздел 5); на время перехода (Ф4-A,
+  признан приемлемым (`notes/fiber-model/fiber-plan.md`, раздел 5); на время перехода (Ф4-A,
   Ф4-B1) в проекте временно сосуществовали старая (`PairGraph`) и новая
   схемы, старый путь удалён на Ф4-B2 после независимой проверки
   эквивалентности (`test_rhs_equivalence`, регрессия, e2e BC2/BC6);
 
 ## Связанные файлы
 
-- [`fiber/PLAN.md`](../../../fiber/PLAN.md): план внедрения, раздел 1
+- [`notes/fiber-model/fiber-plan.md`](../../../notes/fiber-model/fiber-plan.md): план внедрения, раздел 1
   «Принятые решения» (Р1–Р10), разделы 3 «Архитектура» и 4 «Этапы».
-- [`fiber/SPH.md`](../../../fiber/SPH.md): постановка задачи, уравнения
+- [`notes/fiber-model/fiber-problem-statement.md`](../../../notes/fiber-model/fiber-problem-statement.md): постановка задачи, уравнения
   взаимодействий Fiber/Solid, описание pipeline RHS и CPU backend.
 - [ADR-002](adr-002-dim-constexpr.md): `dim` как compile-time константа —
   нужна 3D-цель сборки (`SPH_DIM=3`) для нитей (Р9).
@@ -157,7 +157,7 @@ reduce по шардам реализована ([`include/rhs/`](../../../inclu
   $d_{\max}+2L_{\max}$, $L_{\max}$ — текущая длина связи), а не пара бусин с
   весами Meyer; эффективные $E^*, R^*$ — по обобщённой формуле Герца для разных
   материалов ([`fiber_contact.hpp`](../../../include/interactions/fiber_contact.hpp),
-  `fiber/fiber_contact_segment_pairs.md`). Fiber-Solid-Contact использует
+  `notes/fiber-contact/fiber-contact-segment-pairs.md`). Fiber-Solid-Contact использует
   `SpatialIndex::find_pairs_cross_parallel`, свой радиус поиска и правило владения узлом
   ([`fiber_solid_contact.hpp`](../../../include/interactions/fiber_solid_contact.hpp)).
 - **Законы нормальной силы контактов нитей.** Ключи `fiber_solid_contact_type`,

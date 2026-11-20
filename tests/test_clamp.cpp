@@ -1,6 +1,6 @@
 // tests/test_clamp.cpp
 // Unit-тесты кинематического закрепления (interactions/clamp.hpp;
-// fiber/SPH.md, «Clamp (кинематическое закрепление)»): U1 список, U2 проекция и детерминизм
+// notes/fiber-model/fiber-problem-statement.md, «Clamp (кинематическое закрепление)»): U1 список, U2 проекция и детерминизм
 // реакции, U3 блочная сумма, U4 счётчики трения, U5 mark_clamp_box,
 // U6 директива CLAMP_BOX в файле нитей, плюс validate_clamps. Параллельные
 // варианты -- явные rhs::CpuExecutor(1), (2), (7). Double сравниваются

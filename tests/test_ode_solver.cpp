@@ -1,5 +1,5 @@
 // tests/test_ode_solver.cpp
-// Unit-тесты OdeSolver (fiber/PLAN.md, этап Ф8; §3.9 «ODESolver»):
+// Unit-тесты OdeSolver (notes/fiber-model/fiber-plan.md, этап Ф8; §3.9 «ODESolver»):
 //   1) Euler -- первый порядок сходимости на задаче с аналитическим решением
 //      (гармонический осциллятор x'' = -k*x, x(t) = x0*cos(omega*t));
 //   2) PredictorCorrector -- совпадение с прежним циклом на BC2/BC6. Это уже
@@ -11,7 +11,7 @@
 //      (detail::run_time_integration<ode::PredictorCorrectorSolver>,
 //      src/time_integration.cpp), то есть является даже более сильной
 //      проверкой, чем до Ф8. Отдельный дублирующий прогон здесь не добавлен
-//      осознанно (fiber/PLAN.md §Ф8, раздел G: «если считаешь регрессию
+//      осознанно (notes/fiber-model/fiber-plan.md §Ф8, раздел G: «если считаешь регрессию
 //      достаточным покрытием этого пункта, можешь не дублировать, но явно
 //      поясни»).
 //   3) нить без контактов: полная механическая энергия (кинетическая +
@@ -59,7 +59,7 @@ bool near_rel(double a, double b, double tol) { return std::fabs(a - b) <= tol *
 // при x(0) = x0, v(0) = 0: x(t) = x0*cos(omega*t), omega = sqrt(k).
 //
 // ode::EulerSolver::step_fiber -- буквальная реализация формулы плана
-// (fiber/PLAN.md §3.9): x^{n+1} = x^n + dt*v^n (СТАРАЯ скорость), затем
+// (notes/fiber-model/fiber-plan.md §3.9): x^{n+1} = x^n + dt*v^n (СТАРАЯ скорость), затем
 // v^{n+1} = v^n + dt*f(x^n). T и dt0 подобраны так, чтобы T/dt0,
 // T/(dt0/2), T/(dt0/4) были целыми -- одна и та же конечная точка t = T при
 // всех трёх шагах, без ошибки округления числа шагов.
@@ -125,17 +125,17 @@ void test_euler_convergence()
 // Fiber-Solid контакта (топология -- единственный источник сил). Начальное
 // состояние -- небольшое неравномерное растяжение каждого сегмента (все
 // связи в тензии), нулевая начальная скорость -- вся энергия исходно
-// потенциальная (fiber/SPH.md, Fiber-Bond: F = EA*max(l/l0-1,0)*x_ij/l,
+// потенциальная (notes/fiber-model/fiber-problem-statement.md, Fiber-Bond: F = EA*max(l/l0-1,0)*x_ij/l,
 // поэтому потенциальная энергия связи в тензии PE = 0.5*E*A*(l-l0)^2/l0,
 // получена интегрированием F по l от l0; в сжатии PE = 0, сила отсутствует).
 //
-// dt выбран как малая доля dt_limit связи (fiber/PLAN.md §3.7:
+// dt выбран как малая доля dt_limit связи (notes/fiber-model/fiber-plan.md §3.7:
 // 0.8/sqrt(k_eff/m_red), k_eff = EA/l0) -- при ЛЮБОМ dt > 0 явный Эйлер для
 // этой линейной-по-участкам системы растёт как (1+omega^2*dt^2) за шаг
-// (fiber/PLAN.md §3.9); за достаточное число шагов рост становится огромным
+// (notes/fiber-model/fiber-plan.md §3.9); за достаточное число шагов рост становится огромным
 // даже при dt много меньше dt_limit. PredictorCorrector должен остаться
 // ограниченным на том же dt и том же числе шагов -- в этом и есть проверяемое
-// отличие (fiber/PLAN.md §Ф8, раздел G).
+// отличие (notes/fiber-model/fiber-plan.md §Ф8, раздел G).
 // ---------------------------------------------------------------------------
 double cross_section_area(double d) { return pi * d * d / 4.0; }
 
@@ -287,7 +287,7 @@ void test_predictor_corrector_energy_bound()
 }
 
 // ---------------------------------------------------------------------------
-// 4) Интерфейс решателя fiber_velocity_update (fiber/fiber_friction_projection.md
+// 4) Интерфейс решателя fiber_velocity_update (notes/fiber-contact/fiber-friction-projection.md
 //    §4, тест 8.9): advance() даёт fb.vx ПОБИТОВО равную base + h*dv, где
 //    base/h взяты из fiber_velocity_update() ДО advance().
 //    Сравнение -- ровно тем же выражением `base + h * dv`, что в

@@ -4,7 +4,7 @@
 //
 // Раньше single_step создавал все эти структуры локально на каждом вызове, и
 // каждый шаг выделял/освобождал сотни мегабайт (glibc отдаёт крупные блоки
-// через mmap/munmap -> порядка 4e5 page fault'ов на шаг; speedup/base.md
+// через mmap/munmap -> порядка 4e5 page fault'ов на шаг; notes/speedup/base.md
 // §4.2). Теперь они живут между шагами: все стадии (compute_solid_derived,
 // build_ghost_set, build_solid_extended, build_solid_sph_search,
 // compute_solid_*_contributions, reduce_contributions_into, finalize_solid)

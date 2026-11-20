@@ -1,7 +1,7 @@
 // test_fiber_model.cpp
-// Unit-тесты модели данных нитей (fiber/PLAN.md, этап Ф2):
+// Unit-тесты модели данных нитей (notes/fiber-model/fiber-plan.md, этап Ф2):
 //   - разбор файла ломаных (load_fiber_file): число частиц, топология
-//     prev/next, l0/l_break на связях, масса бусин по формуле fiber/SPH.md;
+//     prev/next, l0/l_break на связях, масса бусин по формуле notes/fiber-model/fiber-problem-statement.md;
 //   - ошибки формата файла нитей;
 //   - fiber::fiber_output — файл создаётся и содержит ожидаемые значения;
 //   - fiber::check_fiber_requires_dim3() не бросает при dim == 3 (ветка
@@ -10,7 +10,7 @@
 //   - body[] в ParticleSystem: из PID k-файла (k_input::load_k_geometry) и из itype[]
 //     во встроенном генераторе (shock_tube).
 //
-// Собирается с SPH_DIM=3 (CMakeLists.txt): нити (fiber/SPH.md) поддержаны
+// Собирается с SPH_DIM=3 (CMakeLists.txt): нити (notes/fiber-model/fiber-problem-statement.md) поддержаны
 // только в этой размерности.
 #include "fiber/fiber_input.hpp"
 #include "fiber/fiber_output.hpp"
@@ -254,7 +254,7 @@ void test_malformed_files_throw()
 }
 
 // --- MATERIAL: необязательное седьмое поле mu_ff --------------------------
-// fiber/fiber_friction_implementation.md, §8: коэффициент динамического
+// notes/fiber-contact/fiber-friction-implementation.md, §8: коэффициент динамического
 // трения нить-нить. Проверяем чтение формата "6 полей" (обратная
 // совместимость, mu_ff = 0 по умолчанию), формата "7 полей" (mu_ff
 // прочитан точно), и ошибки формата (отрицательный / нечисловой mu_ff).
@@ -313,7 +313,7 @@ void test_material_mu_ff()
 }
 
 // --- MATERIAL: необязательное восьмое поле mu_fs --------------------------
-// fiber/fiber_solid_friction_implementation.md, §2: коэффициент трения
+// notes/fiber-contact/fiber-solid-friction-implementation.md, §2: коэффициент трения
 // нить-Solid; ТОЛЬКО после mu_ff. Проверяем: 8 полей -> оба значения читаются
 // точно; 7 полей -> mu_fs = 0 (а mu_ff читается как раньше); 6 полей -> оба 0;
 // отрицательный / нечисловой mu_fs -- исключение; нули явно допустимы.

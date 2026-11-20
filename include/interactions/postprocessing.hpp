@@ -1,6 +1,6 @@
 #pragma once
 // interactions/postprocessing.hpp
-// Postprocessing (fiber/PLAN.md, этап Ф7; fiber/SPH.md, разделы
+// Postprocessing (notes/fiber-model/fiber-plan.md, этап Ф7; notes/fiber-model/fiber-problem-statement.md, разделы
 // «Postprocessing» и «Postprocessing и изменение topology»): дискретные
 // пороговые правила, выполняемые ПОСЛЕ шага ODESolver -- в две фазы, где это
 // применимо (поиск событий readonly параллельно -> применение
@@ -54,9 +54,9 @@
 // после single_step(), ДО compute_cfl_timestep() -- то есть на том самом
 // месте в графе вычислений, где раньше физически проявлялся эффект вызова
 // h_upgrade изнутри single_step.cpp. Формально это "внутри шага ODESolver",
-// а не строго "после" него в смысле fiber/SPH.md -- сознательное отступление
+// а не строго "после" него в смысле notes/fiber-model/fiber-problem-statement.md -- сознательное отступление
 // от буквальной формулировки ради нулевого изменения численного результата
-// Solid-физики (жёсткое требование этапа Ф7 fiber/PLAN.md: «BC2/BC6 не
+// Solid-физики (жёсткое требование этапа Ф7 notes/fiber-model/fiber-plan.md: «BC2/BC6 не
 // изменились»). Мизес/JH-2 и разрыв связей такому ограничению не подчиняются
 // (они и раньше считались после corrector'а) и вызываются в буквальном месте
 // -- после corrector'а, вместе.
@@ -83,7 +83,7 @@ namespace interactions
 
 // ----------------------------------------------------------------------
 // apply_material_strength -- Мизес (itype 3-9) и JH-2 (itype 10-11),
-// fiber/PLAN.md §3.8. Код -- буквальная копия цикла, ранее продублированного
+// notes/fiber-model/fiber-plan.md §3.8. Код -- буквальная копия цикла, ранее продублированного
 // в обеих перегрузках time_integration (src/time_integration.cpp), вызывается
 // ПОСЛЕ corrector'а -- читает ФИНАЛЬНЫЕ (скорректированные) sys.sxx.. и т.д.
 // Шим совместимости (interactions/solid_sph.hpp, комментарий у single_step):
@@ -92,7 +92,7 @@ namespace interactions
 // деформации; rxy..ryz и drho не используются) -- решение
 // координатора этапа Ф7: сигнатуру prochnost_cem_JH2 (src/ppochnost.cpp) не
 // меняем, риск регрессии от смены источника данных не оправдан архитектурной
-// чистотой на этом этапе (задача допускает оба варианта, см. fiber/PLAN.md
+// чистотой на этом этапе (задача допускает оба варианта, см. notes/fiber-model/fiber-plan.md
 // §Ф7, пункт 5 обоснования координатора).
 // ----------------------------------------------------------------------
 inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem& sys, std::size_t ntotal, double dt,
@@ -149,9 +149,9 @@ inline void apply_material_strength(const SimulationConfig& cfg, ParticleSystem&
 
 // ----------------------------------------------------------------------
 // update_smoothing_length -- sle=1: h = fac*(mass/rho)^(1/dim)
-// (src/h_upgrade.cpp), fiber/PLAN.md §3.8 "sle=1 -- Postprocessing". sle=0 --
+// (src/h_upgrade.cpp), notes/fiber-model/fiber-plan.md §3.8 "sle=1 -- Postprocessing". sle=0 --
 // no-op (h_upgrade не вызывается вовсе, как и раньше). sle=2 -- явный отказ:
-// путь RHS (fiber/PLAN.md, этап Ф4) не строит сумму по парам соседей (div v)
+// путь RHS (notes/fiber-model/fiber-plan.md, этап Ф4) не строит сумму по парам соседей (div v)
 // в формате старого поиска, которую требует эта ветка h_upgrade; ни один
 // текущий конфиг (BC2/BC6 -> sle=1) sle=2 не использует. ПРО МЕСТО ВЫЗОВА --
 // см. большой комментарий в шапке файла.
@@ -162,7 +162,7 @@ inline void update_smoothing_length(const SimulationConfig& cfg, ParticleSystem&
     {
         throw std::runtime_error(
             "update_smoothing_length: sle=2 требует сумму по парам соседей (div v), которую "
-            "путь RHS (fiber/PLAN.md, этап Ф4) не строит в формате старого "
+            "путь RHS (notes/fiber-model/fiber-plan.md, этап Ф4) не строит в формате старого "
             "поиска для h_upgrade; ни один текущий конфиг (BC2/BC6 -> sle=1) "
             "sle=2 не использует.");
     }
@@ -193,7 +193,7 @@ inline double fiber_bond_length(const fiber::FiberState& state, const fiber::Fib
 // ----------------------------------------------------------------------
 // apply_fiber_bond_constitutive -- обновление внутренних переменных связей
 // (eps_p, q, eps_prev, w_p, w_v) по определяющему закону
-// fiber::bond_constitutive_update (fiber/fiber-plasticity-design.md, раздел 4).
+// fiber::bond_constitutive_update (notes/fiber-model/fiber-plasticity-design.md, раздел 4).
 // Вызывается в time_integration ПОСЛЕ advance (x^{n+1} финальны) и ПЕРЕД
 // поиском разрыва, с dt текущего шага. Параллельно по связям через exec: связь k
 // читает только state.x своих двух бусин и пишет только topology.bonds[k].st --
@@ -345,12 +345,12 @@ inline void init_fiber_bond_state(const fiber::FiberState& state, fiber::FiberTo
 }
 
 // ----------------------------------------------------------------------
-// Разрыв связей Fiber-Bond (fiber/SPH.md, «Fiber-Bond», «Разрыв связи»;
-// fiber/PLAN.md §3.8): критерий по расстоянию l_ij > l_break = (1+eps_b)*l0,
+// Разрыв связей Fiber-Bond (notes/fiber-model/fiber-problem-statement.md, «Fiber-Bond», «Разрыв связи»;
+// notes/fiber-model/fiber-plan.md §3.8): критерий по расстоянию l_ij > l_break = (1+eps_b)*l0,
 // проверяется ПОСЛЕ шага ODESolver (координаты бусин -- уже финальные,
 // скорректированные fb.x этого шага).
 //
-// Две фазы (fiber/SPH.md, «Postprocessing и изменение topology»):
+// Две фазы (notes/fiber-model/fiber-problem-statement.md, «Postprocessing и изменение topology»):
 //   1. find_fiber_break_events  -- parallel_for ТОЛЬКО НА ЧТЕНИЕ по
 //      topology.bonds, потокобезопасные локальные буферы событий (тот же
 //      паттерн "per-thread buffer -> merge", что в
@@ -416,7 +416,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
             else if (mat.damage.enabled() && mat.failure.sigma_u > 0.0)
             {
                 // Повреждённость: связь рвётся, когда разупрочнение дошло до нуля (D = 1),
-                // а не в момент σ = σ_u (fiber/plan-fiber-damage.md).
+                // а не в момент σ = σ_u (notes/fiber-model/fiber-damage-plan.md).
                 if (b.st.d >= 1.0)
                 {
                     broken = true;
@@ -483,7 +483,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 }
 
 // apply_fiber_break_events -- строго последовательное применение,
-// fiber/SPH.md: «ни один RHS kernel никогда не работает одновременно с
+// notes/fiber-model/fiber-problem-statement.md: «ни один RHS kernel никогда не работает одновременно с
 // изменением FiberTopology».
 //
 // Решения (задокументированы по месту, см. также сопроводительный отчёт
@@ -496,7 +496,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 //   - Какая сторона получает новый object_id -- ВСЕГДА j-сторона (частица j
 //     связи (i,j) и вся цепочка next[] от неё, т.е. "хвост" нити после
 //     разрыва). Простой, детерминированный, всегда корректный вариант
-//     (fiber/SPH.md прямо допускает: «простой вариант "всегда j-сторона
+//     (notes/fiber-model/fiber-problem-statement.md прямо допускает: «простой вариант "всегда j-сторона
 //     получает новый id" тоже корректен, если он последователен»).
 //     Корректно работает и при КАСКАДНОМ разрыве -- если после первого
 //     разрыва в обработке (по возрастанию bond_index) встречается второй
@@ -521,11 +521,11 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecut
 //     primitives между шагами -- он строится заново из topology.bonds на
 //     КАЖДОМ вызове RHS, поэтому удаление элемента из bonds здесь уже
 //     достаточно ("interaction primitives... построены заново перед
-//     следующим RHS", fiber/PLAN.md §3.8) -- fiber_bond.hpp трогать не
+//     следующим RHS", notes/fiber-model/fiber-plan.md §3.8) -- fiber_bond.hpp трогать не
 //     потребовалось.
 //
 //   - topology.version увеличивается ОДИН раз на весь проход Postprocessing
-//     (не на каждое отдельное событие) -- fiber/PLAN.md §3.8 говорит об
+//     (не на каждое отдельное событие) -- notes/fiber-model/fiber-plan.md §3.8 говорит об
 //     инвалидации топологии как о ЕДИНОМ факте "топология этого прохода
 //     изменилась", а не о подсчёте числа разрывов; читателей topology.version
 //     в проекте пока нет (задел на будущее кеширование), поэтому выбор не

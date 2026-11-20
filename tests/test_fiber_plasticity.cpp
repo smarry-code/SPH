@@ -1,6 +1,6 @@
 // tests/test_fiber_plasticity.cpp
 // Unit-тесты чистой функции bond_constitutive_update / bond_stress
-// (include/fiber/fiber_plasticity.hpp; fiber/fiber-plasticity-design.md,
+// (include/fiber/fiber_plasticity.hpp; notes/fiber-model/fiber-plasticity-design.md,
 // раздел 8, тесты Т1-Т7). Решатель не используется.
 #include "fiber/fiber_plasticity.hpp"
 

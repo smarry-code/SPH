@@ -3,7 +3,7 @@
 //
 // ЗАЧЕМ. Сквозные тесты и регрессия считают только dim = 2: осесимметричная
 // ветка проверена test_axisym, а ветки `dim == 3` в int_force не проверял
-// никто. Между тем нити (fiber/PLAN.md) живут только в 3D, и Solid, с которым
+// никто. Между тем нити (notes/fiber-model/fiber-plan.md) живут только в 3D, и Solid, с которым
 // они контактируют, будет считаться именно этими ветками. В них шесть
 // компонент девиатора, три компоненты поворота и девять слагаемых импульса —
 // перепутать xz с yz или знак при повороте легко, а заметить в сквозном
@@ -28,7 +28,7 @@
 //   E  линейное поле одной компоненты напряжения σ_ab = k·x_b: ускорение
 //      появляется только по оси a — ловит компоненту девиатора, попавшую не в
 //      то уравнение движения.
-// fiber/PLAN.md, этап Ф4-B2, шаг 1: probe() ниже больше НЕ вызывает старый
+// notes/fiber-model/fiber-plan.md, этап Ф4-B2, шаг 1: probe() ниже больше НЕ вызывает старый
 // путь (direct_find/con_density/int_force) напрямую — конвейер заменён на
 // тот же набор вызовов, что src/single_step.cpp использует для продового
 // расчёта (Solid derived -> GhostSet -> SolidExtended -> поиск -> Solid-SPH
@@ -138,7 +138,7 @@ Probe probe(const VelocityField& vfield, const StressField& sfield = zero_stress
     cfg.maxn            = n;
     cfg.max_interaction = n * 200;     // не используется новым путём, оставлено для минимальности diff
 
-    // Тот же набор вызовов, что src/single_step.cpp (новый путь, fiber/PLAN.md
+    // Тот же набор вызовов, что src/single_step.cpp (новый путь, notes/fiber-model/fiber-plan.md
     // Ф4-B1), без стадии Solid-Solid-Contact (тест не про контакт). В 3D
     // GhostSet всегда пуст (axis_sim && dim==2 ложно при dim==3).
     rhs::CpuExecutor exec;

@@ -1,7 +1,7 @@
 #pragma once
 // interactions/fiber_normal_projection.hpp
 // Нормальный контакт нитей (законы 1-3) как ПРОЕКЦИЯ НА УРОВНЕ СКОРОСТЕЙ
-// (fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md, fiber/TZ_LAW3_PROJECTION.md,
+// (notes/fiber-contact/law3-projection-report.md, notes/fiber-contact/law3-projection-tz.md,
 // этап A3). Стадия стоит между выбором шага Δt и стадией трения
 // (src/time_integration.cpp), по образцу interactions/fiber_friction.hpp:
 // слоты, счётчики c_k/c_s, пробные скорости от БАЗЫ решателя

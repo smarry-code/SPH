@@ -1,5 +1,5 @@
 // plain_weave_random_cut.hpp
-// Ткань «случайная раскройка» (fiber/tz-random-cut-quilt.md) поверх генератора
+// Ткань «случайная раскройка» (notes/fabrics/tz-random-cut-quilt.md) поверх генератора
 // полотняного переплетения (include/fiber/plain_weave.hpp).
 //
 // Header-only. НЕ зависит от dim: только plain_weave.hpp и стандартная библиотека.

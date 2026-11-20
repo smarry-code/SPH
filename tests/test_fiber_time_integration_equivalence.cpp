@@ -3,7 +3,7 @@
 // ...) физически ЭКВИВАЛЕНТЕН старому циклу
 // time_integration(cfg, ParticleSystem&, ...) при пустых нитях.
 //
-// ИСТОРИЯ. До этапа Ф8 (fiber/PLAN.md, «ODESolver») обе перегрузки были
+// ИСТОРИЯ. До этапа Ф8 (notes/fiber-model/fiber-plan.md, «ODESolver») обе перегрузки были
 // независимыми копиями одного и того же Solid-цикла (u/rho/s -- буквально;
 // v/x -- через общие шаблоны pc_predict_velocity_half_step/
 // pc_finalize_velocity_position*) -- этот тест закрывал риск их расхождения.
@@ -213,7 +213,7 @@ int main()
 {
     std::printf("=== Эквивалентность Solid-цикла: time_integration(ParticleSystem&) vs "
                 "time_integration(fiber::Model&) при пустых нитях ===\n");
-    std::printf("(fiber/PLAN.md, этап Ф3 -- закрывает риск непроверенной копии Solid-цикла,\n"
+    std::printf("(notes/fiber-model/fiber-plan.md, этап Ф3 -- закрывает риск непроверенной копии Solid-цикла,\n"
                 " отмеченный автором этапа как компромисс)\n");
 
     for (int contact_type : {0, 1, 3})

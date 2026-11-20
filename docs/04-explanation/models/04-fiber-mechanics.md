@@ -103,7 +103,7 @@ $\sigma=$ `fiber::bond_stress` (раздел 3); ветка выполняетс
 ## 3. Определяющий закон связи
 
 Закон одноосный; реализован чистыми функциями в [fiber_plasticity.hpp](../../../include/fiber/fiber_plasticity.hpp)
-(контекст: [fiber-plasticity-design.md](../../../fiber/fiber-plasticity-design.md)).
+(контекст: [fiber-plasticity-design.md](../../../notes/fiber-model/fiber-plasticity-design.md)).
 
 ### 3.1. Реологическая схема
 

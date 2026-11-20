@@ -41,7 +41,7 @@
 #include <windows.h>
 #endif
 
-static_assert(dim == 3, "demo_fiber_layers требует сборки с SPH_DIM=3 (нити -- только в 3D, fiber/SPH.md)");
+static_assert(dim == 3, "demo_fiber_layers требует сборки с SPH_DIM=3 (нити -- только в 3D, notes/fiber-model/fiber-problem-statement.md)");
 
 namespace fs = std::filesystem;
 
@@ -63,7 +63,7 @@ namespace
 // fiber_input.cpp) напрямую даёт номер слоя: layer = object_id_at_t0 /
 // fibers_per_layer. net_layout.txt дублирует это явно для Python-анализа,
 // который читает object_id ИЗ КАДРА 0 (после разрывов object_id меняется --
-// fiber/SPH.md, разрыв связи -- но id бусины (индекс в FiberState) не
+// notes/fiber-model/fiber-problem-statement.md, разрыв связи -- но id бусины (индекс в FiberState) не
 // меняется НИКОГДА, поэтому связка "id бусины из кадра 0 -> слой" остаётся
 // верной все кадры).
 // ---------------------------------------------------------------------
@@ -156,7 +156,7 @@ std::size_t build_projectile_cube(ParticleSystem& sys, int n_side, double dx, do
                 sys.x[2][k] = cz + (static_cast<double>(iz) + 0.5) * dx;
                 sys.vx[2][k] = vz0;
                 sys.itype[k] = 4; // алюминий (materials.hpp)
-                sys.body[k]  = 4; // body[]=itype[] -- fiber/PLAN.md §3.1
+                sys.body[k]  = 4; // body[]=itype[] -- notes/fiber-model/fiber-plan.md §3.1
                 sys.rho[k]   = rho0;
                 sys.rho_0[k] = rho0;
                 sys.hsml[k]  = 2.0 * dx;

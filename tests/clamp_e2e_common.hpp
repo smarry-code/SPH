@@ -8,7 +8,7 @@
 //
 // Почему наблюдатель, а не прогон по одному шагу. Каждый вызов
 // time_integration создаёт новый решатель, и первый шаг PredictorCorrector --
-// полушаг (v += dt/2*a, fiber/SPH.md, «ODE solver»). Прогон по одному шагу
+// полушаг (v += dt/2*a, notes/fiber-model/fiber-problem-statement.md, «ODE solver»). Прогон по одному шагу
 // сделал бы полушагом КАЖДЫЙ шаг. Поэтому сцена идёт одним непрерывным
 // прогоном, а монитор снимается в RunGuard::set_step_observer после
 // завершения шага (advance, постобработка, time += dt), когда

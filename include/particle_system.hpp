@@ -62,10 +62,10 @@ struct ParticleSystem
     std::vector<int> itype;
     std::vector<char>   axis;     // bool-семантика, плотное хранение
 
-    // --- номер тела (object_id, fiber/PLAN.md §3.1) ---
+    // --- номер тела (object_id, notes/fiber-model/fiber-plan.md §3.1) ---
     // Для k-файла — PID (parse_k_file); для встроенных генераторов (shock_tube
     // и др.) — совпадает с itype, чтобы критерий Solid-Solid-Contact на
-    // BC2/BC6 ("разные материалы") не изменился (см. fiber/SPH.md, раздел
+    // BC2/BC6 ("разные материалы") не изменился (см. notes/fiber-model/fiber-problem-statement.md, раздел
     // «Solid -- Solid»). Сама фильтрация контакта по body[] реализуется в
     // Ф4 — здесь только поле и его заполнение.
     std::vector<int> body;
@@ -189,7 +189,7 @@ struct ParticleSystem
 // 2D осесимметрия: масса кольца 2*pi*r0*m постоянна во времени, поэтому
 // sum energy_mass*(|v|^2/2 + u) -- физическая энергия тела, которая должна
 // сохраняться; сумма с «плоской» массой m сохраняющейся величиной не является
-// (johnson-cook/03-pmin-energy.md, §2.1). Остальные постановки: m.
+// (notes/johnson-cook/03-pmin-energy.md, §2.1). Остальные постановки: m.
 inline double energy_mass(const ParticleSystem& sys, size_t i)
 {
     if constexpr (axis_sim && dim == 2)

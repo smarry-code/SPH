@@ -5,7 +5,7 @@
 // build_solid_sph_search выбирает skf один раз вне цикла и вызывает
 // kernel_cubic/gauss/quintic напрямую. Сами ядра -- [[gnu::noinline]]: при
 // встраивании в цикл сборки проход записи на 1 потоке замедлялся на ~20 %
-// (A: 40 мс против 33 мс с вызовом, speedup/prims_parallel.md).
+// (A: 40 мс против 33 мс с вызовом, notes/speedup/prims-parallel.md).
 //
 // Параметр dx принимает std::span<const double> — это допускает передачу
 // как std::vector<double>, так и std::array<double, dim> (и плоских буферов SoA в будущем),

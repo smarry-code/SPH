@@ -1,6 +1,6 @@
 #pragma once
 // fiber/fiber_input.hpp
-// Разбор файла ломаных нитей (fiber/PLAN.md, этап Ф2, пункт 3). Формат файла
+// Разбор файла ломаных нитей (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 3). Формат файла
 // подробно описан в комментарии над load_fiber_file (src/fiber_input.cpp).
 // Объявление здесь, определение — в src/fiber_input.cpp (общий конвейер,
 // как остальные модули проекта: заголовки в include/, исходники в src/).

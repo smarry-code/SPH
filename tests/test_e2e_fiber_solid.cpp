@@ -1,5 +1,5 @@
 // tests/test_e2e_fiber_solid.cpp
-// E2E-критерии готовности этапа Ф6 (fiber/PLAN.md, «Fiber-Solid-Contact»,
+// E2E-критерии готовности этапа Ф6 (notes/fiber-model/fiber-plan.md, «Fiber-Solid-Contact»,
 // «Готово, когда»): «тесты проходят, e2e без проникания нити в пластину».
 //
 // Два сценария:
@@ -33,7 +33,7 @@
 //      вычисляется (тем же kernel'ом, что и в продовом пути), но НЕ
 //      применяется к пластине -- она зафиксирована по определению сценария.
 //
-//  (В) трение нить-Solid (fiber/fiber_solid_friction_implementation.md, §7.2):
+//  (В) трение нить-Solid (notes/fiber-contact/fiber-solid-friction-implementation.md, §7.2):
 //      та же сцена (нить над пластиной) с касательной скоростью v_t0 вдоль x,
 //      интегрирование РЕАЛЬНЫМ решателем (ode::PredictorCorrectorSolver) в порядке
 //      шага src/time_integration.cpp, включая единую стадию трения:
@@ -398,7 +398,7 @@ void test_fiber_falls_on_plate()
 }
 
 // =========================================================================
-// (В) трение нить-Solid на пластине (fiber/fiber_solid_friction_implementation.md,
+// (В) трение нить-Solid на пластине (notes/fiber-contact/fiber-solid-friction-implementation.md,
 // §7.2). Та же сцена, что test_fiber_falls_on_plate (нить над пластиной падает
 // вниз), плюс касательная скорость v_t0 вдоль x (вдоль нити). Интегратор
 // повторяет порядок шага src/time_integration.cpp на РЕАЛЬНОМ решателе

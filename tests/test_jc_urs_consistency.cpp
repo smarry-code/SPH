@@ -1,7 +1,7 @@
 // tests/test_jc_urs_consistency.cpp
 // urs() (src/int_force.cpp) и solid_eos() (interactions/solid_sph.hpp) обязаны
 // давать побитово одинаковые p, c для itype 12-15 (риск 2 в
-// fiber/jc-implementation-plan.md): оба зовут eos_jc. Сетка (rho, u, D).
+// notes/johnson-cook/jc-implementation-plan.md): оба зовут eos_jc. Сетка (rho, u, D).
 #include "int_force.hpp"
 #include "interactions/solid_sph.hpp"
 

@@ -1,16 +1,16 @@
 # Инструкция по внедрению трения Fiber–Solid
 
-> **Статус (2026-11-14):** реализовано. Трение нить–Solid как проекция на уровне скоростей в общей стадии с трением нить–нить: `FiberSolidFrictionContact`, `fiber_solid_friction_impulse` в `include/interactions/fiber_friction.hpp`, `SolidVelocityUpdate` в `include/ode/ode_solver.hpp`, коэффициент `mu_fs` в `MATERIAL` (`src/fiber_input.cpp`); тесты `tests/test_fiber_friction.cpp`. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
+> **Статус (2026-11-14):** реализовано. Трение нить–Solid как проекция на уровне скоростей в общей стадии с трением нить–нить: `FiberSolidFrictionContact`, `fiber_solid_friction_impulse` в `include/interactions/fiber_friction.hpp`, `SolidVelocityUpdate` в `include/ode/ode_solver.hpp`, коэффициент `mu_fs` в `MATERIAL` (`src/fiber_input.cpp`); тесты `tests/test_fiber_friction.cpp`. Актуальное описание — [05-fiber-contact.md](../../docs/04-explanation/models/05-fiber-contact.md) (разд. 6).
 
 Задача 4 из 4.
 
 ## Предусловия и порядок
 
-Эта задача **расширяет стадию трения**, созданную в `fiber/fiber_friction_projection.md`, на второй вид контактов. Начинать только после того, как приняты:
+Эта задача **расширяет стадию трения**, созданную в `notes/fiber-contact/fiber-friction-projection.md`, на второй вид контактов. Начинать только после того, как приняты:
 
-1. `fiber/fiber_contact_segment_pairs.md` — один контакт нить–нить на пересечение;
-2. `fiber/fiber_solid_contact_fix.md` — владение узлом и радиус поиска в Fiber–Solid;
-3. `fiber/fiber_friction_projection.md` — трение нить–нить как проекция на уровне скоростей.
+1. `notes/fiber-contact/fiber-contact-segment-pairs.md` — один контакт нить–нить на пересечение;
+2. `notes/fiber-contact/fiber-solid-contact-fix.md` — владение узлом и радиус поиска в Fiber–Solid;
+3. `notes/fiber-contact/fiber-friction-projection.md` — трение нить–нить как проекция на уровне скоростей.
 
 Основные файлы: `include/interactions/fiber_solid_contact.hpp`, `include/interactions/fiber_friction.hpp` (создан задачей 3), `include/ode/ode_solver.hpp`, `src/time_integration.cpp`, `include/fiber/fiber_system.hpp`. Тесты: `tests/test_fiber_solid.cpp`, `tests/test_fiber_friction.cpp`, `tests/test_e2e_fiber_solid.cpp`.
 
@@ -18,7 +18,7 @@
 
 ## 1. Почему не явный закон Кулона
 
-Первая версия этого плана предлагала $\mathbf F_t = -\mu_{fs}N\,\hat{\mathbf v}_t$ внутри kernel нормального контакта. Это ровно та модель, которая дала дребезг у нить–нить (`fiber/friction_chattering_analysis.md`): как только $\mu N\,\Delta t\,W > \|\mathbf v_t\|$, скорость перебрасывается через ноль, трение перестаёт рассеивать энергию, а в схеме PC ещё и смещается. Для нити, лежащей на пластине, медленное скольжение — основной режим, поэтому дребезг здесь проявится сильнее, чем при скрещивании нитей.
+Первая версия этого плана предлагала $\mathbf F_t = -\mu_{fs}N\,\hat{\mathbf v}_t$ внутри kernel нормального контакта. Это ровно та модель, которая дала дребезг у нить–нить (`notes/fiber-contact/friction-chattering-analysis.md`): как только $\mu N\,\Delta t\,W > \|\mathbf v_t\|$, скорость перебрасывается через ноль, трение перестаёт рассеивать энергию, а в схеме PC ещё и смещается. Для нити, лежащей на пластине, медленное скольжение — основной режим, поэтому дребезг здесь проявится сильнее, чем при скрещивании нитей.
 
 Поэтому трение Fiber–Solid реализуется **той же проекцией на уровне скоростей** и **в той же стадии**, что трение нить–нить (п. 5).
 
@@ -156,7 +156,7 @@ $$
 - если все $c = 1$, умножение на `1.0` точное, и результат побитово совпадает с задачей 3;
 - каждый контакт рассчитывает импульс так, будто ему доступна только своя доля массы бусины, поэтому суммарная поправка не перескакивает через ноль в типичных конфигурациях. Цена — возможное недокомпенсирование: в узле с многими контактами прилипание достигается не за один шаг, а за несколько, с медленной остаточной ползучестью. Точное решение требует итераций (записать как дальнейшую работу, не реализовывать).
 
-Раздел «Известное ограничение» из задачи 3 (шапка `fiber_friction.hpp`, `SPH.md`, `PLAN.md`) обновить: перескок устранён mass splitting, осталось возможное недокомпенсирование.
+Раздел «Известное ограничение» из задачи 3 (шапка `fiber_friction.hpp`, `fiber-problem-statement.md`, `fiber-plan.md`) обновить: перескок устранён mass splitting, осталось возможное недокомпенсирование.
 
 ### 5.3. Вклады и место в шаге
 
@@ -227,12 +227,12 @@ Mass splitting:
 
 ## 8. Документация
 
-1. `fiber/SPH.md`, раздел Fiber-Solid-Contact: абзац «Следуя Meyer, базовая версия ... не содержит тангенциального трения» заменить подразделом «Постановка проекта: трение» — формулы п. 3–5, смысл `mu_fs`, ограничения п. 6.
-2. `fiber/SPH.md`, описание стадии трения (добавлено задачей 3): теперь два вида контактов, общий проход, mass splitting, пробная скорость Solid с XSPH.
+1. `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Solid-Contact: абзац «Следуя Meyer, базовая версия ... не содержит тангенциального трения» заменить подразделом «Постановка проекта: трение» — формулы п. 3–5, смысл `mu_fs`, ограничения п. 6.
+2. `notes/fiber-model/fiber-problem-statement.md`, описание стадии трения (добавлено задачей 3): теперь два вида контактов, общий проход, mass splitting, пробная скорость Solid с XSPH.
 3. Шапка `fiber_solid_contact.hpp`: kernel считает только нормальную силу и заполняет слоты трения.
 4. Шапка `fiber_friction.hpp`: два вида контактов, mass splitting, обновлённое ограничение.
 5. `fiber_system.hpp`: комментарий к `mu_fs`.
-6. `fiber/PLAN.md`: строку риска из задачи 3 обновить (перескок устранён, осталось недокомпенсирование); добавить строку про момент импульса (п. 6.1).
+6. `notes/fiber-model/fiber-plan.md`: строку риска из задачи 3 обновить (перескок устранён, осталось недокомпенсирование); добавить строку про момент импульса (п. 6.1).
 
 ---
 

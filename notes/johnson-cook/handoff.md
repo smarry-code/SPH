@@ -3,7 +3,7 @@
 Дата: 2026-11-09. Ветка `fiber_johnson_cook` (на `origin`, GitHub `smarry-code/SPH`).
 Файл для новой сессии Claude Code: прочитать целиком перед началом работы.
 
-> **Примечание (2026-11-14):** документ — снимок на 2026-11-09. Хеши коммитов ниже — из ветки `fiber_johnson_cook`; в `fiber_new`/`documentation` те же изменения лежат под другими хешами (напр. `c2733a0` + `51f9371` вместо `6be23bb` + `e17ea4d`; `887d6b8` — отчёт 05, ADR-009, HANDOFF). Ключ `axisym_pair_mass` откатан и в коде отсутствует; ключи `xsph_mode`, `jc_heating`, `jc_chi` и каналы мощности лога энергии (`include/energy_log.hpp`) в коде есть (`src/input.cpp`, `include/simulation_config.hpp`). Старый путь RHS (`density.cpp`, `int_force()` и т. п.) удалён в a4ce0b9. Сведения о сервере (2 ядра, правила про `claude-compute-8t`) верны на 2026-11-09 и могли измениться. Актуальное описание — [ADR-009](../docs/04-explanation/decisions/adr-009-johnson-cook.md), [how-to](../docs/02-how-to/06-johnson-cook-material.md), [запуск тестов](../docs/02-how-to/01-run-tests.md).
+> **Примечание (2026-11-14):** документ — снимок на 2026-11-09. Хеши коммитов ниже — из ветки `fiber_johnson_cook`; в `fiber_new`/`documentation` те же изменения лежат под другими хешами (напр. `c2733a0` + `51f9371` вместо `6be23bb` + `e17ea4d`; `887d6b8` — отчёт 05, ADR-009, HANDOFF). Ключ `axisym_pair_mass` откатан и в коде отсутствует; ключи `xsph_mode`, `jc_heating`, `jc_chi` и каналы мощности лога энергии (`include/energy_log.hpp`) в коде есть (`src/input.cpp`, `include/simulation_config.hpp`). Старый путь RHS (`density.cpp`, `int_force()` и т. п.) удалён в a4ce0b9. Сведения о сервере (2 ядра, правила про `claude-compute-8t`) верны на 2026-11-09 и могли измениться. Актуальное описание — [ADR-009](../../docs/04-explanation/decisions/adr-009-johnson-cook.md), [how-to](../../docs/02-how-to/06-johnson-cook-material.md), [запуск тестов](../../docs/02-how-to/01-run-tests.md).
 
 ## 1. Рабочая машина и сборка
 
@@ -23,8 +23,8 @@
 - git: `user.name` не настроен. Коммиты так:
   `git -c user.name=smarry-code -c user.email=<адрес как в прежних коммитах> commit ...`
 - Обязательно прочитать:
-  1. `fiber/jc-implementation-plan.md` (ТЗ), `fiber/jc-analysis.md`;
-  2. `johnson-cook/00-baseline.md` ... `04-pdv-energy-j7-bc6.md` по порядку;
+  1. `notes/johnson-cook/jc-implementation-plan.md` (ТЗ), `notes/johnson-cook/jc-analysis.md`;
+  2. `notes/johnson-cook/00-baseline.md` ... `04-pdv-energy-j7-bc6.md` по порядку;
   3. `docs/04-explanation/decisions/adr-009-johnson-cook.md`.
 
 ## 2. Правила владельца (обязательны)
@@ -35,7 +35,7 @@
 - Коммиты делать по ходу работы. `git push` и PR — только по просьбе.
 - В `experiments/` не коммитить картинки (gif/svg/png).
 - Константы материалов не подгонять под ворота тестов. Непроверенные значения помечать `TODO(verify)`. Заменять их только литературой со ссылкой на источник.
-- **Результатов расчётов Autodyn не будет** (решение 2026-11-04). Константы материалов из библиотеки Autodyn приходят: `fiber/steel-4340-autodyn-constants.md` (STEEL 4340, 15.11.2026) имеет приоритет над литературой и над §3.2 плана; с кодом совпадает полностью.
+- **Результатов расчётов Autodyn не будет** (решение 2026-11-04). Константы материалов из библиотеки Autodyn приходят: `notes/sources/steel-4340-autodyn-constants.md` (STEEL 4340, 15.11.2026) имеет приоритет над литературой и над §3.2 плана; с кодом совпадает полностью.
 - Подзадачи можно отдавать агентам Sonnet/Haiku.
 - Язык общения и документов — русский.
 
@@ -76,7 +76,7 @@
 ## 3а. Сессия 2026-11-15 (читать первым)
 
 Решения владельца: материалы 13–15 забыть (скриншотов не будет), только сталь 4340;
-`fiber/steel-4340-autodyn-constants.md` важнее литературы, с кодом совпадает (`4517862`).
+`notes/sources/steel-4340-autodyn-constants.md` важнее литературы, с кодом совпадает (`4517862`).
 `claude-compute` теперь 8 ядер, можно все 8. **Локально ничего не собирать и не запускать** —
 только правка кода; сборка и тесты на сервере (`~/SPH_jc`, `build2` и т. д.). Push/PR — по команде.
 

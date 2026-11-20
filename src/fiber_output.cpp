@@ -8,10 +8,10 @@
 //     (id — индекс бусины внутри FiberState, 0-based);
 //   затем блок BONDS: заголовок-комментарий, слово "BONDS", затем nb строк
 //     "<i> <j> <l0> <l> <l_break> <elongation>", где l — текущая длина связи
-//     (i,j), elongation = (l - l0) / l0 (fiber/SPH.md, Fiber-Bond: l > l0 —
+//     (i,j), elongation = (l - l0) / l0 (notes/fiber-model/fiber-problem-statement.md, Fiber-Bond: l > l0 —
 //     растяжение). l выводится тоже — оба варианта из пункта 4 плана.
 //
-//   РАСШИРЕНИЕ (неупругие материалы, fiber/fiber-plasticity-design.md, п. 10.3):
+//   РАСШИРЕНИЕ (неупругие материалы, notes/fiber-model/fiber-plasticity-design.md, п. 10.3):
 //   если среди материалов модели есть хоть один с неупругой связью
 //   (FiberMaterial::inelastic()), строки связей и их комментарий-заголовок
 //   получают четыре колонки В КОНЦЕ:

@@ -1,5 +1,5 @@
 // tests/test_e2e_fiber_contact.cpp
-// E2E-критерий готовности этапа Ф5 (fiber/PLAN.md, «Fiber-Fiber-Contact»,
+// E2E-критерий готовности этапа Ф5 (notes/fiber-model/fiber-plan.md, «Fiber-Fiber-Contact»,
 // «Готово, когда»): «две нити, летящие навстречу крест-накрест, отскакивают
 // без взаимного проникания».
 //
@@ -87,7 +87,7 @@ struct FiberBondContactIntegrator
     double dt_prev = 0.0;
 
     // safety -- дополнительный запас поверх встроенных 0.8 в формулах
-    // dt_limit (fiber/PLAN.md §3.7): здесь ДВЕ независимые силы (bond и
+    // dt_limit (notes/fiber-model/fiber-plan.md §3.7): здесь ДВЕ независимые силы (bond и
     // contact) суммируются в одну схему интегрирования одновременно,
     // формулы dt_limit каждой физики выведены без учёта другой -- запас
     // компенсирует это (аналогично 0.5*dt_limit в
@@ -95,7 +95,7 @@ struct FiberBondContactIntegrator
     double safety = 0.5;
     double last_max_penetration = 0.0; // диагностика последнего шага (a)
 
-    // Закон нормальной силы (fiber/plan-fiber-contact-types.md, этап 2).
+    // Закон нормальной силы (notes/fiber-contact/plan-fiber-contact-types.md, этап 2).
     // По умолчанию тип 0 (Герц) -- прежний путь, все вызовы с params = {}.
     interactions::FiberContactLaw law;
     std::vector<double> bead_dt_ref;
@@ -193,10 +193,10 @@ struct FiberBondContactIntegrator
 
         // --- Предиктор скорости (src/time_integration.cpp: solver.predict()
         // ВСЕГДА вызывается ДО RHS этого шага; нет-оп на первом шаге --
-        // fiber/SPH.md, «Первый шаг»). RHS нитей (Fiber-Bond, нормальный
+        // notes/fiber-model/fiber-problem-statement.md, «Первый шаг»). RHS нитей (Fiber-Bond, нормальный
         // Fiber-Fiber-Contact) от скорости НЕ зависит (только от координат;
         // трение -- отдельная стадия ПОСЛЕ вычисления dt, см. ниже,
-        // fiber/fiber_friction_projection.md, §1), поэтому порядок
+        // notes/fiber-contact/fiber-friction-projection.md, §1), поэтому порядок
         // "предиктор -> RHS" физику не определяет: он сохранён только чтобы
         // повторять порядок продового цикла. Итоговая (корректорная) скорость
         // строится от v_min (сохранённой ДО полушага), в точности как здесь и
@@ -262,7 +262,7 @@ struct FiberBondContactIntegrator
         const double coeff = (first && !euler) ? dt * 0.5 : dt;
 
         // --- Стадия трения нить-нить (src/time_integration.cpp: после dt, до
-        // advance; fiber/fiber_friction_projection.md, §5) -- проекция по
+        // advance; notes/fiber-contact/fiber-friction-projection.md, §5) -- проекция по
         // ровно этой базе и коэффициенту. Ускорение трения добавляется в
         // dv_now, поэтому в dv_prev (f^{n-1} следующего предиктора) попадает
         // полное применённое ускорение. При mu_ff=0 стадия не выполняется. ---
@@ -372,12 +372,12 @@ void append_chain(fiber::FiberState& state, fiber::FiberTopology& topology, std:
 }
 
 // ----------------------------------------------------------------------
-// CrossScene / build_cross_scene -- сборка крестовой сцены (fiber/PLAN.md,
+// CrossScene / build_cross_scene -- сборка крестовой сцены (notes/fiber-model/fiber-plan.md,
 // этап Ф5, «Готово, когда»): нить P вдоль оси x на высоте z=+z0, летит вниз
 // (vz=-v0); нить Q вдоль оси y на высоте z=-z0, летит вверх (vz=+v0) --
 // проекции пересекаются в окрестности (x,y)=(0,0). ОБЩАЯ для
 // test_e2e_cross_bounce (единственный потребитель до внедрения трения) и
-// test_e2e_cross_friction (fiber/fiber_friction_implementation.md, §12) --
+// test_e2e_cross_friction (notes/fiber-contact/fiber-friction-implementation.md, §12) --
 // арифметика построения сцены НЕ изменена ни на бит относительно исходного
 // test_e2e_cross_bounce: mu_ff -- единственный новый параметр (в
 // test_e2e_cross_bounce передаётся 0.0, что воспроизводит прежнее поведение
@@ -546,7 +546,7 @@ void test_e2e_cross_bounce()
 
 // ============================================================================
 // test_e2e_cross_friction -- сценарный тест динамического трения Кулона
-// между нитями (fiber/fiber_friction_implementation.md, §12 «Сценарный
+// между нитями (notes/fiber-contact/fiber-friction-implementation.md, §12 «Сценарный
 // тест»). Та же крестовая сцена, что test_e2e_cross_bounce (build_cross_scene
 // выше), плюс касательная скорость: ВСЕ бусины P получают vy=+v_t0 (вдоль оси
 // Q, перпендикулярно нормали контакта n≈z), Q -- vy=0. Три прогона (mu, v_t0
@@ -709,7 +709,7 @@ FrictionCaseResult run_cross_friction_case(double mu, double v_t0, bool diag_ver
 
 // ----------------------------------------------------------------------
 // run_slow_contact -- ПРОВЕРЯЕМЫЙ прогон медленного скольжения (§8.10 (c)/(d)
-// fiber/fiber_friction_projection.md). Та же сцена и тот же критерий останова
+// notes/fiber-contact/fiber-friction-projection.md). Та же сцена и тот же критерий останова
 // (подтверждённый отскок), что у run_cross_friction_case, но интегратор
 // собирает диагностику стадии трения (collect_friction_info) и записывает по
 // шагам: ||u_t|| точки контакта по ИТОГОВЫМ скоростям шага (после корректора,
@@ -908,7 +908,7 @@ void test_e2e_cross_friction()
     // Без трения y-импульс между нитями передаётся только нормальной силой
     // Герца через наклон нормали n (n_y != 0), когда P скользит по изогнутой
     // под нагрузкой Q. В схеме «пара сегментов -- одна сила»
-    // (fiber/fiber_contact_segment_pairs.md) сила пересечения сосредоточена
+    // (notes/fiber-contact/fiber-contact-segment-pairs.md) сила пересечения сосредоточена
     // на 1-2 бусинах, и Q продавливается острым изломом в узле (центральная
     // бусина Q прогибается ~8e-4 м при ~1-2e-4 м у соседей; d=1e-3, l0=2e-3
     // -- редкая дискретизация). P, скользя по y через этот излом, видит
@@ -937,7 +937,7 @@ void test_e2e_cross_friction()
           "(a) mu=0: |d vyQ| < 0.5*|d vzP| (средний наклон нормали контакта мал)");
 
     // --- сохранение импульса системы (P+Q) по всем трём компонентам, оба
-    //     прогона (a) и (b) (fiber/fiber_friction_implementation.md, §12:
+    //     прогона (a) и (b) (notes/fiber-contact/fiber-friction-implementation.md, §12:
     //     «суммарный импульс системы должен сохраняться»). Относительный
     //     допуск -- порядка 1e-12 от масштаба m_total*max(v0, v_t0): Fiber-
     //     Fiber-Contact (нормаль + трение) и Fiber-Bond по построению
@@ -1079,11 +1079,11 @@ void test_e2e_cross_friction()
 
 // ============================================================================
 // test_e2e_cross_types -- крестовая сцена для законов 0-3
-// (fiber/plan-fiber-contact-types.md, шаг 2.4, п. 8). Метрики печатаются,
+// (notes/fiber-contact/plan-fiber-contact-types.md, шаг 2.4, п. 8). Метрики печатаются,
 // критерии: нет NaN, контакт случился, энергия не растёт больше 1 % (типы
 // 1-3), шаг не схлопывается. Столбец sgn -- смены знака относительной
 // касательной скорости центров в прогоне с трением (mu = 0.2, v_t0 = 0.05). Для типов 1-3 ожидается потеря энергии (отскока нет, §0 п.3);
-// ориентир Герца +0.6 % -- fiber/FRICTION_REPORT.md.
+// ориентир Герца +0.6 % -- notes/fiber-contact/friction-report.md.
 // ============================================================================
 double cross_energy(const fiber::FiberState& fb, const fiber::FiberTopology& topo,
                     const std::vector<fiber::FiberMaterial>& mats)
@@ -1178,7 +1178,7 @@ void test_e2e_cross_types()
         check(m.finite && mf.finite, tag + ": нет NaN/Inf (без трения и с трением)");
         check(m.max_pen_over_d > 0.0, tag + ": контакт произошёл");
         // Герц -- только справочно (прежнее поведение, рост энергии ~1 % в
-        // этой сцене, fiber/FRICTION_REPORT.md); типы 1-3 -- критерий.
+        // этой сцене, notes/fiber-contact/friction-report.md); типы 1-3 -- критерий.
         if (type != 0) check(m.e_max <= 1.01 * m.e0, tag + ": энергия не растёт больше 1 %");
         check(m.min_dt > 0.1 * m.dt0 && mf.min_dt > 0.1 * mf.dt0, tag + ": шаг не схлопывается");
     }

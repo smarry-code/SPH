@@ -2,12 +2,12 @@
 // interactions/fiber_contact_common.hpp
 // Общие константы/утилиты для Fiber-Fiber-Contact (interactions/
 // fiber_contact.hpp) и Fiber-Solid-Contact (interactions/
-// fiber_solid_contact.hpp): обе задачи (fiber/fiber_contact_segment_pairs.md
-// и fiber/fiber_solid_contact_fix.md) используют одно и то же прижатие
+// fiber_solid_contact.hpp): обе задачи (notes/fiber-contact/fiber-contact-segment-pairs.md
+// и notes/fiber-contact/fiber-solid-contact-fix.md) используют одно и то же прижатие
 // параметра к границе сегмента (η) и один и тот же вывод неравенства
 // треугольника для радиуса поиска (текущая, не номинальная l0!, максимальная
 // длина связи L_max) -- вынесены сюда, чтобы не заводить вторую константу и
-// не дублировать вычисление (fiber/fiber_solid_contact_fix.md, §1 п.2 и §2).
+// не дублировать вычисление (notes/fiber-contact/fiber-solid-contact-fix.md, §1 п.2 и §2).
 #include <algorithm>
 #include <cstddef>
 
@@ -20,7 +20,7 @@ namespace interactions
 
 // Snapping параметров ближайших точек к 0/1 у границы сегмента нити
 // (перенесено из fiber_contact.hpp без изменений; fiber/
-// fiber_contact_segment_pairs.md, §2 спецификации, η): без него пересечение
+// fiber-contact-segment-pairs.md, §2 спецификации, η): без него пересечение
 // ровно в узле сети то классифицируется как внутренняя точка сегмента
 // (s~1-1e-16), то как его конец -- см. шапки fiber_contact.hpp и
 // fiber_solid_contact.hpp.
@@ -30,10 +30,10 @@ constexpr double kFiberContactSnapEta = 1e-9;
 // fiber_max_current_bond_length -- L_max, максимум ТЕКУЩЕЙ (не номинальной
 // l0!) длины |x_i-x_j| по всем связям topology.bonds расчёта. Связи Fiber-
 // Bond работают только на растяжение и рвутся лишь в Postprocessing ПОСЛЕ
-// шага (fiber/SPH.md), поэтому внутри шага сегмент может быть длиннее l0 (и
+// шага (notes/fiber-model/fiber-problem-statement.md), поэтому внутри шага сегмент может быть длиннее l0 (и
 // даже длиннее l_break) -- номинальное l0 как оценка радиуса поиска не
-// годится (fiber/fiber_contact_segment_pairs.md, пункт 3 в шапке файла;
-// fiber/fiber_solid_contact_fix.md, §2). Используется ОБОИМИ контактами
+// годится (notes/fiber-contact/fiber-contact-segment-pairs.md, пункт 3 в шапке файла;
+// notes/fiber-contact/fiber-solid-contact-fix.md, §2). Используется ОБОИМИ контактами
 // (Fiber-Fiber, interactions/fiber_contact.hpp; Fiber-Solid, interactions/
 // fiber_solid_contact.hpp) -- вычисление ровно одно, порядок операций и
 // reduce тот же, что был в fiber_contact_search_radius ДО выноса сюда

@@ -1,18 +1,18 @@
 #pragma once
 // fiber/fiber_system.hpp
-// Модель данных нити (fiber/PLAN.md, этап Ф2, раздел «3.1. Данные»):
+// Модель данных нити (notes/fiber-model/fiber-plan.md, этап Ф2, раздел «3.1. Данные»):
 // FiberState (переменные состояния бусин), FiberTopology (связи и соседство
 // по нити), FiberMaterial (свойства материала нити).
 //
 // Все поля — double, хранение — Structure of Arrays, частицы всех нитей
-// одного типа лежат в общих массивах (fiber/SPH.md, «Организация хранения
+// одного типа лежат в общих массивах (notes/fiber-model/fiber-problem-statement.md, «Организация хранения
 // частиц»), по образцу ParticleSystem (particle_system.hpp).
 //
 // Компилируется при ЛЮБОМ SPH_DIM (заголовок — часть общего конвейера
 // src/*.cpp, см. CMakeLists.txt: SPH_PIPELINE_SOURCES собирается один раз на
 // каждую цель со своим SPH_DIM). Физически нить требует dim == 3
-// (fiber/SPH.md: «Нити поддерживаются только в трёхмерной постановке»,
-// fiber/PLAN.md Р9) — эту границу проверяет check_fiber_requires_dim3()
+// (notes/fiber-model/fiber-problem-statement.md: «Нити поддерживаются только в трёхмерной постановке»,
+// notes/fiber-model/fiber-plan.md Р9) — эту границу проверяет check_fiber_requires_dim3()
 // НИЖЕ, а не сам факт компиляции структур: FiberState::x[dim]/vx[dim]
 // зеркалирует ParticleSystem::x[dim]/vx[dim] и безопасен при любом dim,
 // пока код обращается только к индексам [0, dim).
@@ -33,7 +33,7 @@ namespace fiber
 // обнаружен путь к файлу нитей), так и из load_fiber_file/fiber_output
 // повторно (defence in depth), чтобы проверка срабатывала «на этапе разбора
 // конфигурации/подготовки расчёта, а не потом в середине шага»
-// (fiber/PLAN.md, этап Ф2, пункт 5).
+// (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 5).
 //
 // dim — compile-time constexpr (param.hpp, ADR-002), поэтому ветка
 // dim != 3 недостижима в бинарнике, собранном с SPH_DIM=3: её проверяет
@@ -47,14 +47,14 @@ inline void check_fiber_requires_dim3()
         throw std::runtime_error(
             "Нити (fiber_file) заданы в конфигурации, но сборка выполнена с "
             "SPH_DIM=" + std::to_string(dim) +
-            " -- нити поддерживаются только при SPH_DIM=3 (fiber/SPH.md, "
-            "раздел \"Fiber\"; fiber/PLAN.md, решение Р9).");
+            " -- нити поддерживаются только при SPH_DIM=3 (notes/fiber-model/fiber-problem-statement.md, "
+            "раздел \"Fiber\"; notes/fiber-model/fiber-plan.md, решение Р9).");
     }
 }
 
 // --- FiberState -------------------------------------------------------------
 // Переменные состояния бусин нити: координаты, скорости, постоянная масса
-// (из ненагруженной конфигурации, fiber/SPH.md), номер нити (меняется при
+// (из ненагруженной конфигурации, notes/fiber-model/fiber-problem-statement.md), номер нити (меняется при
 // разрыве, этап Ф7) и индекс материала (не меняется при разрыве).
 struct FiberState
 {
@@ -83,7 +83,7 @@ struct FiberState
 };
 
 // --- FiberTopology -----------------------------------------------------------
-// Связь топологических соседей (fiber/SPH.md, Fiber-Bond, «Постановка
+// Связь топологических соседей (notes/fiber-model/fiber-problem-statement.md, Fiber-Bond, «Постановка
 // проекта: только растяжение»): пара бусин i<j по цепочке нити, длина в
 // ненагруженной конфигурации l0 и порог разрыва l_break = (1+eps_break)*l0.
 struct FiberBond
@@ -92,7 +92,7 @@ struct FiberBond
     std::size_t j = 0;
     double l0 = 0.0;
     double l_break = 0.0;
-    // Внутренние переменные определяющего закона (fiber/fiber-plasticity-design.md,
+    // Внутренние переменные определяющего закона (notes/fiber-model/fiber-plasticity-design.md,
     // раздел 2): eps_p, q, eps_prev, w_p, w_v. ЛЕЖАТ В КОНЦЕ структуры, чтобы
     // агрегатная инициализация FiberBond{i, j, l0, l_break} продолжала
     // компилироваться. Хранятся внутри связи, а не в отдельном массиве:
@@ -105,7 +105,7 @@ struct FiberBond
     BondState st{};
     // Индекс материала связи. -1 (по умолчанию) -- материал бусины i, побитово
     // прежнее поведение обычных связей цепочки. >= 0 -- собственный материал
-    // связи-стежка (fiber/plan-quilt-fabric.md, раздел 10): связь между бусинами
+    // связи-стежка (notes/fabrics/plan-quilt-fabric.md, раздел 10): связь между бусинами
     // разных нитей, prev/next она не меняет. Лежит ПОСЛЕ st по той же причине
     // (агрегатная инициализация FiberBond{i, j, l0, l_break}).
     int mat = -1;
@@ -113,9 +113,9 @@ struct FiberBond
 
 // prev[]/next[] — соседи по нити, -1 на конце (частица — конец нити, если
 // prev == -1 или next == -1). bonds — каждая связь один раз. version —
-// topology_version (fiber/PLAN.md §3.1): растёт при изменении топологии
+// topology_version (notes/fiber-model/fiber-plan.md §3.1): растёт при изменении топологии
 // (разрыв связи, этап Ф7); используется, чтобы инвалидировать кэшированные
-// от старой топологии структуры (Postprocessing, fiber/SPH.md).
+// от старой топологии структуры (Postprocessing, notes/fiber-model/fiber-problem-statement.md).
 struct FiberTopology
 {
     std::vector<long long> prev;
@@ -146,7 +146,7 @@ inline bool is_chain_bond(const FiberBond& b, const FiberTopology& t)
 
 // --- FiberDelta ---------------------------------------------------------------
 // Изменение состояния Fiber-частицы, суммируемое на стадии Reduce
-// (fiber/PLAN.md §3.3: «FiberDelta: dv[dim]»; fiber/SPH.md, «Основные
+// (notes/fiber-model/fiber-plan.md §3.3: «FiberDelta: dv[dim]»; notes/fiber-model/fiber-problem-statement.md, «Основные
 // требования к interaction kernel», п.6: тип Delta определяется
 // compute-структурой target частицы). Единственное поле — ускорение;
 // interaction kernels (Fiber-Bond, позже Fiber-Fiber/Fiber-Solid) пишут в
@@ -164,10 +164,10 @@ struct FiberDelta
 };
 
 // --- FiberMaterial -----------------------------------------------------------
-// Свойства материала нити (fiber/PLAN.md §3.1; fiber/SPH.md, Fiber-Bond и
+// Свойства материала нити (notes/fiber-model/fiber-plan.md §3.1; notes/fiber-model/fiber-problem-statement.md, Fiber-Bond и
 // Fiber-Solid-Contact): модуль Юнга, коэффициент Пуассона, диаметр,
 // плотность, критическое удлинение разрыва, коэффициент трения нить-нить
-// mu_ff (fiber/fiber_friction_projection.md, §2, п. 2.3). Коэффициент
+// mu_ff (notes/fiber-contact/fiber-friction-projection.md, §2, п. 2.3). Коэффициент
 // одновременно работает и как статический, и как кинематический: прилипание
 // определяется достаточностью mu_ff*N для остановки касательного скольжения
 // под действием других сил шага. mu_ff = 0 по умолчанию — поведение без
@@ -176,7 +176,7 @@ struct FiberDelta
 // (используется в тестах) должна продолжать компилироваться и после
 // добавления этого поля.
 //
-// mu_fs (fiber/fiber_solid_friction_implementation.md, §2) -- коэффициент
+// mu_fs (notes/fiber-contact/fiber-solid-friction-implementation.md, §2) -- коэффициент
 // трения этой нити о ЛЮБОЕ Solid-тело; статический и кинематический
 // одновременно (та же проекция на уровне скоростей, что и у mu_ff). Берётся по
 // материалу бусины a сегмента (как K_fs; правило выбора --
@@ -193,7 +193,7 @@ struct FiberMaterial
     double eps_break = 0.0;
     double mu_ff = 0.0;
     double mu_fs = 0.0; // трение этой нити о любое Solid-тело; статический и кинематический одновременно
-    // Неупругость связи (fiber/fiber-plasticity-design.md, раздел 6): пластика,
+    // Неупругость связи (notes/fiber-model/fiber-plasticity-design.md, раздел 6): пластика,
     // скоростная зависимость, вязкоупругость, критерии разрыва. ПОСЛЕ mu_fs --
     // агрегатная инициализация FiberMaterial{E, nu, d, rho, eps_break, mu_ff,
     // mu_fs} не ломается. По умолчанию всё выключено (упругий материал).
@@ -201,7 +201,7 @@ struct FiberMaterial
     RateParams rate{};
     ViscoParams visco{};
     FailureParams failure{};
-    // Повреждённость с разупрочнением (fiber/plan-fiber-damage.md). По умолчанию выключена.
+    // Повреждённость с разупрочнением (notes/fiber-model/fiber-damage-plan.md). По умолчанию выключена.
     DamageParams damage{};
 
     // Включена ли у материала хоть одна неупругая составляющая связи (пластика,

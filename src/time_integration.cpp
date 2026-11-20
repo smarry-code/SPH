@@ -78,7 +78,7 @@ inline void restore_history_vec(std::vector<double>& dst, const std::vector<doub
 
 // ----------------------------------------------------------------------
 // run_time_integration<Solver> -- ЕДИНСТВЕННАЯ реализация главного цикла по
-// времени (fiber/PLAN.md, этап Ф8, раздел E «Унификация time_integration»).
+// времени (notes/fiber-model/fiber-plan.md, этап Ф8, раздел E «Унификация time_integration»).
 // Обе публичные перегрузки time_integration() ниже -- тонкие обёртки над этим
 // шаблоном: разница между "Solid-only" (старая сигнатура, ParticleSystem&) и
 // "Solid+Fiber" (fiber::Model&) -- только в том, какие fb/topology/materials
@@ -87,19 +87,19 @@ inline void restore_history_vec(std::vector<double>& dst, const std::vector<doub
 // для fiber::Model). Никакой копии ParticleSystem не возникает — оба
 // вызывающих места передают его по ссылке.
 //
-// Solver -- ode::PredictorCorrectorSolver (по умолчанию, fiber/PLAN.md §Ф8)
+// Solver -- ode::PredictorCorrectorSolver (по умолчанию, notes/fiber-model/fiber-plan.md §Ф8)
 // или ode::EulerSolver (include/ode/ode_solver.hpp); выбор — по
 // cfg.ode_solver, ОДИН раз перед циклом while, на стороне вызывающих
 // перегрузок. Интерфейс обоих решателей единообразен (predict()/advance()),
-// поэтому тело цикла не содержит if/switch по типу решателя (fiber/PLAN.md
+// поэтому тело цикла не содержит if/switch по типу решателя (notes/fiber-model/fiber-plan.md
 // §3.9: «Дизайн — выбор через if/switch по enum на этапе вызова» — здесь этот
 // выбор целиком сведён к выбору ШАБЛОННОГО ПАРАМЕТРА при инстанцировании).
 //
-// Порядок одного шага (fiber/SPH.md, «Описание алгоритмов и структур
-// данных» / PLAN.md §3.9): solver.predict() -> RHS (single_step + Fiber-Bond/
+// Порядок одного шага (notes/fiber-model/fiber-problem-statement.md, «Описание алгоритмов и структур
+// данных» / fiber-plan.md §3.9): solver.predict() -> RHS (single_step + Fiber-Bond/
 // Fiber-Fiber-Contact/Fiber-Solid-Contact, ОДНО вычисление на шаг) -> новый
 // [1] проекция закрепления -> dt -> единая стадия трения нить-нить и Fiber-Solid
-// (fiber/fiber_friction_projection.md, fiber/fiber_solid_friction_implementation.md;
+// (notes/fiber-contact/fiber-friction-projection.md, notes/fiber-contact/fiber-solid-friction-implementation.md;
 // внутри неё [2] c_k = c_s = 0 у полностью зажатых и [3] повторная проекция
 // после прибавления трения) -> solver.advance() -> Postprocessing (apply_material_strength, apply_fiber_bond_constitutive, разрыв
 // связей Fiber-Bond) -> вывод. update_smoothing_length -- ИСКЛЮЧЕНИЕ, см.
@@ -108,7 +108,7 @@ inline void restore_history_vec(std::vector<double>& dst, const std::vector<doub
 // advance().
 //
 // Точки [1]-[3] -- стадия constraint кинематического закрепления
-// (interactions/clamp.hpp; fiber/SPH.md, «Clamp (кинематическое
+// (interactions/clamp.hpp; notes/fiber-model/fiber-problem-statement.md, «Clamp (кинематическое
 // закрепление)»): выполняются ТОЛЬКО при непустом clamps, иначе цикл
 // побитово прежний.
 // ----------------------------------------------------------------------
@@ -125,7 +125,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 #endif
     const size_t nfiber = fb.size();
 
-    // Проекция скорости нормального контакта (законы 1-3, fiber/TZ_LAW3_PROJECTION.md):
+    // Проекция скорости нормального контакта (законы 1-3, notes/fiber-contact/law3-projection-tz.md):
     // стадия между выбором dt и стадией трения. Оба ключа 0 -- proj_on == false, ни одна
     // строка ниже не выполняется, результат побитово прежний.
     validate_fiber_contact_projection(cfg);
@@ -154,7 +154,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     // переиспользуемые рабочие буферы (живут всю симуляцию, передаются в single_step)
     WorkBuffers wb;
 
-    // --- Fiber RHS-инфраструктура (fiber/PLAN.md, этапы Ф3/Ф5/Ф6/Ф7):
+    // --- Fiber RHS-инфраструктура (notes/fiber-model/fiber-plan.md, этапы Ф3/Ф5/Ф6/Ф7):
     // per-thread буферы contributions/событий, переиспользуются между шагами
     // ("память только растёт", как и остальные буферы RhsWorkspace). Не
     // относятся к состоянию решателя (не f^{n-1}) -- это инфраструктура
@@ -173,7 +173,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
     std::vector<rhs::ContributionBuffer<interactions::SolidDelta>> solid_friction_thread_buffers;
     std::vector<interactions::FiberSolidFrictionContact> friction_solid_contacts;
     // Контакты нить-нить текущего шага и слоты стадии трения (fiber/
-    // fiber_friction_projection.md, §3, §5): живут на уровне функции, потому
+    // fiber-friction-projection.md, §3, §5): живут на уровне функции, потому
     // что стадия трения выполняется ПОСЛЕ вычисления dt, вне блока RHS.
     // Переиспользуются между шагами (память только растёт).
     interactions::FiberContactSearchResult fiber_contact_search;
@@ -448,7 +448,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                     solver.solid_rhs.av, solver.solid_rhs.dsxx, solver.solid_rhs.dsyy, solver.solid_rhs.dszz,
                     solver.solid_rhs.dsxy, solver.solid_rhs.dsyz, solver.solid_rhs.dsxz, wb);
 
-        // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8): sle=1 -- пересчёт h.
+        // Postprocessing, этап Ф7 (notes/fiber-model/fiber-plan.md §3.8): sle=1 -- пересчёт h.
         // МЕСТО ВЫЗОВА -- сразу после single_step(), ДО compute_cfl_timestep():
         // см. большой комментарий у interactions::update_smoothing_length
         // (include/interactions/postprocessing.hpp) -- почему это обязательно
@@ -456,13 +456,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // вызывался отсюда же, изнутри single_step.cpp).
         interactions::update_smoothing_length(cfg, sys, dt, ntotal);
 
-        // RHS: Fiber-Bond (fiber/PLAN.md, этап Ф3) — readonly search по
-        // topology.bonds, contributions -> reduce (fiber/SPH.md, «Основные
+        // RHS: Fiber-Bond (notes/fiber-model/fiber-plan.md, этап Ф3) — readonly search по
+        // topology.bonds, contributions -> reduce (notes/fiber-model/fiber-problem-statement.md, «Основные
         // требования к interaction kernel»).
-        // RHS: Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5) — readonly
+        // RHS: Fiber-Fiber-Contact (notes/fiber-model/fiber-plan.md, этап Ф5) — readonly
         // spatial search по бусинам РАЗНЫХ нитей (interactions/fiber_contact.hpp),
         // тот же FiberDelta reduce, СКЛАДЫВАЕТСЯ с вкладом Fiber-Bond (обе
-        // физики независимо производят ускорение бусин — fiber/PLAN.md §3.3:
+        // физики независимо производят ускорение бусин — notes/fiber-model/fiber-plan.md §3.3:
         // «FiberDelta: dv[dim]», сумма нескольких interaction types в общий dv).
         double fiber_dt_limit = std::numeric_limits<double>::max();
         bool has_active_friction_contacts = false;      // нить-нить
@@ -528,7 +528,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                                                                    fiber_fiber_params);
             if (fiber_contact_dt_limit < fiber_dt_limit) fiber_dt_limit = fiber_contact_dt_limit;
 
-            // RHS: Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6) -- механический
+            // RHS: Fiber-Solid-Contact (notes/fiber-model/fiber-plan.md, этап Ф6) -- механический
             // контакт бусины нити с реальной Solid-частицей. Вклад в Solid идёт
             // ЧЕРЕЗ ТОТ ЖЕ МЕХАНИЗМ, что и Solid-SPH/Solid-Solid-Contact внутри
             // single_step (SolidDelta + rhs::reduce_contributions) — здесь он
@@ -679,7 +679,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 #endif
         }
 
-        // Общий шаг (fiber/SPH.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).
+        // Общий шаг (notes/fiber-model/fiber-problem-statement.md, «Шаг по времени»): min(CFL, контакт Solid, dt_limit связей).
         dt = compute_cfl_timestep(cfg, sys, ntotal);
         if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;
         if (fiber_dt_limit < dt) dt = fiber_dt_limit;
@@ -756,8 +756,8 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
                     fiber_exec, h_proj, normal_fs, friction_solid_contacts, fric_list_mode ? &fric_fs_active : nullptr);
         }
 
-        // Единая стадия трения (fiber/fiber_friction_projection.md, §5;
-        // fiber/fiber_solid_friction_implementation.md, §5): проекция на
+        // Единая стадия трения (notes/fiber-contact/fiber-friction-projection.md, §5;
+        // notes/fiber-contact/fiber-solid-friction-implementation.md, §5): проекция на
         // уровне скоростей по формуле обновления скорости решателя для ОБОИХ
         // видов контактов (нить-нить и Fiber-Solid) ОДНИМ проходом Якоби, с
         // mass splitting (c_k по обоим видам, c_s для частиц Solid).
@@ -924,13 +924,13 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 #endif
         // OdeSolver: State::advance -- обновление на полный шаг (Solid: u/rho/s/
         // v/x с правилами, специфичными для Solid (u>=0, XSPH), — внутри
-        // решателя, fiber/PLAN.md §3.9; Fiber: только x, v).
+        // решателя, notes/fiber-model/fiber-plan.md §3.9; Fiber: только x, v).
         solver.advance(fiber_exec, sys, ntotal, fb, nfiber, dt);
 #ifdef SPH_CONTACT_STATS
         if (cstats) cstats->after_advance(time + dt, dt, fb, sys, friction_contacts, friction_solid_contacts);
 #endif
 
-        // Postprocessing, этап Ф7 (fiber/PLAN.md §3.8) -- ПОСЛЕ шага
+        // Postprocessing, этап Ф7 (notes/fiber-model/fiber-plan.md §3.8) -- ПОСЛЕ шага
         // ODESolver (predictor-corrector/Euler Solid И Fiber уже завершены
         // выше):
         //   1) Мизес/JH-2 -- interactions::apply_material_strength, буквально
@@ -943,7 +943,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         //      новый object_id j-стороне, topology.bonds/version). Fiber-Bond
         //      kernel и Fiber-Fiber-Contact search строят primitives заново
         //      из topology/object_id на КАЖДОМ вызове RHS -- отдельной
-        //      инвалидации кэша не требуется (fiber/SPH.md, «Postprocessing и
+        //      инвалидации кэша не требуется (notes/fiber-model/fiber-problem-statement.md, «Postprocessing и
         //      изменение topology»).
 #ifdef SPH_ENERGY_LOG
         // Лог энергии: пластическая работа Мизеса (Solid) и каналы нитей --
@@ -1011,7 +1011,7 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
 
 } // namespace detail
 
-// Основная функция временной интеграции (fiber/PLAN.md, этап Ф8: тонкая
+// Основная функция временной интеграции (notes/fiber-model/fiber-plan.md, этап Ф8: тонкая
 // обёртка над detail::run_time_integration с пустыми Fiber-структурами по
 // умолчанию -- FiberState::n == 0, FiberTopology::bonds.empty(), поэтому вся
 // Fiber-физика внутри общего цикла no-op, как и раньше в перегрузке для
@@ -1033,7 +1033,7 @@ void time_integration(const SimulationConfig& cfg, ParticleSystem& sys, size_t n
                                                                      kNoClamps, nullptr);
 }
 
-// Перегрузка для fiber::Model (этап Ф2: fiber/PLAN.md пункт 7 — сигнатура;
+// Перегрузка для fiber::Model (этап Ф2: notes/fiber-model/fiber-plan.md пункт 7 — сигнатура;
 // этап Ф3+: физика Fiber-Bond/Fiber-Fiber-Contact/Fiber-Solid-Contact/
 // Postprocessing). Тонкая обёртка над detail::run_time_integration — та же
 // функция, что и у старой сигнатуры выше, различаются только передаваемые

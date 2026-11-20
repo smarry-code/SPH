@@ -12,8 +12,8 @@
 
 // ============================================================================
 // rhs/contributions.hpp — Contribution/ContributionBuffer/ContributionWriter
-// и reduce по шардам owner-computes (fiber/SPH.md, разделы "Compute
-// interaction kernel", "Reduce", "Детерминизм"; fiber/PLAN.md §3.5).
+// и reduce по шардам owner-computes (notes/fiber-model/fiber-problem-statement.md, разделы "Compute
+// interaction kernel", "Reduce", "Детерминизм"; notes/fiber-model/fiber-plan.md §3.5).
 //
 // Interaction kernel не пишет Delta напрямую в общий RHS частицы (гонка
 // данных при нескольких primitives, влияющих на одну частицу). Вместо этого
@@ -28,7 +28,7 @@ namespace rhs
 {
 
 // Метаданные вклада, нужные ТОЛЬКО для канонического порядка суммирования в
-// детерминированном режиме (SPH.md, "Детерминизм": interaction_type,
+// детерминированном режиме (fiber-problem-statement.md, "Детерминизм": interaction_type,
 // primitive_id, contribution_slot).
 struct ContributionMeta
 {
@@ -48,7 +48,7 @@ struct Contribution
 // ----------------------------------------------------------------------
 // ContributionBuffer<Delta> — буфер вкладов ОДНОГО worker'а для ОДНОЙ
 // compute-структуры. Часть RhsWorkspace: переиспользуется между вызовами
-// RHS — clear() сбрасывает размер, но не освобождает память (SPH.md,
+// RHS — clear() сбрасывает размер, но не освобождает память (fiber-problem-statement.md,
 // "Временная память": "не следует выполнять большое количество небольших
 // heap allocations внутри... interaction kernel").
 // ----------------------------------------------------------------------
@@ -137,9 +137,9 @@ private:
 // ----------------------------------------------------------------------
 // ContributionWriter<Delta> — интерфейс kernel'а на одну compute-структуру:
 //     output.emit(target, delta, primitive_id[, slot]);
-// соответствует SPH.md: "output.emit<Fiber>(fiber_id, fiber_delta)".
+// соответствует fiber-problem-statement.md: "output.emit<Fiber>(fiber_id, fiber_delta)".
 //
-// Инженерное отклонение от буквального текста SPH.md: там один writer умеет
+// Инженерное отклонение от буквального текста fiber-problem-statement.md: там один writer умеет
 // emit<Fiber>/emit<Solid> сразу для нескольких compute-структур. На Ф1 нет ни
 // Fiber, ни Solid (задача явно запрещает физику) — вводить полиморфный по
 // compute-структуре writer нечем наполнить и нечем протестировать.
@@ -169,7 +169,7 @@ private:
 };
 
 // ----------------------------------------------------------------------
-// reduce_contributions — CPU reduce по схеме owner-computes (SPH.md,
+// reduce_contributions — CPU reduce по схеме owner-computes (fiber-problem-statement.md,
 // "Reduce"): диапазон [0, particle_count) режется на shard'ы (заметно
 // мельче числа worker'ов), ссылки на вклады раскладываются по shard'ам
 // двухпроходной схемой count -> prefix sum -> scatter (та же схема, что у
@@ -180,7 +180,7 @@ private:
 // В детерминированном режиме (options.deterministic) вклады внутри shard'а
 // предварительно сортируются по (target, interaction_type, primitive_id,
 // slot) — результат не зависит от того, сколько потоков и в каком порядке
-// произвели contributions (SPH.md, "Детерминизм").
+// произвели contributions (fiber-problem-statement.md, "Детерминизм").
 //
 // КОНТРАКТ ПО УМОЛЧАНИЮ (deterministic = false, так зовут все ядра расчёта):
 // сортировки нет, порядок суммирования на частицу -- номер буфера, затем
@@ -268,7 +268,7 @@ void reduce_segments_into(const CpuExecutor& exec, std::size_t nbuf, std::size_t
     }
     shard_count = std::max<std::size_t>(1, std::min(shard_count, particle_count));
 
-    // Непрерывные границы shard'ов: [0,b1), [b1,b2), ... (SPH.md, "Reduce").
+    // Непрерывные границы shard'ов: [0,b1), [b1,b2), ... (fiber-problem-statement.md, "Reduce").
     scratch.shard_bound.resize(shard_count + 1);
     for (std::size_t s = 0; s <= shard_count; ++s)
     {

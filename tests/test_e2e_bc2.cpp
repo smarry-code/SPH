@@ -1,7 +1,7 @@
 // test_e2e_bc2.cpp
 // End-to-end тест на кейсе BC2 (удар по карбиду бора).
-// ТЗ: contact/04-e2e-test-brief.md. Автоматизирует шаг 6 плана
-// (contact/01-plan.md) — интеграционную проверку всего конвейера на реальной
+// ТЗ: notes/contact/04-e2e-test-brief.md. Автоматизирует шаг 6 плана
+// (notes/contact/01-plan.md) — интеграционную проверку всего конвейера на реальной
 // осесимметричной геометрии с последующей сверкой с эталонной кривой.
 //
 // ВАЖНО ПРО РАЗМЕРНОСТЬ (решение E1, ТЗ §2): кейс требует dim = 2, поэтому
@@ -20,7 +20,7 @@
 //      переднего фронта, безразмерные отношения расчёт/эталон и грубые ворота.
 //      Сверка в общем АБСОЛЮТНОМ времени неприменима: начало отсчёта времени
 //      эталона не привязано к моменту удара (см. §2 файла и
-//      contact/08-phase-shift.md). Сам компаратор проверяется
+//      notes/contact/08-phase-shift.md). Сам компаратор проверяется
 //      test_comparator_selfcheck() в обоих режимах.
 //   5. Известное ограничение D2=A: контакт не видит пару B4C<->B4C (§6).
 //   6. Отсутствие побочных эффектов в рабочем каталоге (§7).
@@ -196,8 +196,8 @@ Curve read_curve(const fs::path& p, std::string& err)
 // АБСОЛЮТНОГО времени с метриками rel_l2 / max_abs_dev) измерял бессмысленную
 // величину: любой сдвиг начала отсчёта эталона трактовался как ошибка расчёта.
 // Наблюдавшийся «фазовый сдвиг» ~1,07 мкс — артефакт той методики сверки,
-// а не дефект расчёта (разбор — contact/08-phase-shift.md,
-// contact/09-article-conformance.md).
+// а не дефект расчёта (разбор — notes/contact/08-phase-shift.md,
+// notes/contact/09-article-conformance.md).
 //
 // Новая схема: из каждой кривой независимо извлекаются признаки формы (пик,
 // уровни 10/50/90 % на переднем фронте, спад до 70 % пика), кривые совмещаются
@@ -325,18 +325,18 @@ CurveFeatures extract_features(const Curve& c)
 // ГРУБЫЕ ворота. Тест обязан падать только на том, что означает настоящую
 // поломку (кривая вдвое не та), а не на количественном несовпадении с
 // приборным профилем: расхождение по амплитуде объяснено недостаточным
-// разрешением (contact/08-phase-shift.md, §4), и ужесточать пороги следует
+// разрешением (notes/contact/08-phase-shift.md, §4), и ужесточать пороги следует
 // по мере роста разрешения, а не подгонять их под текущий результат.
 //
 // Отношение амплитуд: порог ГРУБЫЙ. Текущий расчёт даёт ~0,66 при
 // delta_x = 2e-4 м; ворота ловят деградацию вдвое. Ужесточать по мере роста
-// разрешения — см. contact/08-phase-shift.md, §4.1-4.3 и §6, п. 1.
+// разрешения — см. notes/contact/08-phase-shift.md, §4.1-4.3 и §6, п. 1.
 constexpr double kAmpRatioLo  = 0.5;
 constexpr double kAmpRatioHi  = 2.0;
 // Отношение длительностей фронта 10-90 %: порог ГРУБЫЙ. Фронт расчёта
 // размазан численной диссипацией примерно вдвое сильнее приборного; ворота
 // ловят только кратное расхождение. Ужесточать по мере роста разрешения —
-// см. contact/08-phase-shift.md, §4.1.
+// см. notes/contact/08-phase-shift.md, §4.1.
 constexpr double kRiseRatioLo = 1.0 / 3.0;
 constexpr double kRiseRatioHi = 3.0;
 
@@ -427,7 +427,7 @@ void print_shape_report(const ShapeMatch& m)
                 "         measured in these tests, and the profiles are not necessarily\n"
                 "         aligned in time with expected elastic precursor velocities»\n"
                 "         (Grady & Moody, SAND96-0551). Сравнивается ФОРМА кривой после\n"
-                "         совмещения; разбор — contact/08-phase-shift.md.\n");
+                "         совмещения; разбор — notes/contact/08-phase-shift.md.\n");
     std::printf("  info : отношения расчёт/эталон: амплитуда = %.3f, фронт 10-90 %% = %.3f, ",
                 m.amp_ratio, m.rise_ratio);
     if (m.fall_ratio_valid) std::printf("спад до 70 %% = %.3f\n", m.fall_ratio);
@@ -1143,7 +1143,7 @@ void emit_reference(const RunResult& r, const RunSettings& rs, bool full)
     std::printf("#   (Grady & Moody, SAND96-0551), поэтому сверка в общем абсолютном\n");
     std::printf("#   времени неприменима. Сравниваются безразмерные отношения\n");
     std::printf("#   расчёт/эталон: амплитуда, фронт 10-90 %%, спад до 70 %% пика.\n");
-    std::printf("#   ГРУБЫЕ ворота (contact/08-phase-shift.md):\n");
+    std::printf("#   ГРУБЫЕ ворота (notes/contact/08-phase-shift.md):\n");
     std::printf("#     отношение амплитуд          в [%g, %g]\n", kAmpRatioLo, kAmpRatioHi);
     std::printf("#     отношение фронтов 10-90 %%   в [%g, %g]\n", kRiseRatioLo, kRiseRatioHi);
     std::printf("#   Величина совмещения печатается справочно и в вердикт не входит.\n");
@@ -1842,7 +1842,7 @@ void check_against_reference(const RunResult& r, bool full)
 
     const bool ok_amp  = amp_gate_ok(m);
     const bool ok_rise = rise_gate_ok(m);
-    std::printf("  info : ворота (ГРУБЫЕ, см. contact/08-phase-shift.md): "
+    std::printf("  info : ворота (ГРУБЫЕ, см. notes/contact/08-phase-shift.md): "
                 "амплитуда в [%.3f, %.3f] — %s; фронт в [%.3f, %.3f] — %s\n",
                 kAmpRatioLo, kAmpRatioHi, ok_amp ? "ok" : "НАРУШЕНЫ",
                 kRiseRatioLo, kRiseRatioHi, ok_rise ? "ok" : "НАРУШЕНЫ");

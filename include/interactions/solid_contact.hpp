@@ -1,7 +1,7 @@
 #pragma once
 // interactions/solid_contact.hpp
-// Solid-Solid-Contact: primitive/kernel для новой схемы RHS (fiber/SPH.md,
-// раздел "Solid-Solid-Contact"; fiber/PLAN.md, этап Ф4, часть A).
+// Solid-Solid-Contact: primitive/kernel для новой схемы RHS (notes/fiber-model/fiber-problem-statement.md,
+// раздел "Solid-Solid-Contact"; notes/fiber-model/fiber-plan.md, этап Ф4, часть A).
 //
 // Физика силы (типы 1-3 -- pinball/Swegle/импульсный) ПОЛНОСТЬЮ переиспользует
 // include/contact_force.hpp (contact::penalty_force -> pinball_force/
@@ -12,14 +12,14 @@
 // объявлены в анонимном namespace той единицы трансляции и не экспортируются,
 // поэтому здесь они воспроизведены заново под другими именами
 // (solid_contact_radius / solid_contact_pair_dt_ref) -- сознательное,
-// временное дублирование мелкой геометрической обвязки (fiber/PLAN.md, этап
+// временное дублирование мелкой геометрической обвязки (notes/fiber-model/fiber-plan.md, этап
 // Ф4, пункт 5: "либо переиспользуемая функция... либо продублируй формулы
 // с комментарием, что дублирование временное"). Для самой физики силы выбран
 // первый вариант (реюз), для этой обвязки -- второй. Уйдёт в часть Б вместе
 // с удалением src/ext_force.cpp.
 //
 // ОТЛИЧИЕ ОТ старого пути: признак контактной пары -- body[i] != body[j]
-// (fiber/SPH.md, "Solid-Solid-Contact"; fiber/PLAN.md §3.1), а НЕ
+// (notes/fiber-model/fiber-problem-statement.md, "Solid-Solid-Contact"; notes/fiber-model/fiber-plan.md §3.1), а НЕ
 // itype[i] != itype[j], как в ext_force.cpp::is_contact_material_pair.
 // Для встроенных генераторов body[] заполняется равным itype
 // (particle_system.hpp), поэтому на BC2/BC6 критерии дают одинаковый набор
@@ -78,7 +78,7 @@ inline double solid_contact_pair_dt_ref(const SimulationConfig& cfg, const Parti
 // реальные: подмножество real_pairs, взятое из ТОГО ЖЕ
 // поиска, что построил Solid-SPH (build_solid_sph_search) -- "Одна и та же
 // построенная spatial structure может использоваться несколькими interaction
-// types" (SPH.md, "Выполнение RHS"). Радиус этого поиска (scale_k*hsml)
+// types" (fiber-problem-statement.md, "Выполнение RHS"). Радиус этого поиска (scale_k*hsml)
 // ШИРЕ фактического контактного диапазона (R_i+R_j) -- ТОЧНО как в старом
 // пути, где ext_force фильтрует те же niac-пары от density/int_force, а не
 // строит собственный más узкий список. Исходный индекс пары в real_pairs (k)
@@ -105,7 +105,7 @@ inline void compute_solid_contact_contributions(
         const rhs::index_t i = contact_pairs[kk].i;
         const rhs::index_t j = contact_pairs[kk].j;
         const std::uint64_t k = contact_pairs[kk].k; // исходный индекс в real_pairs
-        // fiber/PLAN.md §3.1: критерий body[]; список уже межтельный, проверка -- защита
+        // notes/fiber-model/fiber-plan.md §3.1: критерий body[]; список уже межтельный, проверка -- защита
         if (sys.body[i] == sys.body[j]) return;
 
         double dx[dim];
@@ -156,14 +156,14 @@ inline void compute_solid_contact_contributions(
 }
 
 // ----------------------------------------------------------------------
-// Диагностика (fiber/PLAN.md: "диагностика contact_pair_count,
+// Диагностика (notes/fiber-model/fiber-plan.md: "диагностика contact_pair_count,
 // contact_max_delta -- через parallel_reduce"; dt_limit -- как сейчас в
 // contact_force.hpp/ADR-007). Отдельный проход через CpuExecutor::
 // parallel_reduce, буквально по формулировке плана; независим от
 // compute_solid_contact_contributions (та же геометрия пересчитывается).
 // Идёт по contact_pairs -- межтельным парам того же поиска, а не по всем
 // real_pairs (см. build_solid_sph_search).
-// Вызывается КАЖДЫЙ шаг из src/single_step.cpp (fiber/PLAN.md, этап
+// Вызывается КАЖДЫЙ шаг из src/single_step.cpp (notes/fiber-model/fiber-plan.md, этап
 // Ф4-B1) -- ADR-007 требует min_dt_contact ограничивающим продовый шаг
 // сейчас же, а не по отдельному запросу; цена второго прохода по
 // contact_pairs приемлема (см. src/single_step.cpp, комментарий у вызова).

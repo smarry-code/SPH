@@ -32,7 +32,7 @@
 
 Сводную таблицу по всем 11 прогонам собирает `scripts/physics_summary.py`
 (`data/v3_summary.md`, `data/v3_summary.json`). Числа совпадают с
-`fiber/IMPLEMENTATION_REPORT.md` §12.6.
+`notes/fiber-model/fiber-implementation-report.md` §12.6.
 
 | | pierce: 0 / ff / ff+fs | stop 1.8 мс: 0 / ff / ff+fs | stop 5 мс: 0 / ff+fs |
 |---|---|---|---|
@@ -92,7 +92,7 @@
 ## Пересчёт на контакте «пара сегментов» (v2, 2026-09-27)
 
 Сеть, снаряд и сценарии не менялись. Пересчитано на новой схеме
-Fiber-Fiber-Contact «пара сегментов — одна сила» (`fiber/fiber_contact_segment_pairs.md`)
+Fiber-Fiber-Contact «пара сегментов — одна сила» (`notes/fiber-contact/fiber-contact-segment-pairs.md`)
 без трения и с трением μ = 0.3 (`SPH_DEMO_MU_FF`). Каталоги
 `data/v2_mu0/{pierce,stop}` и `data/v2_mu03/{pierce,stop}`. В каждом лежат
 PNG-снимки `anim_frameN.png`, `energy.{csv,json,png}` и `penetration.json`

@@ -2,7 +2,7 @@
 
 **Дата:** 2026-11-06. **Код, по которому сверялось:** ветка `fiber_divergence_diag` (содержит `6f1b63f`).
 **Связанные документы:** `TUNNELING_REPORT.md` (механизм дрейфа), `CONTACT_LAWS_0_3_REPORT.md` (законы),
-`LIT_TUNNELING_LAW3.md` (литература), `fiber/FIBER_MODEL_REPORT.md` §8 (трение), §9.8 (решение 1 для законов 1–3).
+`LIT_TUNNELING_LAW3.md` (литература), `notes/fiber-model/fiber-model-report.md` §8 (трение), §9.8 (решение 1 для законов 1–3).
 
 Это описание метода и плана работ, а не реализация. Номера строк — по ветке `fiber_divergence_diag`.
 

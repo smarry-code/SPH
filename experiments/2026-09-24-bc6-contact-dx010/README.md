@@ -8,7 +8,7 @@
 | **Прогонов** | 4 (`contact_force_type` = 0, 1, 2, 3); три — на этой машине, тип 3 — на вычислительном сервере |
 | **Статус** | завершён; тип 0 дошёл до `t_total`, типы 1–3 оборвались на 92,7–98,9 % расчёта |
 | **Воспроизведение** | [REPRO.md](REPRO.md) + [repro-diff.zip](repro-diff.zip) |
-| **Штатный график при 0,2 мм** | [contact/e2e/bc6_monitor_velocity.svg](../../contact/e2e/bc6_monitor_velocity.svg) — не изменялся |
+| **Штатный график при 0,2 мм** | [notes/contact/e2e/bc6_monitor_velocity.svg](../../notes/contact/e2e/bc6_monitor_velocity.svg) — не изменялся |
 
 ## Вопрос
 
@@ -151,6 +151,6 @@
   типа 0) — не разбиралось; по одной реплике это может быть и случайностью.
 * Разброс реплик типов 1–3 при 0,1 мм не измерялся; горизонт 1,27 мкс взят по
   двум репликам типа 0.
-* Заменять ли штатный график `contact/e2e/bc6_monitor_velocity.svg` этим —
+* Заменять ли штатный график `notes/contact/e2e/bc6_monitor_velocity.svg` этим —
   решение владельца; сейчас не заменён: на нём держатся числа отчёта
-  [contact/06-e2e-bc6.md](../../contact/06-e2e-bc6.md).
+  [notes/contact/06-e2e-bc6.md](../../notes/contact/06-e2e-bc6.md).

@@ -12,7 +12,7 @@ project(SPH LANGUAGES CXX)
 
 # --- AppleClang + OpenMP: системный clang не понимает голый -fopenmp,
 #     нужен -Xpreprocessor -fopenmp и явные include/lib из Homebrew libomp
-#     (fix(build), см. contact/01-plan.md, шаг 0, решение D5).
+#     (fix(build), см. notes/contact/01-plan.md, шаг 0, решение D5).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     execute_process(
         COMMAND brew --prefix libomp
@@ -59,7 +59,7 @@ endif()
 #     Автосборка всех src/*.cpp (точки входа main.cpp и модулей).
 file(GLOB SPH_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 # Модули конвейера БЕЗ точки входа: переиспользуются целями тестов, которые
-# приносят собственный main() (ТЗ contact/04-e2e-test-brief.md §7 — общий
+# приносят собственный main() (ТЗ notes/contact/04-e2e-test-brief.md §7 — общий
 # список исходников в переменной, без второго file(GLOB)).
 set(SPH_PIPELINE_SOURCES ${SPH_SOURCES})
 list(REMOVE_ITEM SPH_PIPELINE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
@@ -71,7 +71,7 @@ target_compile_definitions(SPH PRIVATE SPH_DIM=${SPH_DIM})
 # --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
 enable_testing()
 
-# --- Инфраструктура нитей, этап Ф1 (fiber/PLAN.md): CpuExecutor,
+# --- Инфраструктура нитей, этап Ф1 (notes/fiber-model/fiber-plan.md): CpuExecutor,
 #     ContributionWriter/reduce, SpatialIndex, RhsWorkspace (include/rhs/).
 #     Чистая инфраструктура без физики — не зависит от SPH_DIM/param.hpp,
 #     размерность задаётся шаблонным параметром SpatialIndex<Dim>, поэтому
@@ -117,7 +117,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(test_particle_system PRIVATE -Wno-unused-parameter)
 endif()
 
-# --- Тест контактных сил (part_0.md, ADR-007): аналитика типов 1-3,
+# --- Тест контактных сил (notes/sources/sph-contact-article.md, ADR-007): аналитика типов 1-3,
 #     баланс импульса, ограничитель шага. Линкуется с src/ext_force.cpp,
 #     чтобы покрыть и оркестратор.
 add_executable(test_contact tests/test_contact.cpp src/ext_force.cpp)
@@ -148,7 +148,7 @@ add_test(NAME axisym_test COMMAND test_axisym)
 # --- Тест модели керамики JH-2 (src/ppochnost.cpp) --------------------------
 # Приращение пластической деформации, sigma_i (плоский случай), разрыхление dp
 # и повреждение D при одномерной деформации (SPH_DIM=1). Эталоны -- из формул
-# J&H 1999 (jh2/jh2-code-review.md). Свои объектники конвейера, по образцу
+# J&H 1999 (notes/jh2/jh2-code-review.md). Свои объектники конвейера, по образцу
 # test_axisym (ADR-002).
 add_executable(test_jh2 tests/test_jh2.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_jh2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -167,7 +167,7 @@ add_test(NAME jh2_test COMMAND test_jh2)
 
 # --- Одноэлементный приёмочный расчёт JH-2 (B4C, 1D-сжатие + разгрузка) ------
 # Без SPH-соседей: те же формулы девиатора и давления, что в коде; ключ
-# --csv=<файл> пишет кривую (jh2/jh2-fix-plan.md, этап E, п. 2).
+# --csv=<файл> пишет кривую (notes/jh2/jh2-fix-plan.md, этап E, п. 2).
 add_executable(test_jh2_element tests/test_jh2_element.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_jh2_element PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_jh2_element PRIVATE SPH_DIM=1)
@@ -187,7 +187,7 @@ add_test(NAME jh2_element_test COMMAND test_jh2_element)
 # По образцу test_axisym, но для ветки dim == 3, которую не проверяет ни
 # один сквозной тест: простой сдвиг, сжатие, жёсткое вращение (производная
 # Яуманна), покой при однородном и линейном поле напряжений. Нити
-# (fiber/PLAN.md) живут только в 3D, и Solid рядом с ними считается этой
+# (notes/fiber-model/fiber-plan.md) живут только в 3D, и Solid рядом с ними считается этой
 # веткой. Свои объектники конвейера с SPH_DIM=3 — по той же причине (ADR-002).
 add_executable(test_kinematics_3d tests/test_kinematics_3d.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_kinematics_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -225,7 +225,7 @@ foreach(_as_dim 1 2 3)
     set_tests_properties(art_stress_${_as_dim}d_test PROPERTIES LABELS "jc")
 endforeach()
 
-# --- Модель данных нитей (fiber/PLAN.md, этап Ф2): FiberState, FiberTopology,
+# --- Модель данных нитей (notes/fiber-model/fiber-plan.md, этап Ф2): FiberState, FiberTopology,
 #     FiberMaterial, Model, разбор файла ломаных (fiber_input.cpp), масса/l0/
 #     l_break, body[] в Solid. Нити только при SPH_DIM=3 (Р9) — собственные
 #     объектники конвейера с SPH_DIM=3, по образцу test_kinematics_3d/
@@ -464,7 +464,7 @@ endif()
 add_test(NAME k_solid_elements_test COMMAND test_k_solid_elements)
 set_tests_properties(k_solid_elements_test PROPERTIES LABELS "3d")
 
-# --- Fiber-Bond (fiber/PLAN.md, этап Ф3): primitive/kernel силы растяжения
+# --- Fiber-Bond (notes/fiber-model/fiber-plan.md, этап Ф3): primitive/kernel силы растяжения
 #     топологических соседей (include/interactions/fiber_bond.hpp), dt_limit
 #     связей, предиктор-корректор для fiber::FiberState. Нити — только при
 #     SPH_DIM=3 (Р9), по образцу test_fiber_model.
@@ -484,7 +484,7 @@ endif()
 add_test(NAME fiber_bond_test COMMAND test_fiber_bond)
 set_tests_properties(fiber_bond_test PROPERTIES LABELS "3d")
 
-# --- Связи-стежки (fiber/plan-quilt-fabric.md, этап 2a): директива BOND в .fib,
+# --- Связи-стежки (notes/fabrics/plan-quilt-fabric.md, этап 2a): директива BOND в .fib,
 #     материал связи FiberBond::mat, разрыв связи вне цепочки. SPH_DIM=3.
 add_executable(test_fiber_stitch tests/test_fiber_stitch.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_fiber_stitch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -502,7 +502,7 @@ endif()
 add_test(NAME fiber_stitch_test COMMAND test_fiber_stitch)
 set_tests_properties(fiber_stitch_test PROPERTIES LABELS "3d")
 
-# --- Пластичность нити, этап 1 (fiber/fiber-plasticity-design.md): чистая
+# --- Пластичность нити, этап 1 (notes/fiber-model/fiber-plasticity-design.md): чистая
 #     функция bond_constitutive_update, тесты Т1-Т7. Без решателя и SPH_DIM.
 add_executable(test_fiber_plasticity tests/test_fiber_plasticity.cpp)
 target_include_directories(test_fiber_plasticity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -512,7 +512,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 add_test(NAME fiber_plasticity_test COMMAND test_fiber_plasticity)
 
-# --- Джонсон-Кук, этап J1 (fiber/jc-implementation-plan.md §2, §3.1): чистый
+# --- Джонсон-Кук, этап J1 (notes/johnson-cook/jc-implementation-plan.md §2, §3.1): чистый
 #     модуль include/strength/johnson_cook.hpp, тесты U1-U14. U10 сверяет
 #     возврат с prochnost_mises в геометрии сборки, поэтому три цели по SPH_DIM.
 foreach(_jc_dim 1 2 3)
@@ -522,7 +522,7 @@ foreach(_jc_dim 1 2 3)
     add_test(NAME jc_strength_${_jc_dim}d_test COMMAND test_jc_strength_${_jc_dim}d)
 endforeach()
 
-# --- Джонсон-Кук, этап J2 (fiber/jc-implementation-plan.md §3.3): УРС
+# --- Джонсон-Кук, этап J2 (notes/johnson-cook/jc-implementation-plan.md §3.3): УРС
 #     Linear и Shock (Ми-Грюнайзен), тесты U15-U17. Только src/eos.cpp.
 add_executable(test_jc_eos tests/test_jc_eos.cpp src/eos.cpp)
 target_include_directories(test_jc_eos PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -546,7 +546,7 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 add_test(NAME jc_urs_consistency_test COMMAND test_jc_urs_consistency)
 
-# --- Джонсон-Кук, этапы J4/J5 (fiber/jc-implementation-plan.md §5.3): интеграционные
+# --- Джонсон-Кук, этапы J4/J5 (notes/johnson-cook/jc-implementation-plan.md §5.3): интеграционные
 #     тесты I1-I8 через apply_material_strength. SPH_DIM=1 (I1), SPH_DIM=3 (I2-I4, I6-I8),
 #     SPH_DIM=3 + SPH_ENERGY_LOG (те же + I5, лог пластической работы).
 foreach(_jc_var 1d 3d 3d_elog)
@@ -573,7 +573,7 @@ foreach(_jc_var 1d 3d 3d_elog)
     add_test(NAME jc_integration_${_jc_var}_test COMMAND test_jc_integration_${_jc_var})
 endforeach()
 
-# --- Пластичность нити, этап 2 (fiber/fiber-plasticity-design.md): поля
+# --- Пластичность нити, этап 2 (notes/fiber-model/fiber-plasticity-design.md): поля
 #     состояния FiberBond, RHS-ядро, проход Postprocessing; Т0, Т8-Т11 +
 #     полный цикл пластики. По образцу test_fiber_bond.
 add_executable(test_fiber_plasticity_integration tests/test_fiber_plasticity_integration.cpp ${SPH_PIPELINE_SOURCES})
@@ -654,7 +654,7 @@ endif()
 add_test(NAME fiber_input_inelastic_test COMMAND test_fiber_input_inelastic)
 set_tests_properties(fiber_input_inelastic_test PROPERTIES LABELS "3d")
 
-# --- ODESolver (fiber/PLAN.md, этап Ф8): интерфейс OdeSolver, PredictorCorrector
+# --- ODESolver (notes/fiber-model/fiber-plan.md, этап Ф8): интерфейс OdeSolver, PredictorCorrector
 #     и Euler (include/ode/ode_solver.hpp) -- первый порядок сходимости Эйлера
 #     на задаче с аналитическим решением, ограниченность энергии нити без
 #     контактов на PredictorCorrector. Нити -- только при SPH_DIM=3 (Р9), по
@@ -675,7 +675,7 @@ endif()
 add_test(NAME ode_solver_test COMMAND test_ode_solver)
 set_tests_properties(ode_solver_test PROPERTIES LABELS "3d")
 
-# --- Postprocessing: разрыв связей Fiber-Bond (fiber/PLAN.md, этап Ф7):
+# --- Postprocessing: разрыв связей Fiber-Bond (notes/fiber-model/fiber-plan.md, этап Ф7):
 #     каркас "поиск событий -> применение" (include/interactions/
 #     postprocessing.hpp), критерий l > l_break, новый object_id
 #     отделившейся части, взаимодействие через Fiber-Fiber-Contact после
@@ -696,7 +696,7 @@ endif()
 add_test(NAME fiber_break_test COMMAND test_fiber_break)
 set_tests_properties(fiber_break_test PROPERTIES LABELS "3d")
 
-# --- Fiber-Fiber-Contact (fiber/PLAN.md, этап Ф5): primitive/kernel
+# --- Fiber-Fiber-Contact (notes/fiber-model/fiber-plan.md, этап Ф5): primitive/kernel
 #     пространственного контакта бусин разных нитей
 #     (include/interactions/fiber_contact.hpp), dt_limit контакта,
 #     диагностика "пар на пересечение". Нити — только при SPH_DIM=3 (Р9), по
@@ -719,7 +719,7 @@ set_tests_properties(fiber_contact_test PROPERTIES LABELS "3d")
 
 # --- Трение нить-нить: проекция на уровне скоростей (стадия между dt и
 #     advance(); include/interactions/fiber_friction.hpp,
-#     fiber/fiber_friction_projection.md, §8). Нити -- только SPH_DIM=3.
+#     notes/fiber-contact/fiber-friction-projection.md, §8). Нити -- только SPH_DIM=3.
 add_executable(test_fiber_friction tests/test_fiber_friction.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_fiber_friction PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(test_fiber_friction PRIVATE SPH_DIM=3)
@@ -738,7 +738,7 @@ set_tests_properties(fiber_friction_test PROPERTIES LABELS "3d")
 
 # --- Нормальный контакт нитей как проекция скорости (стадия между dt и трением;
 #     include/interactions/fiber_normal_projection.hpp,
-#     fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md, fiber/TZ_LAW3_PROJECTION.md).
+#     notes/fiber-contact/law3-projection-report.md, notes/fiber-contact/law3-projection-tz.md).
 #     Нити -- только SPH_DIM=3. Только заголовки (без SPH_PIPELINE_SOURCES). Тест шагает по
 #     времени (Т1: 1e5 шагов) -- тяжёлые прогоны на сервере.
 add_executable(test_fiber_contact_projection tests/test_fiber_contact_projection.cpp)
@@ -779,7 +779,7 @@ set_tests_properties(clamp_test_t2 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_T
 add_test(NAME clamp_test_t4 COMMAND test_clamp)
 set_tests_properties(clamp_test_t4 PROPERTIES LABELS "3d" ENVIRONMENT "OMP_NUM_THREADS=4")
 
-# --- E2E-критерий готовности Ф5 (fiber/PLAN.md: «две нити, летящие навстречу
+# --- E2E-критерий готовности Ф5 (notes/fiber-model/fiber-plan.md: «две нити, летящие навстречу
 #     крест-накрест, отскакивают без взаимного проникания»).
 add_executable(test_e2e_fiber_contact tests/test_e2e_fiber_contact.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_e2e_fiber_contact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -797,7 +797,7 @@ endif()
 add_test(NAME e2e_fiber_contact_test COMMAND test_e2e_fiber_contact)
 set_tests_properties(e2e_fiber_contact_test PROPERTIES LABELS "3d")
 
-# --- Fiber-Solid-Contact (fiber/PLAN.md, этап Ф6): primitive/kernel
+# --- Fiber-Solid-Contact (notes/fiber-model/fiber-plan.md, этап Ф6): primitive/kernel
 #     механического контакта бусины нити с реальной Solid-частицей
 #     (include/interactions/fiber_solid_contact.hpp), elastic_by_itype
 #     (include/materials.hpp), dt_limit контакта. Нити — только при
@@ -818,7 +818,7 @@ endif()
 add_test(NAME fiber_solid_test COMMAND test_fiber_solid)
 set_tests_properties(fiber_solid_test PROPERTIES LABELS "3d")
 
-# --- Законы pinball/Swegle/импульсный для Fiber-Fiber (fiber/plan-fiber-contact-types.md, этап 2):
+# --- Законы pinball/Swegle/импульсный для Fiber-Fiber (notes/fiber-contact/plan-fiber-contact-types.md, этап 2):
 #     ядро fiber_contact.hpp, предел шага и диагностика.
 add_executable(test_fiber_contact_types tests/test_fiber_contact_types.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_fiber_contact_types PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -836,7 +836,7 @@ endif()
 add_test(NAME fiber_contact_types_test COMMAND test_fiber_contact_types)
 set_tests_properties(fiber_contact_types_test PROPERTIES LABELS "3d")
 
-# --- Законы pinball/Swegle/импульсный для Fiber-Solid (fiber/plan-fiber-contact-types.md, этап 1):
+# --- Законы pinball/Swegle/импульсный для Fiber-Solid (notes/fiber-contact/plan-fiber-contact-types.md, этап 1):
 #     include/interactions/fiber_contact_law.hpp, ядро fiber_solid_contact.hpp.
 add_executable(test_fiber_solid_types tests/test_fiber_solid_types.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_fiber_solid_types PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -854,7 +854,7 @@ endif()
 add_test(NAME fiber_solid_types_test COMMAND test_fiber_solid_types)
 set_tests_properties(fiber_solid_types_test PROPERTIES LABELS "3d")
 
-# --- E2E-критерий готовности Ф6 (fiber/PLAN.md: «smoke одного Solid в 3D,
+# --- E2E-критерий готовности Ф6 (notes/fiber-model/fiber-plan.md: «smoke одного Solid в 3D,
 #     затем нить, падающая на пластину, без проникания»).
 add_executable(test_e2e_fiber_solid tests/test_e2e_fiber_solid.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_e2e_fiber_solid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1107,7 +1107,7 @@ set_tests_properties(plain_weave_random_cut_test PROPERTIES LABELS "3d" TIMEOUT 
 
 # --- Эквивалентность Solid-цикла в новой перегрузке time_integration
 #     (fiber::Model&) со старой (ParticleSystem&) при пустых нитях
-#     (fiber/PLAN.md, этап Ф3). Новая перегрузка не переиспользует старый
+#     (notes/fiber-model/fiber-plan.md, этап Ф3). Новая перегрузка не переиспользует старый
 #     цикл, а содержит его построчную копию (src/time_integration.cpp,
 #     TODO(Ф8)); до этого теста копия не была упражнена НИ ОДНИМ тестом с
 #     непустым Solid (test_fiber_bond.cpp проверяет только Fiber-физику при
@@ -1132,7 +1132,7 @@ endif()
 add_test(NAME fiber_time_integration_equivalence_test COMMAND test_fiber_time_integration_equivalence)
 set_tests_properties(fiber_time_integration_equivalence_test PROPERTIES LABELS "3d" TIMEOUT 300)
 
-# --- Границы SPH_DIM != 3 для нитей (fiber/PLAN.md Ф2, пункт 5):
+# --- Границы SPH_DIM != 3 для нитей (notes/fiber-model/fiber-plan.md Ф2, пункт 5):
 #     fiber::check_fiber_requires_dim3() обязана бросать исключение. dim —
 #     compile-time constexpr (ADR-002), поэтому ветку dim != 3 нельзя
 #     исполнить в цели, собранной с SPH_DIM=3 (там dim == 3 всегда,
@@ -1143,7 +1143,7 @@ add_executable(test_fiber_dim_guard tests/test_fiber_dim_guard.cpp)
 target_include_directories(test_fiber_dim_guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME fiber_dim_guard_test COMMAND test_fiber_dim_guard)
 
-# --- End-to-end тест на кейсе BC2 (contact/04-e2e-test-brief.md) ------------
+# --- End-to-end тест на кейсе BC2 (notes/contact/04-e2e-test-brief.md) ------------
 # Цель линкует ВЕСЬ конвейер (src/*.cpp кроме main.cpp) и компилирует его
 # СВОИМИ объектниками с SPH_DIM=2: объектники цели SPH собраны с dim=1 и
 # несовместимы по ODR (layout ParticleSystem зависит от dim).
@@ -1222,7 +1222,7 @@ if(SPH_E2E_SLOW_TESTS)
     endforeach()
 endif()
 
-# Перестройка графика для отчёта contact/06-e2e-case.md:
+# Перестройка графика для отчёта notes/contact/06-e2e-case.md:
 #     cmake --build build --target bc2_plot
 # ЧЕТЫРЕ полных прогона (по одному на contact_force_type), каждый выгружает
 # свою кривую, затем пятый шаг — быстрый, без расчёта — собирает из выгрузок
@@ -1236,7 +1236,7 @@ endif()
 # допускать параллельный ctest. Поэтому --emit-plot выключен по умолчанию,
 # ни одна зарегистрированная ctest-цель его не передаёт, а обновление картинки
 # остаётся осознанным действием владельца.
-set(SPH_BC2_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e/bc2_monitor_velocity.svg"
+set(SPH_BC2_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/notes/contact/e2e/bc2_monitor_velocity.svg"
     CACHE FILEPATH "Куда цель bc2_plot записывает график BC2")
 # Прогон идёт через cmake -P: цель должна выжить при неудаче теста по существу
 # расчёта, если график при этом записан (подробности — в cmake/bc2_plot.cmake).
@@ -1251,7 +1251,7 @@ add_custom_target(bc2_plot
     COMMENT "Полный прогон BC2 и перестройка ${SPH_BC2_PLOT}"
     USES_TERMINAL VERBATIM)
 
-# --- End-to-end тест на кейсе BC6 (contact/06-e2e-bc6.md) -------------------
+# --- End-to-end тест на кейсе BC6 (notes/contact/06-e2e-bc6.md) -------------------
 # Откольный опыт на B4C: ударник и окно PMMA, подложка — пена 160. Схема та
 # же, что у BC2 (свои объектники конвейера с SPH_DIM=2 по решению E1, по тесту
 # на contact_force_type, smoke по умолчанию, полный режим под опцией), но
@@ -1317,10 +1317,10 @@ if(SPH_E2E_SLOW_TESTS)
     endforeach()
 endif()
 
-# Перестройка графика для отчёта contact/06-e2e-bc6.md:
+# Перестройка графика для отчёта notes/contact/06-e2e-bc6.md:
 #     cmake --build build --target bc6_plot
 # Устройство и обоснование — те же, что у bc2_plot выше.
-set(SPH_BC6_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/contact/e2e/bc6_monitor_velocity.svg"
+set(SPH_BC6_PLOT "${CMAKE_CURRENT_SOURCE_DIR}/notes/contact/e2e/bc6_monitor_velocity.svg"
     CACHE FILEPATH "Куда цель bc6_plot записывает график BC6")
 add_custom_target(bc6_plot
     COMMAND ${CMAKE_COMMAND}
@@ -1455,7 +1455,7 @@ set(_jc_plate_out ${CMAKE_CURRENT_BINARY_DIR}/jc_plate)
 add_test(NAME e2e_jc_hel COMMAND test_e2e_jc_plate --case=hel --outdir=${_jc_plate_out})
 add_test(NAME e2e_jc_spall_nodamage COMMAND test_e2e_jc_plate --case=spall_nodamage --outdir=${_jc_plate_out})
 # E3 с разрушением проходит при пределе давления p_min материала 4340
-# (johnson-cook/03-pmin-energy.md); без него D у плоскости откола застревает на ~0.55.
+# (notes/johnson-cook/03-pmin-energy.md); без него D у плоскости откола застревает на ~0.55.
 add_test(NAME e2e_jc_spall COMMAND test_e2e_jc_plate --case=spall --outdir=${_jc_plate_out})
 set_tests_properties(e2e_jc_hel e2e_jc_spall_nodamage e2e_jc_spall PROPERTIES LABELS "e2e;jc" TIMEOUT 300)
 
@@ -1492,7 +1492,7 @@ set_tests_properties(e2e_jc_taylor_smoke PROPERTIES LABELS "e2e;jc" TIMEOUT 300)
 if(SPH_E2E_SLOW_TESTS)
     # E4: n_r = 24. --energy-warn-only: невязка баланса энергии ~20 % при
     # воротах плана 2 % и не уменьшается с разрешением — открытый вопрос
-    # осесимметричного решателя (johnson-cook/02-e2e.md). Убрать ключ, когда
+    # осесимметричного решателя (notes/johnson-cook/02-e2e.md). Убрать ключ, когда
     # причина будет устранена.
     add_test(NAME e2e_jc_taylor_e4
              COMMAND test_e2e_jc_taylor_elog --case=taylor --energy-warn-only
@@ -1542,7 +1542,7 @@ foreach(_case bc2 bc6)
 endforeach()
 
 # Та же программа в 3D: кейс bc2mini3d (уменьшенный BC2, 3648 частиц), K = 50.
-# Нужна, чтобы перенос Solid на новую схему RHS (fiber/PLAN.md, Ф4) не сломал
+# Нужна, чтобы перенос Solid на новую схему RHS (notes/fiber-model/fiber-plan.md, Ф4) не сломал
 # ветку dim = 3, в которой будут жить нити.
 add_executable(test_regression_3d tests/test_regression.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_regression_3d PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1697,7 +1697,7 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(demo_fiber_layers PRIVATE -fopenmp)
 endif()
 
-# --- Повреждённость связи с разупрочнением (DAMAGE; fiber/plan-fiber-damage.md):
+# --- Повреждённость связи с разупрочнением (DAMAGE; notes/fiber-model/fiber-damage-plan.md):
 #     закон на одной связи, GF, разрыв по D >= 1, разбор .fib, детерминизм.
 add_executable(test_fiber_damage tests/test_fiber_damage.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_fiber_damage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

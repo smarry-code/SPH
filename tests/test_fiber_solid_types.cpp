@@ -1,6 +1,6 @@
 // tests/test_fiber_solid_types.cpp
 // Законы нормальной силы pinball / Swegle / импульсный для Fiber-Solid-Contact
-// (fiber/plan-fiber-contact-types.md, этап 1, шаг 1.6;
+// (notes/fiber-contact/plan-fiber-contact-types.md, этап 1, шаг 1.6;
 // include/interactions/fiber_contact_law.hpp).
 //   1. тип 0 с явными параметрами == вызов без параметров (побитово);
 //   2. аналитика: сила ядра == contact::penalty_force на вручную собранных g, pr;

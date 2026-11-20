@@ -1,5 +1,5 @@
 // tests/test_contributions.cpp
-// Этап Ф1 (fiber/PLAN.md): unit-тест ContributionWriter/ContributionBuffer и
+// Этап Ф1 (notes/fiber-model/fiber-plan.md): unit-тест ContributionWriter/ContributionBuffer и
 // reduce_contributions (include/rhs/contributions.hpp), а также
 // RhsWorkspace (include/rhs/rhs_workspace.hpp) как контейнера буферов.
 //
@@ -58,7 +58,7 @@ static void check(bool cond, const char* msg)
 
 // Тестовая Delta — НЕ физическая величина (Ф1 не содержит Fiber/Solid),
 // просто вектор из 3 double с определённым сложением, как того требует
-// SPH.md ("операция сложения Delta определена на уровне compute-структуры").
+// fiber-problem-statement.md ("операция сложения Delta определена на уровне compute-структуры").
 struct TestDelta
 {
     double v[3] = {0.0, 0.0, 0.0};
@@ -649,7 +649,7 @@ static void test_rhs_workspace_reuse()
     check(&buf1 == &buf2, "RhsWorkspace: повторный get<T> с тем же ключом должен вернуть тот же объект");
     check(buf2[0].size() == 0, "RhsWorkspace: clear() должен сбрасывать размер буфера");
     check(buf2[0].capacity() == cap_after_fill,
-          "RhsWorkspace: clear() не должен уменьшать capacity (память только растёт, SPH.md)");
+          "RhsWorkspace: clear() не должен уменьшать capacity (память только растёт, fiber-problem-statement.md)");
 
     // Другой ключ / другой тип — независимый буфер.
     int& counter = ws.get<int>("some.counter");
@@ -663,7 +663,7 @@ int main()
 #ifdef _WIN32
     SetConsoleOutputCP(65001);
 #endif
-    std::printf("=== test_contributions: ContributionWriter/reduce_contributions (fiber/PLAN.md, этап Ф1) ===\n");
+    std::printf("=== test_contributions: ContributionWriter/reduce_contributions (notes/fiber-model/fiber-plan.md, этап Ф1) ===\n");
 
     test_sum_matches_sequential();
     test_deterministic_bitexact();

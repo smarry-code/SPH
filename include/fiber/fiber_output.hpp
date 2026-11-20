@@ -1,6 +1,6 @@
 #pragma once
 // fiber/fiber_output.hpp
-// Вывод состояния нитей (fiber/PLAN.md, этап Ф2, пункт 4), аналог output()
+// Вывод состояния нитей (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 4), аналог output()
 // (output.hpp) для compute-структуры Fiber. Определение — в
 // src/fiber_output.cpp. Формат файла — в комментарии над fiber_output().
 //

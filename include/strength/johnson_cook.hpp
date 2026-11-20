@@ -1,7 +1,7 @@
 #pragma once
 // strength/johnson_cook.hpp
 // Модель прочности и разрушения Джонсона-Кука (JC): чистые функции без
-// ParticleSystem / Materials / param.hpp (fiber/jc-implementation-plan.md,
+// ParticleSystem / Materials / param.hpp (notes/johnson-cook/jc-implementation-plan.md,
 // разделы 2.1, 2.2, 2.5, 3.1). Единицы СИ: Па, К, с^-1.
 // Запись со слайда лекции [1 - T/T0]^m НЕ используется (jc-analysis.md, §7).
 #include <algorithm>

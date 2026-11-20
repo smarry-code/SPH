@@ -1,6 +1,6 @@
 // tests/test_plain_weave_quilt.cpp
 // Тесты ткани-«одеяла» из патчей и сетки стёжки (include/fiber/plain_weave_quilt.hpp,
-// fiber/plan-quilt-fabric.md, разделы 3-5 и 10-12).
+// notes/fabrics/plan-quilt-fabric.md, разделы 3-5 и 10-12).
 //
 // Разделы:
 //   1 test_equivalence   -- одеяло 34x34 по 3x3 == одна ткань 102x102 (сцена Guo 2019), побитово и .fib;

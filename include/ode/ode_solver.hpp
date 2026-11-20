@@ -1,6 +1,6 @@
 #pragma once
 // ode/ode_solver.hpp
-// OdeSolver (fiber/PLAN.md, этап Ф8; §3.9 «ODESolver»; fiber/SPH.md, разделы
+// OdeSolver (notes/fiber-model/fiber-plan.md, этап Ф8; §3.9 «ODESolver»; notes/fiber-model/fiber-problem-statement.md, разделы
 // «Описание ODESolver» и «ODE solver»): два явных решателя -- PredictorCorrector
 // (рабочий, схема проекта) и Euler (эталон для тестов порядка сходимости).
 //
@@ -12,17 +12,17 @@
 // перед циклом while (см. time_integration.cpp), и рантайм-диспетчеризация
 // виртуальными методами не даёт здесь ничего, кроме лишней косвенности.
 //
-// Операции State::save/State::advance (fiber/PLAN.md §3.9) реализованы как
+// Операции State::save/State::advance (notes/fiber-model/fiber-plan.md §3.9) реализованы как
 // методы PredictorCorrectorSolver::predict_*/correct_* и EulerSolver::step_*
 // -- они и есть "save(y_n)"/"advance(y, y_base, a, f)" применительно к
 // каждой из двух compute-структур (Solid, Fiber). Правила, специфичные для
 // Solid (u >= 0, поправка XSPH к скорости, x += dt*v), живут ВНУТРИ этих
 // методов (в *_solid), а не в общей части решателя -- ровно как требует
-// fiber/PLAN.md §3.9.
+// notes/fiber-model/fiber-plan.md §3.9.
 //
 // PredictorCorrectorSolver -- буквальный перенос схемы, ранее продублированной
 // в обеих перегрузках time_integration (src/time_integration.cpp): арифметика
-// НЕ меняется ни на бит (fiber/PLAN.md §3.9: «перенос схемы... без
+// НЕ меняется ни на бит (notes/fiber-model/fiber-plan.md §3.9: «перенос схемы... без
 // изменений»). Решатель хранит производные прошлого шага f^{n-1}
 // (SolidRhsBuffers/FiberRhsBuffers -- то, что раньше было локальными
 // std::vector внутри time_integration, живущими между итерациями while) и
@@ -40,7 +40,7 @@ namespace ode
 
 enum class SolverKind
 {
-    PredictorCorrector = 0, // по умолчанию (fiber/PLAN.md §Ф8)
+    PredictorCorrector = 0, // по умолчанию (notes/fiber-model/fiber-plan.md §Ф8)
     Euler = 1,
 };
 
@@ -69,9 +69,9 @@ void pc_predict_velocity_half_step(const rhs::CpuExecutor& exec, N n, double dt_
 }
 
 // vx = base + coeff*dv + av; x += dt*vx (Solid -- с поправкой XSPH).
-// use_base == false -> base = текущая vx (первый шаг, fiber/SPH.md «Первый
+// use_base == false -> base = текущая vx (первый шаг, notes/fiber-model/fiber-problem-statement.md «Первый
 //   шаг»: v += dt/2*v̇^0 + ṽ, coeff = dt/2);
-// use_base == true  -> base = v_base (сохранённая v^n, fiber/SPH.md
+// use_base == true  -> base = v_base (сохранённая v^n, notes/fiber-model/fiber-problem-statement.md
 //   «Корректор»: v = v^n + dt*v̇^n + ṽ, coeff = dt).
 template <class N, class XArr, class VxArr, class DvArr, class AvArr>
 void pc_finalize_velocity_position_with_av(const rhs::CpuExecutor& exec, N n, double dt, double coeff, XArr& x,
@@ -106,7 +106,7 @@ void pc_finalize_velocity_position_xsph_position(const rhs::CpuExecutor& exec, N
     }
 }
 
-// То же самое без поправки XSPH (Fiber -- fiber/SPH.md, «finalize»: у Fiber
+// То же самое без поправки XSPH (Fiber -- notes/fiber-model/fiber-problem-statement.md, «finalize»: у Fiber
 // XSPH не определён, только ẋ = v).
 template <class N, class XArr, class VxArr, class DvArr>
 void pc_finalize_velocity_position(const rhs::CpuExecutor& exec, N n, double dt, double coeff, XArr& x, VxArr& vx,
@@ -123,14 +123,14 @@ void pc_finalize_velocity_position(const rhs::CpuExecutor& exec, N n, double dt,
 }
 
 // ============================================================================
-// Явный Эйлер (fiber/PLAN.md §3.9, Р4): y^{n+1} = y^n + dt*f, координата --
+// Явный Эйлер (notes/fiber-model/fiber-plan.md §3.9, Р4): y^{n+1} = y^n + dt*f, координата --
 // по СТАРОЙ скорости (x^{n+1} = x^n + dt*v^n), БЕЗ поправки XSPH (план не
 // упоминает XSPH в формуле Эйлера -- она не добавляется). Поэтому x
 // обновляется ДО перезаписи vx.
 // ============================================================================
 // dv_coeff -- коэффициент при dv в обновлении скорости (у Эйлера равен dt; для
 // нити берётся из fiber_coeff, чтобы step_fiber и fiber_velocity_update
-// использовали одно значение, fiber/fiber_friction_projection.md §4).
+// использовали одно значение, notes/fiber-contact/fiber-friction-projection.md §4).
 template <class N, class XArr, class VxArr, class DvArr>
 void euler_step_position_velocity(const rhs::CpuExecutor& exec, N n, double dt, double dv_coeff, XArr& x, VxArr& vx,
                                    const DvArr& dv)
@@ -160,7 +160,7 @@ void euler_step_scalar(const rhs::CpuExecutor& exec, N n, double dt, Arr& y, con
 // ============================================================================
 // FiberVelocityUpdate -- формула обновления скорости нити на текущем шаге:
 //   v^{n+1} = (*base)[d][i] + h * dv[d][i]
-// (fiber/fiber_friction_projection.md §4). Значения берутся из ТОГО ЖЕ места,
+// (notes/fiber-contact/fiber-friction-projection.md §4). Значения берутся из ТОГО ЖЕ места,
 // что использует advance() (приватный fiber_coeff/fiber_use_base решателя), и
 // нужны стадии трения между вычислением dt и advance().
 // base указывает на массивы решателя или FiberState (валидны до advance()).
@@ -173,7 +173,7 @@ struct FiberVelocityUpdate
 
 // ============================================================================
 // SolidVelocityUpdate -- формула обновления скорости частицы Solid на текущем
-// шаге (fiber/fiber_solid_friction_implementation.md §4):
+// шаге (notes/fiber-contact/fiber-solid-friction-implementation.md §4):
 //   v^{n+1} = ((*base)[d][i] + h * dvx[d][i]) + (*av)[d][i]     (av != nullptr)
 //   v^{n+1} =  (*base)[d][i] + h * dvx[d][i]                    (av == nullptr)
 // -- ровно арифметика correct_solid / step_solid (PC: pc_finalize_velocity_
@@ -190,7 +190,7 @@ struct SolidVelocityUpdate
 };
 
 // ============================================================================
-// Буферы производных RHS одного шага (fiber/PLAN.md §3.9: «решатель хранит
+// Буферы производных RHS одного шага (notes/fiber-model/fiber-plan.md §3.9: «решатель хранит
 // производные прошлого шага f^{n-1}») -- то, что раньше было локальными
 // std::vector внутри time_integration (dvx, du, drho, ds*, av, а также
 // dx/t/tdsdt/ds, нужные только сигнатуре single_step). Владеются решателем,
@@ -232,13 +232,13 @@ struct FiberRhsBuffers
 };
 
 // ============================================================================
-// PredictorCorrectorSolver -- fiber/PLAN.md §3.9, «PredictorCorrector в
+// PredictorCorrectorSolver -- notes/fiber-model/fiber-plan.md §3.9, «PredictorCorrector в
 // варианте проекта»: буквальный перенос схемы time_integration.cpp. Первый
 // шаг (first_step() == true) -- без предиктора, u/rho/s/v += (dt/2)*f^0,
 // x += dt*v; шаги n>=2 -- сохранить y^n, предиктор на dt_prev/2 по f^{n-1},
 // затем корректор y = y^n + dt*f^n, x += dt*v.
 //
-// Нити интегрируются той же схемой (fiber/SPH.md, «ODESolver»): только x, v,
+// Нити интегрируются той же схемой (notes/fiber-model/fiber-problem-statement.md, «ODESolver»): только x, v,
 // без u/rho/s, БЕЗ поправки XSPH (pc_finalize_velocity_position, не _with_av).
 // ============================================================================
 class PredictorCorrectorSolver
@@ -277,7 +277,7 @@ public:
     void set_first_step(bool v) { first_step_ = v; } // восстановление из чекпоинта
 
     // Предиктор Solid на полшага dt (по f^{n-1}, уже лежащей в solid_rhs с
-    // прошлого вызова). Нет-оп на первом шаге -- fiber/SPH.md, «Первый шаг»:
+    // прошлого вызова). Нет-оп на первом шаге -- notes/fiber-model/fiber-problem-statement.md, «Первый шаг»:
     // предиктора нет вовсе.
     void predict_solid(const rhs::CpuExecutor& exec, ParticleSystem& sys, std::size_t ntotal, double dt)
     {
@@ -414,7 +414,7 @@ public:
     }
 
     // База и коэффициент обновления скорости нити ровно как в correct_fiber
-    // (fiber/fiber_friction_projection.md §4). Вызывать после predict() и до
+    // (notes/fiber-contact/fiber-friction-projection.md §4). Вызывать после predict() и до
     // advance() того же шага. Первый шаг: base = fb.vx, h = dt/2; шаг n>=2:
     // base = v_min_fiber_ (v^n), h = dt.
     FiberVelocityUpdate fiber_velocity_update(const fiber::FiberState& fb, double dt) const
@@ -426,7 +426,7 @@ public:
     }
 
     // База, коэффициент и XSPH-поправка обновления скорости частицы Solid ровно
-    // как в correct_solid (fiber/fiber_solid_friction_implementation.md §4).
+    // как в correct_solid (notes/fiber-contact/fiber-solid-friction-implementation.md §4).
     // Вызывать после predict() и до advance() того же шага. Первый шаг:
     // base = sys.vx, h = dt/2; шаг n>=2: base = v_min_ (v^n), h = dt; av --
     // solid_rhs.av (XSPH).
@@ -445,7 +445,7 @@ public:
     void mark_step_done() { first_step_ = false; }
 
     // ------------------------------------------------------------------
-    // Единообразный интерфейс OdeSolver::step (fiber/PLAN.md §3.9), вызываемый
+    // Единообразный интерфейс OdeSolver::step (notes/fiber-model/fiber-plan.md §3.9), вызываемый
     // одинаково для ЛЮБОГО решателя из общего цикла (src/time_integration.cpp,
     // detail::run_time_integration<Solver>) -- без if/switch по типу решателя
     // в самом цикле: predict()/advance() у EulerSolver имеют ту же сигнатуру
@@ -500,7 +500,7 @@ private:
 };
 
 // ============================================================================
-// EulerSolver -- fiber/PLAN.md §3.9, «Явный Эйлер»: f = RHS(y^n) (одно
+// EulerSolver -- notes/fiber-model/fiber-plan.md §3.9, «Явный Эйлер»: f = RHS(y^n) (одно
 // вычисление), y^{n+1} = y^n + dt*f для ВСЕХ переменных (u, rho, v, s, x у
 // Solid; x, v у Fiber), x^{n+1} = x^n + dt*v^n (СТАРАЯ скорость, БЕЗ поправки
 // XSPH -- план не упоминает XSPH у Эйлера, Р4). Ограничение u >= 0 -- то же
@@ -613,7 +613,7 @@ public:
                  fiber::FiberState& /*fb*/, std::size_t /*nfiber*/, double /*dt*/)
     {
         // нет-оп: явный Эйлер вычисляет f = RHS(y^n) без промежуточного
-        // предиктора (fiber/PLAN.md §3.9, «Явный Эйлер»).
+        // предиктора (notes/fiber-model/fiber-plan.md §3.9, «Явный Эйлер»).
     }
 
     void predict(ParticleSystem& /*sys*/, std::size_t /*ntotal*/, fiber::FiberState& /*fb*/, std::size_t /*nfiber*/,

@@ -1,5 +1,5 @@
 // test_fiber_input_inelastic.cpp
-// Т15 (fiber/fiber-plasticity-design.md, раздел 8): директивы неупругости связи
+// Т15 (notes/fiber-model/fiber-plasticity-design.md, раздел 8): директивы неупругости связи
 // в .fib -- PLASTIC, PLASTIC_TABLE, RATE, VISCO, FAILURE.
 //   - все директивы корректно попадают в поля FiberMaterial;
 //   - порядок директив/ключей свободен, директивы до и после MATERIAL/FIBER;
@@ -8,7 +8,7 @@
 //     подстрока и номер строки);
 //   - вывод fiber_output: колонки eps_p sigma w_p w_v только при наличии
 //     неупругих материалов, иначе формат прежний (6 колонок).
-// Собирается с SPH_DIM=3 (нити, fiber/SPH.md).
+// Собирается с SPH_DIM=3 (нити, notes/fiber-model/fiber-problem-statement.md).
 #include "fiber/fiber_input.hpp"
 #include "fiber/fiber_output.hpp"
 #include "fiber/model.hpp"

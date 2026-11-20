@@ -1,12 +1,12 @@
 # Инструкция: исправление нормального контакта Fiber–Solid (излом нити, радиус поиска)
 
-> **Статус (2026-11-14):** реализовано. Правило владения узлом с прижатием параметра (`a_prev` вместо `a_is_first`) и радиус поиска по текущей длине связи (`fiber_max_current_bond_length`) — `include/interactions/fiber_solid_contact.hpp`, `fiber_contact_common.hpp`; тесты `test_kink_vertex`, `test_concave_kink`, `test_stretched_bonds` в `tests/test_fiber_solid.cpp`. Актуальное описание — [05-fiber-contact.md](../docs/04-explanation/models/05-fiber-contact.md).
+> **Статус (2026-11-14):** реализовано. Правило владения узлом с прижатием параметра (`a_prev` вместо `a_is_first`) и радиус поиска по текущей длине связи (`fiber_max_current_bond_length`) — `include/interactions/fiber_solid_contact.hpp`, `fiber_contact_common.hpp`; тесты `test_kink_vertex`, `test_concave_kink`, `test_stretched_bonds` в `tests/test_fiber_solid.cpp`. Актуальное описание — [05-fiber-contact.md](../../docs/04-explanation/models/05-fiber-contact.md).
 
-Задача 2 из 4 (порядок задач — в `fiber/fiber_friction_projection.md`, начало документа).
+Задача 2 из 4 (порядок задач — в `notes/fiber-contact/fiber-friction-projection.md`, начало документа).
 
-Небольшая самостоятельная задача. Её нужно сделать **до** трения Fiber–Solid (`fiber/fiber_solid_friction_implementation.md`): она меняет нормальный контакт, и регрессия трения при `mu_fs = 0` должна сравниваться уже с исправленным поведением.
+Небольшая самостоятельная задача. Её нужно сделать **до** трения Fiber–Solid (`notes/fiber-contact/fiber-solid-friction-implementation.md`): она меняет нормальный контакт, и регрессия трения при `mu_fs = 0` должна сравниваться уже с исправленным поведением.
 
-С задачей 1 (`fiber/fiber_contact_segment_pairs.md`) пересекается только идеей правила владения и константой прижатия параметра. Файлы разные, порядок между ними не важен. Если задача 1 уже внедрена, использовать её константу $\eta$ и не заводить вторую.
+С задачей 1 (`notes/fiber-contact/fiber-contact-segment-pairs.md`) пересекается только идеей правила владения и константой прижатия параметра. Файлы разные, порядок между ними не важен. Если задача 1 уже внедрена, использовать её константу $\eta$ и не заводить вторую.
 
 Основной файл: `include/interactions/fiber_solid_contact.hpp`. Тесты: `tests/test_fiber_solid.cpp`, `tests/test_e2e_fiber_solid.cpp`.
 
@@ -131,8 +131,8 @@ $$
 ## 4. Документация
 
 1. Шапка `fiber_solid_contact.hpp`: решения 2 и 3 переписать (радиус по текущей длине; правило владения узлом с прижатием параметра).
-2. `fiber/SPH.md`, раздел Fiber-Solid-Contact: после формулы для $\lambda$ добавить абзац «Постановка проекта: владение узлом» с таблицей п. 1.
-3. `fiber/PLAN.md`, таблица рисков: строка «Fiber-Solid: потеря контакта во внешнем секторе излома и удвоение у узла» — закрыто этой задачей.
+2. `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Solid-Contact: после формулы для $\lambda$ добавить абзац «Постановка проекта: владение узлом» с таблицей п. 1.
+3. `notes/fiber-model/fiber-plan.md`, таблица рисков: строка «Fiber-Solid: потеря контакта во внешнем секторе излома и удвоение у узла» — закрыто этой задачей.
 
 ---
 

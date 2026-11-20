@@ -1,6 +1,6 @@
 // test_e2e_jc_taylor.cpp
 // E4 (тест Тейлора) и E5 (сходимость по разрешению E4) для материала
-// Джонсона-Кука STEEL 4340 (itype 12). План: fiber/jc-implementation-plan.md
+// Джонсона-Кука STEEL 4340 (itype 12). План: notes/johnson-cook/jc-implementation-plan.md
 // §5.3 E4/E5. Постановка, обоснование стенки и геометрия — tests/jc_taylor.hpp.
 //
 // РЕЖИМЫ (один исполняемый файл)

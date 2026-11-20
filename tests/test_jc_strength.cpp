@@ -1,6 +1,6 @@
 // tests/test_jc_strength.cpp
 // Unit-тесты чистого модуля Джонсона-Кука (include/strength/johnson_cook.hpp;
-// fiber/jc-implementation-plan.md, раздел 5.1, тесты U1-U14). Решатель не
+// notes/johnson-cook/jc-implementation-plan.md, раздел 5.1, тесты U1-U14). Решатель не
 // используется; U10 сверяется с prochnost_mises для геометрии текущей сборки.
 #include "strength/johnson_cook.hpp"
 

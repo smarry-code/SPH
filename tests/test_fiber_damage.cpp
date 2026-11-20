@@ -1,5 +1,5 @@
 // tests/test_fiber_damage.cpp
-// Unit-тесты модели повреждённости связи с разупрочнением (DAMAGE; fiber/plan-fiber-damage.md):
+// Unit-тесты модели повреждённости связи с разупрочнением (DAMAGE; notes/fiber-model/fiber-damage-plan.md):
 //   * чистые функции bond_constitutive_update / bond_stress (include/fiber/fiber_plasticity.hpp);
 //   * deps_f связи (interactions/fiber_bond.hpp::fiber_bond_damage_deps_f);
 //   * критерий разрыва D >= 1 (interactions/postprocessing.hpp::find_fiber_break_events);

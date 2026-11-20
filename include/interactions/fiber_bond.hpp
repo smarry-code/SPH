@@ -1,18 +1,18 @@
 #pragma once
 // interactions/fiber_bond.hpp
 // Fiber-Bond: сила упругой связи между топологическими соседями одной нити
-// (fiber/SPH.md, раздел «Fiber-Bond», «Постановка проекта: только
-// растяжение»; fiber/PLAN.md, этап Ф3, §3.2/§3.3/§3.7).
+// (notes/fiber-model/fiber-problem-statement.md, раздел «Fiber-Bond», «Постановка проекта: только
+// растяжение»; notes/fiber-model/fiber-plan.md, этап Ф3, §3.2/§3.3/§3.7).
 //
 // Primitive — уже существующая fiber::FiberBond (i, j, l0, l_break),
 // fiber/fiber_system.hpp, этап Ф2: список связей строится из topology-графа
-// нити (FiberTopology::bonds), а не пространственным поиском (PLAN.md §3.2,
+// нити (FiberTopology::bonds), а не пространственным поиском (fiber-plan.md §3.2,
 // таблица "Типы взаимодействий и primitives").
 //
 // Kernel только ЧИТАЕТ FiberState/FiberMaterial (readonly) и производит
 // typed contributions (FiberDelta) через rhs::ContributionWriter —
 // суммирование происходит отдельно, в rhs::reduce_contributions. Никаких
-// atomics/mutex здесь нет (fiber/SPH.md, «Основные требования к interaction
+// atomics/mutex здесь нет (notes/fiber-model/fiber-problem-statement.md, «Основные требования к interaction
 // kernel», пп. 1-5).
 #include <algorithm>
 #include <cmath>
@@ -36,7 +36,7 @@ namespace interactions
 // среди типов взаимодействий, вносящих вклад в Fiber.
 constexpr std::uint32_t kFiberBondInteractionType = 1;
 
-// Площадь поперечного сечения нити (fiber/SPH.md, Fiber-Bond): A = pi*d^2/4.
+// Площадь поперечного сечения нити (notes/fiber-model/fiber-problem-statement.md, Fiber-Bond): A = pi*d^2/4.
 // ВНИМАНИЕ: модуль Юнга нити — FiberMaterial.E, не FiberMaterial.nu
 // (коэффициент Пуассона, в Fiber-Bond не используется — постановка проекта
 // работает только с осевой жёсткостью EA, изгиб не моделируется).
@@ -73,7 +73,7 @@ inline fiber::ViscoParams fiber_bond_visco(const fiber::FiberMaterial& mat, doub
     return vp;
 }
 
-// Участок разупрочнения Δε_f ЭТОЙ связи (fiber/plan-fiber-damage.md): DEPS_F напрямую или
+// Участок разупрочнения Δε_f ЭТОЙ связи (notes/fiber-model/fiber-damage-plan.md): DEPS_F напрямую или
 // из энергии разрушения GF: Δε_f = 2·GF/(σ_u·l0) -- энергия разрыва связи не зависит от l0.
 // 0, если повреждённость выключена.
 inline double fiber_bond_damage_deps_f(const fiber::FiberMaterial& mat, double l0)
@@ -97,7 +97,7 @@ inline double fiber_kelvin_h_crit(double xi)
 // на CPU worker, как в rhs/contributions.hpp) contributions Fiber-Bond для
 // ВСЕХ связей topology.bonds. Буферы переиспользуются между вызовами
 // (изменяют размер под exec.num_workers() при необходимости, иначе только
-// clear() — «память только растёт», fiber/SPH.md «Временная память»).
+// clear() — «память только растёт», notes/fiber-model/fiber-problem-statement.md «Временная память»).
 //
 // Для каждой связи (i, j, l0, l_break):
 //   x_ij = x_j - x_i,  l_ij = |x_ij|
@@ -105,7 +105,7 @@ inline double fiber_kelvin_h_crit(double xi)
 //   F_j<-i = -F_i<-j
 //   dv_i = F_i<-j / m_i,  dv_j = F_j<-i / m_j = -F_i<-j / m_j
 // Для материала с неупругостью (FiberMaterial::inelastic(), дизайн
-// fiber/fiber-plasticity-design.md, раздел 3) вместо E*strain берётся
+// notes/fiber-model/fiber-plasticity-design.md, раздел 3) вместо E*strain берётся
 // fiber::bond_stress: sigma = max(E*(eps - eps_p) + q + eta_v*eps_dot, 0),
 // сила A*sigma вдоль связи, eps_dot = ((v_j - v_i).n)/l0 по текущим скоростям
 // FiberState::vx (на момент RHS), eps_p и q читаются из FiberBond::st. Ядро
@@ -113,7 +113,7 @@ inline double fiber_kelvin_h_crit(double xi)
 // момент сохраняются. Для упругого материала (по умолчанию) выполняется ровно
 // прежняя ветка с прежним порядком операций (побитовая совместимость, Т0).
 // l_break здесь не используется — критерий разрыва проверяется в
-// Postprocessing (этап Ф7, fiber/SPH.md «Разрыв связи»), НЕ в этом kernel.
+// Postprocessing (этап Ф7, notes/fiber-model/fiber-problem-statement.md «Разрыв связи»), НЕ в этом kernel.
 // ----------------------------------------------------------------------
 inline void compute_fiber_bond_contributions(
     const rhs::CpuExecutor& exec, const fiber::FiberState& state, const fiber::FiberTopology& topology,
@@ -186,7 +186,7 @@ inline void compute_fiber_bond_contributions(
                 active = true;
             }
         }
-        else if (l > b.l0 && l > 0.0) // только растяжение (fiber/SPH.md, "Постановка проекта")
+        else if (l > b.l0 && l > 0.0) // только растяжение (notes/fiber-model/fiber-problem-statement.md, "Постановка проекта")
         {
             const double strain = l / b.l0 - 1.0;
             coeff = mat.E * A * strain / l;
@@ -268,8 +268,8 @@ inline double fiber_bond_pair_dt(const fiber::FiberMaterial& mat, double l0, dou
 }
 
 // ----------------------------------------------------------------------
-// compute_fiber_bond_dt_limit — dt_limit связей (fiber/SPH.md, "Шаг по
-// времени"; fiber/PLAN.md §3.7):
+// compute_fiber_bond_dt_limit — dt_limit связей (notes/fiber-model/fiber-problem-statement.md, "Шаг по
+// времени"; notes/fiber-model/fiber-plan.md §3.7):
 //     dt_lim = 0.8 / sqrt(k_eff / m_red),  k_eff = E*A/l0,
 //     m_red = m_i*m_j / (m_i+m_j).
 // Для неупругого материала (дизайн, раздел 5): жёсткость по E_inst = E + E1,

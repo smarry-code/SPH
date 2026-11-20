@@ -1,10 +1,10 @@
-# План: нити (Fiber) и вычисление RHS по схеме SPH.md
+# План: нити (Fiber) и вычисление RHS по схеме fiber-problem-statement.md
 
-> **Статус (2026-11-14):** реализовано (все этапы Ф0–Ф9; отличия от плана ниже). Ф0: ADR-008 принят, `particle_system_new.hpp` удалён. Ф1: `include/rhs/` (`CpuExecutor`, `ContributionWriter`, `SpatialIndex`, `RhsWorkspace`), тесты `test_executor`, `test_spatial_index`, `test_contributions`. Ф2: `body[]` в `ParticleSystem`, `include/fiber/` (`Model`, ввод `.fib`/`.k`), `test_fiber_model`, `test_fiber_dim_guard`. Ф3: `interactions/fiber_bond.hpp`, `test_fiber_bond`. Ф4: Solid перенесён на `interactions/solid_sph.hpp` и `solid_contact.hpp`, старый путь (`direct_find`, `link_list`, `FlatGrid`, `PairGraph`, `AccAtomic`/`AccPlain`, `density.cpp`, `art_visc.cpp`, `av_vel.cpp`, `virt_part.cpp`) удалён в a4ce0b9; временный стенд `test_rhs_equivalence` удалён вместе с ним (в дереве тестов его нет), проверка — `test_regression` и 3D-тесты. Ф5: `interactions/fiber_contact.hpp`, `test_fiber_contact`; вместо весов Meyer (Р8) — пара сегментов. Ф6: `interactions/fiber_solid_contact.hpp`, `elastic_by_itype` в `materials.hpp`, `test_fiber_solid`. Ф7: `interactions/postprocessing.hpp`, `test_fiber_break`. Ф8: `include/ode/ode_solver.hpp` (`PredictorCorrectorSolver`, `EulerSolver`, ключ `ode_solver` = 0|1), `src/time_integration.cpp`, `test_ode_solver`. Ф9 (трение; в плане упомянут только в разд. 5): `interactions/fiber_friction.hpp`, `test_fiber_friction`. Отдельных файлов `rhs_pipeline`, `ode_solver.cpp`, `postprocessing.cpp`, `fiber_fiber.hpp`, `fiber_solid.hpp` из разд. 6 в коде нет — логика размещена в `include/interactions/*` и `src/time_integration.cpp`. Актуальное описание — [конвейер RHS](../docs/04-explanation/architecture/pipeline-overview.md), [механика нитей](../docs/04-explanation/models/04-fiber-mechanics.md), [шаг по времени](../docs/04-explanation/models/06-time-integration.md), [ADR-008](../docs/04-explanation/decisions/adr-008-rhs-architecture-fiber.md).
+> **Статус (2026-11-14):** реализовано (все этапы Ф0–Ф9; отличия от плана ниже). Ф0: ADR-008 принят, `particle_system_new.hpp` удалён. Ф1: `include/rhs/` (`CpuExecutor`, `ContributionWriter`, `SpatialIndex`, `RhsWorkspace`), тесты `test_executor`, `test_spatial_index`, `test_contributions`. Ф2: `body[]` в `ParticleSystem`, `include/fiber/` (`Model`, ввод `.fib`/`.k`), `test_fiber_model`, `test_fiber_dim_guard`. Ф3: `interactions/fiber_bond.hpp`, `test_fiber_bond`. Ф4: Solid перенесён на `interactions/solid_sph.hpp` и `solid_contact.hpp`, старый путь (`direct_find`, `link_list`, `FlatGrid`, `PairGraph`, `AccAtomic`/`AccPlain`, `density.cpp`, `art_visc.cpp`, `av_vel.cpp`, `virt_part.cpp`) удалён в a4ce0b9; временный стенд `test_rhs_equivalence` удалён вместе с ним (в дереве тестов его нет), проверка — `test_regression` и 3D-тесты. Ф5: `interactions/fiber_contact.hpp`, `test_fiber_contact`; вместо весов Meyer (Р8) — пара сегментов. Ф6: `interactions/fiber_solid_contact.hpp`, `elastic_by_itype` в `materials.hpp`, `test_fiber_solid`. Ф7: `interactions/postprocessing.hpp`, `test_fiber_break`. Ф8: `include/ode/ode_solver.hpp` (`PredictorCorrectorSolver`, `EulerSolver`, ключ `ode_solver` = 0|1), `src/time_integration.cpp`, `test_ode_solver`. Ф9 (трение; в плане упомянут только в разд. 5): `interactions/fiber_friction.hpp`, `test_fiber_friction`. Отдельных файлов `rhs_pipeline`, `ode_solver.cpp`, `postprocessing.cpp`, `fiber_fiber.hpp`, `fiber_solid.hpp` из разд. 6 в коде нет — логика размещена в `include/interactions/*` и `src/time_integration.cpp`. Актуальное описание — [конвейер RHS](../../docs/04-explanation/architecture/pipeline-overview.md), [механика нитей](../../docs/04-explanation/models/04-fiber-mechanics.md), [шаг по времени](../../docs/04-explanation/models/06-time-integration.md), [ADR-008](../../docs/04-explanation/decisions/adr-008-rhs-architecture-fiber.md).
 
-Документ описывает, как постановка из [SPH.md](SPH.md) реализуется в текущем коде проекта: что меняется в хранении частиц, как устроено вычисление правой части (RHS), в каком порядке идут этапы и чем проверяется каждый из них.
+Документ описывает, как постановка из [fiber-problem-statement.md](fiber-problem-statement.md) реализуется в текущем коде проекта: что меняется в хранении частиц, как устроено вычисление правой части (RHS), в каком порядке идут этапы и чем проверяется каждый из них.
 
-Уравнения всех взаимодействий и общие уравнения динамики — в SPH.md. Здесь только то, как их встроить в код.
+Уравнения всех взаимодействий и общие уравнения динамики — в fiber-problem-statement.md. Здесь только то, как их встроить в код.
 
 ---
 
@@ -12,30 +12,30 @@
 
 | № | Решение | Следствие |
 |---|---|---|
-| Р1 | Параллельность строго по SPH.md: `CpuExecutor`, поиск → primitives → interaction kernel → contributions → reduce по схеме owner computes | Solid-SPH тоже переносится на эту схему; `PairGraph`, раскраска и `AccAtomic`/`AccPlain` удаляются |
+| Р1 | Параллельность строго по fiber-problem-statement.md: `CpuExecutor`, поиск → primitives → interaction kernel → contributions → reduce по схеме owner computes | Solid-SPH тоже переносится на эту схему; `PairGraph`, раскраска и `AccAtomic`/`AccPlain` удаляются |
 | Р2 | ODESolver — отдельный, последний этап | До него работает текущий цикл `time_integration`, в который встраиваются нити |
 | Р3 | Реализуются два решателя: **явный Эйлер** и **PredictorCorrector в варианте проекта** | Эталоны BC2/BC6 сохраняются на PredictorCorrector |
 | Р4 | Эйлер строго явный: $y^{n+1}=y^n+\Delta t\,f(y^n)$, координаты — по старой скорости | На незатухающих связях нити неустойчив; используется как эталонный решатель для тестов |
-| Р5 | `include/particle_system_new.hpp` удаляется | Черновик противоречит SPH.md (полиморфный базовый класс, `float`, одна точка вместо массивов) и нигде не подключается |
+| Р5 | `include/particle_system_new.hpp` удаляется | Черновик противоречит fiber-problem-statement.md (полиморфный базовый класс, `float`, одна точка вместо массивов) и нигде не подключается |
 | Р6 | Нить работает только на растяжение, изгиба нет | Сила связи равна нулю при $l\le l^0$ |
 | Р7 | Разрыв связи — по расстоянию $l>l^{break}=(1+\varepsilon_b)l^0$ | Не по углу изгиба, как у Meyer |
-| Р8 | `Fiber-Fiber-Contact` — буквально по SPH.md: primitive из пары $(i,j)$ и их топологических соседей, веса $w_{ij}$ Meyer | Одно пересечение учитывается несколькими парами — свойство модели Meyer, не ошибка. **Заменено (2026-09-27):** пара сегментов, один контакт на пересечение — `fiber/fiber_contact_segment_pairs.md`, SPH.md «Постановка проекта: пара сегментов» |
+| Р8 | `Fiber-Fiber-Contact` — буквально по fiber-problem-statement.md: primitive из пары $(i,j)$ и их топологических соседей, веса $w_{ij}$ Meyer | Одно пересечение учитывается несколькими парами — свойство модели Meyer, не ошибка. **Заменено (2026-09-27):** пара сегментов, один контакт на пересечение — `notes/fiber-contact/fiber-contact-segment-pairs.md`, fiber-problem-statement.md «Постановка проекта: пара сегментов» |
 | Р9 | Нити только при `SPH_DIM=3` | Нужна новая 3D-цель сборки; это первый 3D-кейс Solid в проекте |
-| Р10 | $E$ и $\nu$ Solid выводятся из $K$ и $G$ | Формулы — в SPH.md, раздел «Fiber-Solid-Contact» |
+| Р10 | $E$ и $\nu$ Solid выводятся из $K$ и $G$ | Формулы — в fiber-problem-statement.md, раздел «Fiber-Solid-Contact» |
 
 ---
 
 ## 2. Исходное состояние кода
 
-| Требование SPH.md | Что есть сейчас | Что делать |
+| Требование fiber-problem-statement.md | Что есть сейчас | Что делать |
 |---|---|---|
-| Compute-структура `Solid` | Весь текущий SPH-расчёт: `ParticleSystem` ([particle_system.hpp](../include/particle_system.hpp)), `int_force`, `con_density`, `art_visc`, `av_vel`, EOS, прочность | Перенести на новую схему RHS (этап Ф4) |
-| `Solid-Solid-Contact` | Штрафной контакт в [ext_force.cpp](../src/ext_force.cpp), формулы в [contact_force.hpp](../include/contact_force.hpp), ADR-007 | Обернуть в primitive; формулы не меняются |
+| Compute-структура `Solid` | Весь текущий SPH-расчёт: `ParticleSystem` ([particle_system.hpp](../../include/particle_system.hpp)), `int_force`, `con_density`, `art_visc`, `av_vel`, EOS, прочность | Перенести на новую схему RHS (этап Ф4) |
+| `Solid-Solid-Contact` | Штрафной контакт в [ext_force.cpp](../../src/ext_force.cpp), формулы в [contact_force.hpp](../../include/contact_force.hpp), ADR-007 | Обернуть в primitive; формулы не меняются |
 | `object_id` | Нет. Тело определяется по материалу `itype`; PID из k-файла затирается | Добавить `body[]` в Solid |
 | Состояние только читается во время RHS | Нарушено: `virt_part` дописывает виртуальные частицы в `sys`, `int_force` пишет `p`, `c`, `exx…ryz`, `h_upgrade` пишет `hsml` | Вынести производные величины в `RhsWorkspace` (этап Ф4) |
 | Параллельность | OpenMP + раскраска графа пар pair_graph.hpp (удалён в a4ce0b9); контакт последовательный | `CpuExecutor` поверх OpenMP (этап Ф1) |
 | `SpatialIndex` | `FlatGrid::build` принимает только `ParticleSystem`, размер ячейки — из `hsml` | Обобщить: массивы координат + явный размер ячейки |
-| ODESolver | Схема с полушагом зашита в [time_integration.cpp](../src/time_integration.cpp) | Выделить в решатель (этап Ф8) |
+| ODESolver | Схема с полушагом зашита в [time_integration.cpp](../../src/time_integration.cpp) | Выделить в решатель (этап Ф8) |
 | Postprocessing | Прочность `prochnost_*` уже вызывается после шага в `time_integration` | Выделить в общий каркас (этап Ф7) |
 
 ---
@@ -87,10 +87,10 @@ FiberMaterial:
 
 **Радиусы поиска:**
 
-* `Fiber-Fiber-Contact`: $d+l_{max}$ — пара бусин должна находиться, даже если ближайшие точки осей лежат в середине сегментов. **Исправлено (переход на пары сегментов, `fiber/fiber_contact_segment_pairs.md`):** радиус теперь $d_\max+2L_\max$, где $L_\max$ — **текущая** (не номинальная $l_0$) максимальная длина связи `Fiber-Bond` — см. `fiber/SPH.md`, раздел «Fiber-Fiber-Contact», подраздел «Постановка проекта: пара сегментов»;
-* `Fiber-Solid-Contact`: $r_f+r^{contact}_{s,max}+L_{\max}$. **Исправлено:** используется **текущая** максимальная длина связи $L_{\max}=\max_{\text{bonds}}\|\mathbf{x}_i-\mathbf{x}_j\|$ — см. `fiber/SPH.md`, раздел «Fiber-Solid-Contact», подраздел «Постановка проекта: владение узлом».
+* `Fiber-Fiber-Contact`: $d+l_{max}$ — пара бусин должна находиться, даже если ближайшие точки осей лежат в середине сегментов. **Исправлено (переход на пары сегментов, `notes/fiber-contact/fiber-contact-segment-pairs.md`):** радиус теперь $d_\max+2L_\max$, где $L_\max$ — **текущая** (не номинальная $l_0$) максимальная длина связи `Fiber-Bond` — см. `notes/fiber-model/fiber-problem-statement.md`, раздел «Fiber-Fiber-Contact», подраздел «Постановка проекта: пара сегментов»;
+* `Fiber-Solid-Contact`: $r_f+r^{contact}_{s,max}+L_{\max}$. **Исправлено:** используется **текущая** максимальная длина связи $L_{\max}=\max_{\text{bonds}}\|\mathbf{x}_i-\mathbf{x}_j\|$ — см. `notes/fiber-model/fiber-problem-statement.md`, раздел «Fiber-Solid-Contact», подраздел «Постановка проекта: владение узлом».
 
-> **Заменено (2026-09-27).** Описанный ниже kernel (четыре случая, $\mathbf p_i$, веса $w_{ij}$) — историческая реализация Ф5. Действующая схема — пара сегментов с правилом владения: `fiber/fiber_contact_segment_pairs.md`, SPH.md «Постановка проекта: пара сегментов».
+> **Заменено (2026-09-27).** Описанный ниже kernel (четыре случая, $\mathbf p_i$, веса $w_{ij}$) — историческая реализация Ф5. Действующая схема — пара сегментов с правилом владения: `notes/fiber-contact/fiber-contact-segment-pairs.md`, fiber-problem-statement.md «Постановка проекта: пара сегментов».
 
 **`Fiber-Fiber-Contact` (Р8).** Вид контакта (`SurfaceSurface`, `SurfaceEnd`, `EndSurface`, `EndEnd`) определяется при построении primitive по `prev`/`next`, чтобы kernel не ветвился по топологии. Kernel:
 
@@ -164,7 +164,7 @@ Interaction kernels не содержат `#pragma omp`, mutex и atomic.
 
 **`RhsWorkspace`** владеет пространственными индексами, буферами пар, primitives, contributions, шардов, производными величинами Solid и виртуальными частицами. Память переиспользуется между вызовами RHS и только растёт.
 
-**Риск памяти.** SolidDelta — около 17 `double` в 3D (около 11 в 2D) на каждую сторону пары. Объём нужно замерить на BC6 до начала переноса Solid. Если он неприемлем, запасной вариант — суммирование на стороне владельца по списку соседей: договор SPH.md сохраняется, но каждая пара считается дважды.
+**Риск памяти.** SolidDelta — около 17 `double` в 3D (около 11 в 2D) на каждую сторону пары. Объём нужно замерить на BC6 до начала переноса Solid. Если он неприемлем, запасной вариант — суммирование на стороне владельца по списку соседей: договор fiber-problem-statement.md сохраняется, но каждая пара считается дважды.
 
 ### 3.6. Solid: что перестаёт писаться в состояние
 
@@ -221,7 +221,7 @@ State::advance(y, y_base, a, f)       // y = y_base + a * f  (+ правила �
 
 Правила, специфичные для Solid, живут в его `advance`, а не в решателе: ограничение $u\ge0$, прибавление поправки XSPH к скорости, обновление координат по скорости.
 
-**PredictorCorrector в варианте проекта** — перенос схемы из [time_integration.cpp](../src/time_integration.cpp) без изменений. Решатель хранит производные прошлого шага $f^{n-1}$.
+**PredictorCorrector в варианте проекта** — перенос схемы из [time_integration.cpp](../../src/time_integration.cpp) без изменений. Решатель хранит производные прошлого шага $f^{n-1}$.
 
 Первый шаг ($n=1$):
 
@@ -255,7 +255,7 @@ State::advance(y, y_base, a, f)       // y = y_base + a * f  (+ правила �
 ### Ф0. Документы
 
 * удалить `include/particle_system_new.hpp`;
-* SPH.md: разделы «Solid -- Solid», «Общие уравнения динамики», постановка Fiber-Bond (только растяжение, разрыв по расстоянию), коэффициент $K_{fs}$ — **выполнено**;
+* fiber-problem-statement.md: разделы «Solid -- Solid», «Общие уравнения динамики», постановка Fiber-Bond (только растяжение, разрыв по расстоянию), коэффициент $K_{fs}$ — **выполнено**;
 * ADR-008 «Архитектура RHS и нити»: решения Р1–Р10, пометка, что ADR-006 (раскраска графа пар) заменяется после Ф4.
 
 **Готово, когда** ADR-008 принят, черновик удалён, сборка и все тесты проходят как раньше.
@@ -309,7 +309,7 @@ State::advance(y, y_base, a, f)       // y = y_base + a * f  (+ правила �
 Самый крупный и рискованный этап.
 
 * стадия Solid derived: EOS в `RhsWorkspace`, `GhostSet` вместо дописывания в `sys`;
-* `Solid-SPH`: поиск, primitive `(i, j, W, ∇W)`, kernel со всеми парными членами SPH.md, reduce, finalize;
+* `Solid-SPH`: поиск, primitive `(i, j, W, ∇W)`, kernel со всеми парными членами fiber-problem-statement.md, reduce, finalize;
 * `Solid-Solid-Contact` из `ext_force` в primitive; диагностика `contact_pair_count`, `contact_max_delta` — через `parallel_reduce`;
 * до начала — замер памяти вкладов на BC6 (см. 3.5).
 
@@ -341,7 +341,7 @@ State::advance(y, y_base, a, f)       // y = y_base + a * f  (+ правила �
 
 ### Ф6. Fiber-Solid-Contact
 
-* `elastic_by_itype` в [materials.hpp](../include/materials.hpp): $E$, $\nu$ из $K$ и $G$; для itype 1–2 — «не определено», контакт не формируется, предупреждение при старте;
+* `elastic_by_itype` в [materials.hpp](../../include/materials.hpp): $E$, $\nu$ из $K$ и $G$; для itype 1–2 — «не определено», контакт не формируется, предупреждение при старте;
 * поиск Fiber → Solid, primitive `(a, b, s)`, kernel, `dt_limit`;
 * вклады в Solid идут в Solid reduce. Если Ф4 ещё не завершён — временно прибавляются к ускорению Solid в цикле сложения сил `single_step`.
 
@@ -404,8 +404,8 @@ e2e (`SPH_DIM=3`): сначала smoke-тест одного Solid в 3D, за�
 | Расхождение BC2/BC6 после переноса Solid | Ф4 | Стенд эквивалентности RHS на одном состоянии до запуска e2e; регрессия `test_regression`: контрольная точка N = 1 — тот же RHS плюс один шаг, N = K — накопление |
 | Трёхмерный Solid не проверялся | Ф6 | Smoke-тест одного Solid в 3D до контакта с нитью |
 | Плотная сетка `FlatGrid` в 3D при длинных нитях | Ф1, Ф5 | Ограничение числа ячеек; при необходимости — хешированная сетка |
-| ~~Кратный учёт пересечения в Fiber-Fiber (Meyer)~~ — **закрыто** | Ф5 | Исправлено переходом на схему «пара сегментов — одна сила», см. `fiber/fiber_contact_segment_pairs.md` и `fiber/SPH.md`, раздел Fiber-Fiber-Contact → «Постановка проекта: пара сегментов»: правило владения гарантирует ровно один контакт на пересечение |
-| ~~Fiber-Solid: потеря контакта во внешнем секторе излома и удвоение у узла~~ — **закрыто** | Ф6 | Исправлено правилом владения узлом с прижатием параметра к границам, см. `fiber/fiber_solid_contact_fix.md` и `fiber/SPH.md`, раздел Fiber-Solid-Contact → «Постановка проекта: владение узлом» |
+| ~~Кратный учёт пересечения в Fiber-Fiber (Meyer)~~ — **закрыто** | Ф5 | Исправлено переходом на схему «пара сегментов — одна сила», см. `notes/fiber-contact/fiber-contact-segment-pairs.md` и `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Fiber-Contact → «Постановка проекта: пара сегментов»: правило владения гарантирует ровно один контакт на пересечение |
+| ~~Fiber-Solid: потеря контакта во внешнем секторе излома и удвоение у узла~~ — **закрыто** | Ф6 | Исправлено правилом владения узлом с прижатием параметра к границам, см. `notes/fiber-contact/fiber-solid-contact-fix.md` и `notes/fiber-model/fiber-problem-statement.md`, раздел Fiber-Solid-Contact → «Постановка проекта: владение узлом» |
 | Неустойчивость явного Эйлера на нитях | Ф8 | Эйлер — только для тестов; рабочий решатель — PredictorCorrector |
 | Шаг по времени от жёстких нитей | Ф3 | `dt_limit` связей, вывод причины ограничения шага, как сейчас для контакта |
 | Трение (нить–нить и нить–Solid): один проход Якоби при связанных контактах на общих бусинах | Ф9 | Стадия трения общая для двух видов контактов; перескок при нескольких контактах на бусину (частицу Solid) устранён `mass splitting` по обоим видам (перенесён из задачи 4 в задачу 3 и расширен в задаче 4). Остаток одного прохода: прилипание достигается релаксацией за конечное время (в сцене нити на пластине рост $\|\mathbf u_t\|$ за шаг ≤ 0.2 % $v_{t0}$, перескок проекции ≤ 2.3 % $v_{t0}$); диагностики `shared_bead_count`, `shared_solid_count` показывают масштаб. Точное решение — итерации Якоби/Гаусса–Зейделя, не реализовано |

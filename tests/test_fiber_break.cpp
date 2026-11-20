@@ -1,6 +1,6 @@
 // tests/test_fiber_break.cpp
-// Unit-тесты Postprocessing: разрыв связей Fiber-Bond (fiber/PLAN.md, этап
-// Ф7; fiber/SPH.md, раздел «Fiber-Bond», «Разрыв связи», и «Postprocessing и
+// Unit-тесты Postprocessing: разрыв связей Fiber-Bond (notes/fiber-model/fiber-plan.md, этап
+// Ф7; notes/fiber-model/fiber-problem-statement.md, раздел «Fiber-Bond», «Разрыв связи», и «Postprocessing и
 // изменение topology»):
 //   - связь рвётся РОВНО при пороге l > l_break (дискретная проверка по
 //     шагам -- не раньше, не позже, с точностью до шага стептинга);
@@ -225,7 +225,7 @@ void test_break_new_object_id_and_contact()
 
     // --- ДО разрыва: одна нить, все object_id одинаковы -> Fiber-Fiber-Contact
     //     не находит пару (0,3), даже физически близкую (self-contact одной
-    //     нити не формулируется, fiber/SPH.md).
+    //     нити не формулируется, notes/fiber-model/fiber-problem-statement.md).
     {
         interactions::FiberContactSearchResult search;
         interactions::build_fiber_contact_search(exec, fx.state, fx.topology, fx.materials, search);
@@ -257,7 +257,7 @@ void test_break_new_object_id_and_contact()
 
     // --- ПОСЛЕ разрыва: Fiber-Fiber-Contact находит пару сегментов (0,1)-(2,3)
     //     (разные object_id, физически близко). В новой схеме «пара
-    //     сегментов — одна сила» (fiber/fiber_contact_segment_pairs.md)
+    //     сегментов — одна сила» (notes/fiber-contact/fiber-contact-segment-pairs.md)
     //     primitive хранит сегменты, а не отдельные бусины: бусина 3 --
     //     последняя в своей половине (prev[3]==2 != -1), поэтому spatial-пара
     //     (0,3) отбрасывается целиком правилом «сегмент принадлежит первой
@@ -282,7 +282,7 @@ void test_break_new_object_id_and_contact()
 // 3) После разрыва Fiber-Bond RHS не создаёт силу между бывшими соседями (1,2),
 //    даже если их снова сблизить (в смысле "растянуть, как раньше делала бы
 //    порвавшаяся связь") -- связь удалена из topology.bonds, kernel строит
-//    primitives заново на каждом вызове (fiber/PLAN.md §3.8).
+//    primitives заново на каждом вызове (notes/fiber-model/fiber-plan.md §3.8).
 // -----------------------------------------------------------------------
 void test_break_removes_bond_from_rhs()
 {

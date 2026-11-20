@@ -1,5 +1,5 @@
 // tests/test_jc_eos.cpp
-// Unit-тесты eos_linear / eos_shock (fiber/jc-implementation-plan.md, §3.3, U15-U17).
+// Unit-тесты eos_linear / eos_shock (notes/johnson-cook/jc-implementation-plan.md, §3.3, U15-U17).
 #include "eos.hpp"
 
 #include <algorithm>

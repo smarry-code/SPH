@@ -157,7 +157,7 @@ inline Geometry build_geometry(ParticleSystem& sys, double delta_x)
                 sys.vx[0][k] = 0.0;
                 sys.vx[1][k] = s.vz;
                 sys.itype[k] = s.itype;
-                // body[] = itype[] (fiber/PLAN.md §3.1) -- см. то же
+                // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1) -- см. то же
                 // обоснование в tests/bc2_geometry.hpp: без этой строки
                 // Solid-Solid-Contact (body[i]!=body[j]) никогда не срабатывает.
                 sys.body[k]  = s.itype;

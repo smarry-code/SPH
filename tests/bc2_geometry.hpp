@@ -177,7 +177,7 @@ inline Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x)
                 sys.x[0][k]  = r;
                 sys.x[1][k]  = z;
                 sys.itype[k] = s.itype;
-                // body[] = itype[] (fiber/PLAN.md §3.1: "для встроенных
+                // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1: "для встроенных
                 // генераторов... совпадает с itype"). Этот геометрический
                 // генератор строит частицы напрямую, в обход src/input.cpp
                 // (которое уже делает body[i]=itype[i] для shock_tube/k-файла)

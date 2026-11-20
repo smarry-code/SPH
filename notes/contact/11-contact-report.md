@@ -1,12 +1,12 @@
 # Контактный алгоритм «частица–частица»: полный отчёт о внедрении
 
-> **Примечание (2026-11-14):** отчёт на коммит `0e18976` (2026-09-23). Изменилось: продовый контакт Solid–Solid — `include/interactions/solid_contact.hpp` (этап Ф4-B2), `src/ext_force.cpp` — только стенд для `tests/test_contact.cpp`; критерий пары — `body[i] != body[j]`, а не «разные материалы» (ограничение «B4C↔B4C не виден» снято); добавлен ключ `sph_same_body_only` (`src/input.cpp`). `contact_force.hpp` (типы 0–3) прежний. Актуальное описание — [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md), [contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md), [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md).
+> **Примечание (2026-11-14):** отчёт на коммит `0e18976` (2026-09-23). Изменилось: продовый контакт Solid–Solid — `include/interactions/solid_contact.hpp` (этап Ф4-B2), `src/ext_force.cpp` — только стенд для `tests/test_contact.cpp`; критерий пары — `body[i] != body[j]`, а не «разные материалы» (ограничение «B4C↔B4C не виден» снято); добавлен ключ `sph_same_body_only` (`src/input.cpp`). `contact_force.hpp` (типы 0–3) прежний. Актуальное описание — [Контакт Solid–Solid](../../docs/04-explanation/models/03-solid-contact.md), [contact-particle-particle.md](../../docs/04-explanation/architecture/contact-particle-particle.md), [ADR-007](../../docs/04-explanation/decisions/adr-007-contact-force-types.md).
 
 | | |
 |---|---|
 | **Состояние кода** | ветка `BC6`, коммит `0e18976` (2026-09-23) |
-| **Первоисточник** | [`part_0.md`](../part_0.md), разд. 2 — штрафной контакт «частица–частица» для SPH |
-| **Проектное решение** | [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md) |
+| **Первоисточник** | [`notes/sources/sph-contact-article.md`](../sources/sph-contact-article.md), разд. 2 — штрафной контакт «частица–частица» для SPH |
+| **Проектное решение** | [ADR-007](../../docs/04-explanation/decisions/adr-007-contact-force-types.md) |
 | **Внедрение** | 2026-09-18 … 2026-09-23, 12 коммитов (§7) |
 | **Проверка** | `tests/test_contact.cpp` (аналитические тесты формул M1–M13, тесты оркестратора O1–O12), сквозные тесты BC2 и BC6 на всех четырёх типах |
 
@@ -34,10 +34,10 @@
   Сила действует между двумя частицами **разных материалов**, вдоль линии их
   центров, когда частицы перекрываются.
 * **Где.** Формулы — в новом заголовке
-  [`include/contact_force.hpp`](../include/contact_force.hpp) (чистые функции без
+  [`include/contact_force.hpp`](../../include/contact_force.hpp) (чистые функции без
   зависимостей). Поиск пар, геометрия и приложение силы — в
-  [`src/ext_force.cpp`](../src/ext_force.cpp), в функции внешних сил. Ограничение
-  шага по времени — в [`src/time_integration.cpp`](../src/time_integration.cpp).
+  [`src/ext_force.cpp`](../../src/ext_force.cpp), в функции внешних сил. Ограничение
+  шага по времени — в [`src/time_integration.cpp`](../../src/time_integration.cpp).
   Ключи конфигурации — в `SimulationConfig` и разборе `Initial_Conditions.txt`.
 * **Чем управляется.** Три ключа: `contact_force_type` (0–3),
   `contact_penalty_scale` = $K_p$ (типы 1–2), `contact_impulse_gamma` = $\gamma$
@@ -62,7 +62,7 @@
 
 В классическом SPH два тела, пришедшие в соприкосновение, взаимодействуют через
 те же суммы по соседям, что и частицы внутри одного тела. Статья называет три
-следствия ([`part_0.md`](../part_0.md), разд. 1):
+следствия ([`notes/sources/sph-contact-article.md`](../sources/sph-contact-article.md), разд. 1):
 
 * **проникание и перемешивание** — первые один-два ряда частиц проходят друг
   сквозь друга, потому что SPH не требует однозначности поля скоростей
@@ -127,26 +127,26 @@
 
 | Файл | Строк | Роль |
 |---|---|---|
-| [`include/contact_force.hpp`](../include/contact_force.hpp) | 193 | **Математика контакта.** Структуры `PairGeom`, `PairProps`, `Result`; функции `pinball_force`, `swegle_force`, `impulse_force`, диспетчер `penalty_force`; константы `kNoLimit`, `kOscSafety`. Не зависит от `dim` и от остального кода — тестируется напрямую |
-| [`tests/test_contact.cpp`](../tests/test_contact.cpp) | 790 | Аналитические тесты формул (M1–M13) и тесты оркестратора (O1–O12) |
-| [`docs/04-explanation/decisions/adr-007-contact-force-types.md`](../docs/04-explanation/decisions/adr-007-contact-force-types.md) | 238 | Проектное решение: реестр типов, отступления от статьи и их причины |
-| [`docs/04-explanation/architecture/contact-particle-particle.md`](../docs/04-explanation/architecture/contact-particle-particle.md) | 182 | Архитектурное описание подсистемы |
+| [`include/contact_force.hpp`](../../include/contact_force.hpp) | 193 | **Математика контакта.** Структуры `PairGeom`, `PairProps`, `Result`; функции `pinball_force`, `swegle_force`, `impulse_force`, диспетчер `penalty_force`; константы `kNoLimit`, `kOscSafety`. Не зависит от `dim` и от остального кода — тестируется напрямую |
+| [`tests/test_contact.cpp`](../../tests/test_contact.cpp) | 790 | Аналитические тесты формул (M1–M13) и тесты оркестратора (O1–O12) |
+| [`docs/04-explanation/decisions/adr-007-contact-force-types.md`](../../docs/04-explanation/decisions/adr-007-contact-force-types.md) | 238 | Проектное решение: реестр типов, отступления от статьи и их причины |
+| [`docs/04-explanation/architecture/contact-particle-particle.md`](../../docs/04-explanation/architecture/contact-particle-particle.md) | 182 | Архитектурное описание подсистемы |
 
 ### 3.2. Изменённые файлы
 
 | Файл | Где | Что добавлено |
 |---|---|---|
-| [`src/ext_force.cpp`](../src/ext_force.cpp) | стр. 11–87, 209–265 | **Оркестратор.** Фильтр контактной пары `is_contact_material_pair`, радиус частицы `particle_radius`, локальный шаг `pair_dt_ref`; в цикле по парам — вычисление $p$, $\dot p$, свойств пары, вызов `penalty_force`, приложение силы к обеим частицам, запись диагностики |
-| [`include/ext_force.hpp`](../include/ext_force.hpp) | стр. 21–30 | Сигнатура `ext_force` получила `dt`, `nreal` и `WorkBuffers& wb`; контракт `contact_force_type` описан в шапке |
-| [`include/buffers.hpp`](../include/buffers.hpp) | стр. 35–47 | В `WorkBuffers`: `min_dt_contact`, `contact_pair_count`, `contact_max_delta` и сброс `reset_contact()` |
-| [`src/single_step.cpp`](../src/single_step.cpp) | стр. 214–220 | Вызов `ext_force(cfg, sys, dt, ntotal + nvirt, ntotal, …)` — реальные частицы отделены от зеркальных |
-| [`src/time_integration.cpp`](../src/time_integration.cpp) | стр. 98–105, 161 | Шаг по времени ограничивается контактом: `dt = min(CFL, wb.min_dt_contact)`; диагностика в выводе прогресса |
-| [`include/simulation_config.hpp`](../include/simulation_config.hpp) | стр. 35–42, 81 | Поля `contact_force_type`, `contact_penalty_scale`, `contact_impulse_gamma` и их умолчания |
-| [`src/input.cpp`](../src/input.cpp) | стр. 341–377 | Разбор трёх ключей из `Initial_Conditions.txt` с проверкой диапазонов |
-| [`include/materials.hpp`](../include/materials.hpp) | стр. 53–71 | `shear_modulus_by_itype()` — модуль сдвига по номеру материала для ветки Герца |
-| [`CMakeLists.txt`](../CMakeLists.txt) | стр. 90–92 | Цель `test_contact`, тест `contact_test` |
+| [`src/ext_force.cpp`](../../src/ext_force.cpp) | стр. 11–87, 209–265 | **Оркестратор.** Фильтр контактной пары `is_contact_material_pair`, радиус частицы `particle_radius`, локальный шаг `pair_dt_ref`; в цикле по парам — вычисление $p$, $\dot p$, свойств пары, вызов `penalty_force`, приложение силы к обеим частицам, запись диагностики |
+| [`include/ext_force.hpp`](../../include/ext_force.hpp) | стр. 21–30 | Сигнатура `ext_force` получила `dt`, `nreal` и `WorkBuffers& wb`; контракт `contact_force_type` описан в шапке |
+| [`include/buffers.hpp`](../../include/buffers.hpp) | стр. 35–47 | В `WorkBuffers`: `min_dt_contact`, `contact_pair_count`, `contact_max_delta` и сброс `reset_contact()` |
+| [`src/single_step.cpp`](../../src/single_step.cpp) | стр. 214–220 | Вызов `ext_force(cfg, sys, dt, ntotal + nvirt, ntotal, …)` — реальные частицы отделены от зеркальных |
+| [`src/time_integration.cpp`](../../src/time_integration.cpp) | стр. 98–105, 161 | Шаг по времени ограничивается контактом: `dt = min(CFL, wb.min_dt_contact)`; диагностика в выводе прогресса |
+| [`include/simulation_config.hpp`](../../include/simulation_config.hpp) | стр. 35–42, 81 | Поля `contact_force_type`, `contact_penalty_scale`, `contact_impulse_gamma` и их умолчания |
+| [`src/input.cpp`](../../src/input.cpp) | стр. 341–377 | Разбор трёх ключей из `Initial_Conditions.txt` с проверкой диапазонов |
+| [`include/materials.hpp`](../../include/materials.hpp) | стр. 53–71 | `shear_modulus_by_itype()` — модуль сдвига по номеру материала для ветки Герца |
+| [`CMakeLists.txt`](../../CMakeLists.txt) | стр. 90–92 | Цель `test_contact`, тест `contact_test` |
 | `Initial_Conditions.txt`, `tests/data/bc2_initial_conditions.txt`, `tests/data/bc6_initial_conditions.txt` | — | Ключи контакта с описанием |
-| [`docs/03-reference/config/initial-conditions.md`](../docs/03-reference/config/initial-conditions.md) | — | Справочник ключей |
+| [`docs/03-reference/config/initial-conditions.md`](../../docs/03-reference/config/initial-conditions.md) | — | Справочник ключей |
 
 ### 3.3. Что к контакту не относится, хотя лежит рядом
 
@@ -155,7 +155,7 @@
 функция `virtual_symm_2d`. Это обработка границ, существовавшая до контакта;
 внедрение её не меняло.
 
-В [`include/param.hpp:270`](../include/param.hpp#L270) объявлена константа
+В [`include/param.hpp:270`](../../include/param.hpp#L270) объявлена константа
 `is_contact_pair = true`. Она **нигде не используется** — остаток ранней
 заготовки; в `ext_force.cpp:179` рядом лежит закомментированная строка
 `is_contact_pair_`. На работу не влияет.
@@ -462,9 +462,9 @@ $0{,}5\Delta x$ пара обнаруживается и сила появляе
 | — | `cfbef76` | $K_p$ отключён владельцем (ключ закомментирован, действует 1,0) |
 | 09-23 | `ed4cd3d` | **Дефект:** дребезг типа 3 на BC6 (СКО ряби 5,1 м/с против 0,12) → нормальная составляющая $\dot p$ и доля гашения $\gamma$, на BC6 $\gamma = 0{,}5$ |
 
-Подробный журнал — [contact/07-changes.md](07-changes.md); разбор обрыва типа 2 —
+Подробный журнал — [notes/contact/07-changes.md](07-changes.md); разбор обрыва типа 2 —
 contact/10-debug-handoff.md (удалён) и
-[experiments/2026-09-20-bc2-abort-contact-type2](../experiments/2026-09-20-bc2-abort-contact-type2/).
+[experiments/2026-09-20-bc2-abort-contact-type2](../../experiments/2026-09-20-bc2-abort-contact-type2/).
 
 ---
 
@@ -494,7 +494,7 @@ $\Delta t_{\mathrm{ref}}$, при $K_p \le 1{,}6$ ограничитель не 
 никогда; при $K_p > 1{,}6$ он режет шаг **всего** расчёта пропорционально
 $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Калибровки $K_p$ нет ни в
 статье, ни в проекте. Измерено на BC2 (развёртка $K_p$ = 0,5 … 10,
-[experiments/2026-09-22-bc2-kp-sweep](../experiments/2026-09-22-bc2-kp-sweep/)):
+[experiments/2026-09-22-bc2-kp-sweep](../../experiments/2026-09-22-bc2-kp-sweep/)):
 
 | $K_p$ | тип 1: шагов / пик | тип 2: шагов / пик |
 |---|---|---|
@@ -561,7 +561,7 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 
 ### 9.1. Кейс BC2 (симметричный удар B4C/B4C, окно LiF)
 
-[experiments/2026-09-22-bc2-contact-types](../experiments/2026-09-22-bc2-contact-types/),
+[experiments/2026-09-22-bc2-contact-types](../../experiments/2026-09-22-bc2-contact-types/),
 Δx = 0,2 мм, 33 944 частицы, $K_p = 1$:
 
 | Тип | Шагов | Пик, м/с | Доля эталона |
@@ -578,7 +578,7 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 
 Все три границы раздела — между разными материалами, контакт видит все.
 Δx = 0,2 мм, 44 638 частиц, $\gamma = 0{,}5$
-([contact/06-e2e-bc6.md](06-e2e-bc6.md), §7.5):
+([notes/contact/06-e2e-bc6.md](06-e2e-bc6.md), §7.5):
 
 | Тип | Шагов | Пик на оси, м/с | СКО ряби 3,3–4,3 мкс, м/с | Автокорреляция ряби |
 |---|---|---|---|---|
@@ -593,7 +593,7 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 * Тип 3 после правки `ed4cd3d` — на уровне прогона без контакта.
 
 **Результаты при Δx = 0,1 мм** —
-[experiments/2026-09-24-bc6-contact-dx010](../experiments/2026-09-24-bc6-contact-dx010/)
+[experiments/2026-09-24-bc6-contact-dx010](../../experiments/2026-09-24-bc6-contact-dx010/)
 (см. §9.4).
 
 ### 9.3. Почему контакт почти не влияет на результат
@@ -616,9 +616,9 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 
 ### 9.4. Основной график BC6 при Δx = 0,1 мм
 
-[experiments/2026-09-24-bc6-contact-dx010](../experiments/2026-09-24-bc6-contact-dx010/),
+[experiments/2026-09-24-bc6-contact-dx010](../../experiments/2026-09-24-bc6-contact-dx010/),
 177 645 частиц, всё остальное штатное. График —
-[bc6_monitor_velocity_dx010.svg](../experiments/2026-09-24-bc6-contact-dx010/bc6_monitor_velocity_dx010.svg);
+[bc6_monitor_velocity_dx010.svg](../../experiments/2026-09-24-bc6-contact-dx010/bc6_monitor_velocity_dx010.svg);
 штатный график при 0,2 мм не заменялся.
 
 | Тип | Шагов | Итог | Пик, м/с | Рябь 1,5–2,0 / 2,0–2,5 / 2,5–3,0 мкс, м/с |
@@ -680,13 +680,13 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 * контактный цикл последовательный — на больших задачах может стать заметным;
 * расчёт в целом недетерминирован (порядок суммирования OpenMP в SPH-части):
   после ≈ 1,7 мкс реплики BC6 расходятся до 34 м/с
-  ([experiments/2026-09-23-bc6-resolution](../experiments/2026-09-23-bc6-resolution/)).
+  ([experiments/2026-09-23-bc6-resolution](../../experiments/2026-09-23-bc6-resolution/)).
   Контакт этого не вызывает, но сравнивать типы после 1,7 мкс по одному
   прогону нельзя.
 
 **Расхождения документации с кодом** (найдены при подготовке отчёта):
 
-* [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md)
+* [ADR-007](../../docs/04-explanation/decisions/adr-007-contact-force-types.md)
   называет потолок силы Свигла «отвергнутым вариантом», а в коде он есть с
   `67a04e9`; сигнатура `is_contact_material_pair` в ADR — без `nreal`;
   перечень тестов остановился на M1–M12 / O1–O9. Требует обновления.
@@ -716,11 +716,11 @@ $K_p$. На ветке Герца предел $\propto 1/\sqrt{K_p}$. Кали�
 
 ## 12. Ссылки
 
-* Первоисточник: [`part_0.md`](../part_0.md)
-* Решение и обоснования: [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md),
-  [contact/02-decisions.md](02-decisions.md) (D1–D6)
-* Архитектура: [contact-particle-particle.md](../docs/04-explanation/architecture/contact-particle-particle.md)
-* План и аудит: [contact/01-plan.md](01-plan.md), [contact/00-audit.md](00-audit.md)
-* Журнал изменений: [contact/07-changes.md](07-changes.md)
+* Первоисточник: [`notes/sources/sph-contact-article.md`](../sources/sph-contact-article.md)
+* Решение и обоснования: [ADR-007](../../docs/04-explanation/decisions/adr-007-contact-force-types.md),
+  [notes/contact/02-decisions.md](02-decisions.md) (D1–D6)
+* Архитектура: [contact-particle-particle.md](../../docs/04-explanation/architecture/contact-particle-particle.md)
+* План и аудит: [notes/contact/01-plan.md](01-plan.md), [notes/contact/00-audit.md](00-audit.md)
+* Журнал изменений: [notes/contact/07-changes.md](07-changes.md)
 * Постановки и результаты: [BC2](06-e2e-case.md), [BC6](06-e2e-bc6.md)
-* Эксперименты: [experiments/README.md](../experiments/README.md) — указатель
+* Эксперименты: [experiments/README.md](../../experiments/README.md) — указатель

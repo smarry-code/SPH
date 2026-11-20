@@ -35,7 +35,7 @@
 `tests/test_e2e_bc6.cpp` совпадает с коммитом.
 
 Прочие отличия рабочего дерева от коммита на момент прогона на сборку не
-влияли: изменённый `contact/e2e/bc2_monitor_velocity.svg` (выход цели
+влияли: изменённый `notes/contact/e2e/bc2_monitor_velocity.svg` (выход цели
 `bc2_plot`), незакоммиченный каталог `experiments/2026-09-23-bc6-xsph/` и
 строка указателя `experiments/README.md`.
 

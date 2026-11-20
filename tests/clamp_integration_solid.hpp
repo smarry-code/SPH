@@ -1,7 +1,7 @@
 #pragma once
 // tests/clamp_integration_solid.hpp
 // Интеграционные тесты S1-S4 кинематического закрепления Solid через боевой
-// time_integration(cfg, fiber::Model&, ...) (fiber/TZ_CLAMP_SOLID_FIBER.md, §10).
+// time_integration(cfg, fiber::Model&, ...) (notes/fabrics/clamp-solid-fiber-tz.md, §10).
 // Включается из tests/test_clamp.cpp ПОСЛЕ определения check()/failures/same_bits
 // (анонимное пространство имён того файла), поэтому использует их напрямую.
 //

@@ -1,6 +1,6 @@
 // tests/test_plain_weave_random_cut.cpp
 // Тесты ткани «случайная раскройка» (include/fiber/plain_weave_random_cut.hpp,
-// fiber/tz-random-cut-quilt.md, разделы 4 и 6), включая многослойный пакет.
+// notes/fabrics/tz-random-cut-quilt.md, разделы 4 и 6), включая многослойный пакет.
 //
 // Разделы:
 //   1 test_determinism   -- один seed -> побитово то же; другой seed -> другое;

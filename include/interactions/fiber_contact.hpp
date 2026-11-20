@@ -1,9 +1,9 @@
 #pragma once
 // interactions/fiber_contact.hpp
 // Fiber-Fiber-Contact: пространственный механический контакт бусин РАЗНЫХ
-// нитей (fiber/SPH.md, раздел «Fiber-Fiber-Contact»; fiber/PLAN.md, этап Ф5,
+// нитей (notes/fiber-model/fiber-problem-statement.md, раздел «Fiber-Fiber-Contact»; notes/fiber-model/fiber-plan.md, этап Ф5,
 // «3.2. Типы взаимодействий и primitives», «3.3», «3.7»;
-// fiber/fiber_contact_segment_pairs.md -- переход на схему «пара сегментов —
+// notes/fiber-contact/fiber-contact-segment-pairs.md -- переход на схему «пара сегментов —
 // одна сила», описанную ниже).
 //
 // Как и Fiber-Bond (interactions/fiber_bond.hpp) и Solid-Solid-Contact
@@ -13,7 +13,7 @@
 // rhs::reduce_contributions. Никаких atomics/mutex.
 //
 // ============================================================================
-// РЕШЕНИЯ (fiber/fiber_contact_segment_pairs.md формулирует физику и
+// РЕШЕНИЯ (notes/fiber-contact/fiber-contact-segment-pairs.md формулирует физику и
 // алгоритм, но оставляет несколько инженерных деталей на усмотрение
 // реализации):
 //
@@ -43,7 +43,7 @@
 //    η=1e-9-окрестности границы (без него пересечение ровно в узле сети то
 //    классифицируется как внутренняя точка сегмента, то как его конец —
 //    прототип на 20000 случайных скрещиваний без snapping дал ~6% неверной
-//    классификации, со snapping — 0, fiber/fiber_contact_segment_pairs.md,
+//    классификации, со snapping — 0, notes/fiber-contact/fiber-contact-segment-pairs.md,
 //    §2).
 //
 //    ПРАВИЛО ВЛАДЕНИЯ (§3 спецификации) гарантирует ровно один принятый
@@ -81,7 +81,7 @@
 //    Отклонённый primitive возвращает geom.contact=false,
 //    geom.rejected_by_ownership=true (для диагностики).
 //
-// 2. d/E*/R* при разных материалах нитей a,b. SPH.md даёт формулу Meyer
+// 2. d/E*/R* при разных материалах нитей a,b. fiber-problem-statement.md даёт формулу Meyer
 //    только для ОДИНАКОВЫХ нитей (E* = E/(2(1-nu^2)), R* = sqrt(d/4)), но в
 //    разделе «Fiber-Solid-Contact», «Постановка проекта: коэффициент K_fs»
 //    для ПАРЫ РАЗНЫХ материалов (Fiber-Solid) уже выведена корректная
@@ -106,7 +106,7 @@
 //                         <= L_A + d_eff + L_B <= 2*L_max + d_max,
 //    где L_A,L_B — ТЕКУЩИЕ (не номинальные l0!) длины сегментов A,B: связи
 //    Fiber-Bond работают только на растяжение и рвутся лишь в
-//    Postprocessing ПОСЛЕ шага (fiber/SPH.md), поэтому внутри шага сегмент
+//    Postprocessing ПОСЛЕ шага (notes/fiber-model/fiber-problem-statement.md), поэтому внутри шага сегмент
 //    может быть длиннее l0 и даже длиннее l_break — номинальное l0 как
 //    оценка не годится. L_max — максимум ТЕКУЩЕЙ длины |x_i-x_j| по всем
 //    topology.bonds расчёта (fiber_contact_search_radius получает state и
@@ -115,7 +115,7 @@
 // 4. Трение. Kernel этого файла считает ТОЛЬКО нормальную силу Герца.
 //    Трение нить-нить -- отдельная стадия шага между вычислением dt и
 //    ODESolver::advance (проекция на уровне скоростей, ограничение импульса
-//    трения; interactions/fiber_friction.hpp, fiber/fiber_friction_projection.md).
+//    трения; interactions/fiber_friction.hpp, notes/fiber-contact/fiber-friction-projection.md).
 //    Kernel лишь заполняет по одному слоту FiberFrictionContact на primitive
 //    (геометрия принятого контакта, N=geom.F, mu из fiber_friction_coefficient
 //    -- правило смешения mu для разных материалов живёт здесь, менять только
@@ -123,7 +123,7 @@
 //    материалов стадия трения не выполняется и результат побитово прежний.
 //    dt_limit трением не затрагивается.
 //
-// 5. Закон нормальной силы (fiber/plan-fiber-contact-types.md, этап 2;
+// 5. Закон нормальной силы (notes/fiber-contact/plan-fiber-contact-types.md, этап 2;
 //    interactions/fiber_contact_law.hpp): ключ fiber_fiber_contact_type,
 //    0 = Герц (прежний код, побитово), 1-3 -- contact::penalty_force на g, pr
 //    из fiber_fiber_pair_inputs (одна функция для ядра, предела шага и
@@ -163,7 +163,7 @@ constexpr std::uint32_t kFiberFiberContactInteractionType = 2;
 // ненулевом знаменателе, либо оба направления вырождены сами по себе —
 // точечный сегмент). eps -- безразмерный (|ê_A x ê_B| = sin(угол между
 // направлениями) для единичных векторов). Контакт в этой ветке НЕ
-// формируется (geom.degenerate=true, fiber/fiber_contact_segment_pairs.md,
+// формируется (geom.degenerate=true, notes/fiber-contact/fiber-contact-segment-pairs.md,
 // §4) -- в отличие от старой схемы, здесь это не "почти параллельная"
 // аппроксимация нормали, а честный отказ: у двух совпадающих/параллельных
 // осей нормаль контакта в принципе не определена этой геометрией.
@@ -185,11 +185,11 @@ constexpr double kFiberSegmentDegenerateEpsRel = 1e-12;
 
 // Snapping параметров ближайших точек s,t к 0/1 (§2 спецификации, η) --
 // kFiberContactSnapEta теперь в interactions/fiber_contact_common.hpp (общая
-// с Fiber-Solid-Contact, fiber/fiber_solid_contact_fix.md, §1 п.2).
+// с Fiber-Solid-Contact, notes/fiber-contact/fiber-solid-contact-fix.md, §1 п.2).
 
 // ----------------------------------------------------------------------
 // FiberContactPrimitive -- пара сегментов осей нитей A,B (fiber/
-// fiber_contact_segment_pairs.md, §1). Сегмент A = (a0, a1=next(a0));
+// fiber-contact-segment-pairs.md, §1). Сегмент A = (a0, a1=next(a0));
 // a1==-1 -- точечный сегмент (изолированная бусина без соседей). a_prev,
 // a_has_next_segment -- нужны правилу владения (см. шапку файла, пункт 1) и
 // сохранены при построении primitive, чтобы kernel/геометрия не перечитывали
@@ -215,7 +215,7 @@ struct FiberContactPrimitive
 // файла: вывод неравенства треугольника там же). L_max -- ТЕКУЩАЯ (не
 // номинальная l0!) максимальная длина связи, interactions/
 // fiber_contact_common.hpp::fiber_max_current_bond_length (общая с Fiber-
-// Solid-Contact, fiber/fiber_solid_contact_fix.md, §2 -- вычисление ровно
+// Solid-Contact, notes/fiber-contact/fiber-solid-contact-fix.md, §2 -- вычисление ровно
 // одно, побитово то же, что было здесь до выноса).
 // ----------------------------------------------------------------------
 inline double fiber_contact_search_radius(const rhs::CpuExecutor& exec, const fiber::FiberState& state,
@@ -236,7 +236,7 @@ inline double fiber_contact_search_radius(const rhs::CpuExecutor& exec, const fi
 // build_fiber_contact_search -- SpatialIndex<dim> (dim==3, Р9) по бусинам
 // Fiber, фильтр i<j (канонический, из SpatialIndex) И object_id[i]!=
 // object_id[j] (разные нити -- самоконтакт одной нити не формулируется,
-// SPH.md, «Fiber-Fiber-Contact», последний абзац). Каждая сторона найденной
+// fiber-problem-statement.md, «Fiber-Fiber-Contact», последний абзац). Каждая сторона найденной
 // пары отображается в сегмент по правилу «сегмент принадлежит первой
 // бусине» (шапка файла, пункт 1); если ХОТЯ БЫ ОДНА сторона -- последняя
 // бусина нити (next==-1, prev!=-1), пара отбрасывается ЦЕЛИКОМ (эту зону
@@ -370,7 +370,7 @@ inline void build_fiber_contact_search(const rhs::CpuExecutor& exec, const fiber
 
     if constexpr (dim != 3)
     {
-        // Нити физически существуют только при dim==3 (fiber/SPH.md; Р9);
+        // Нити физически существуют только при dim==3 (notes/fiber-model/fiber-problem-statement.md; Р9);
         // граница проверяется fiber::check_fiber_requires_dim3() при разборе
         // конфигурации -- сюда с непустым state в сборке dim!=3 попасть
         // невозможно. Заглушка нужна только для компиляции заголовка во ВСЕХ
@@ -849,7 +849,7 @@ inline double fiber_contact_side_inv_mass(const fiber::FiberState& st, rhs::inde
 
 // ----------------------------------------------------------------------
 // fiber_friction_coefficient -- правило смешения mu_ff двух (возможно
-// разных) материалов нитей (fiber/fiber_friction_implementation.md, §4/§8).
+// разных) материалов нитей (notes/fiber-contact/fiber-friction-implementation.md, §4/§8).
 // Вынесено в ОТДЕЛЬНУЮ функцию сознательно -- если проект примет другое
 // правило смешения, менять нужно ТОЛЬКО её. Для одинаковых mu_ff
 // возвращается точное (без std::sqrt) значение -- избегаем лишней ошибки
@@ -863,7 +863,7 @@ inline double fiber_friction_coefficient(const fiber::FiberMaterial& a, const fi
 
 // ----------------------------------------------------------------------
 // FiberFrictionContact -- слот принятого контакта для стадии трения
-// (interactions/fiber_friction.hpp; fiber/fiber_friction_projection.md, §3).
+// (interactions/fiber_friction.hpp; notes/fiber-contact/fiber-friction-projection.md, §3).
 // ПО ОДНОМУ слоту на primitive, запись по индексу k -- без гонок и без
 // аллокаций внутри kernel. POD без указателей и std::vector: переносится в
 // device-память как есть. Объявлен здесь (а не в fiber_friction.hpp), потому
@@ -887,7 +887,7 @@ struct FiberFrictionContact
 
 // ----------------------------------------------------------------------
 // fiber_fiber_pair_inputs -- g, pr пары для законов 1-3
-// (fiber/plan-fiber-contact-types.md, §2; fiber/SPH.md, Fiber-Fiber-Contact,
+// (notes/fiber-contact/plan-fiber-contact-types.md, §2; notes/fiber-model/fiber-problem-statement.md, Fiber-Fiber-Contact,
 // «Законы нормальной силы»). ЕДИНСТВЕННАЯ сборка входов: ею пользуются ядро,
 // предел шага и диагностика (одна формула на одном множестве контактов).
 //   n от B к A (geom.n; при D = 0 -- из e_A x e_B, уже в геометрии);
@@ -975,7 +975,7 @@ inline void fiber_fiber_check_params(const FiberContactStepParams& params, const
 // (geom.s/geom.t гарантированно в [0,1] после clamp в
 // fiber_segment_closest_params).
 //
-// Трения здесь нет (fiber/fiber_friction_projection.md, §1, §3): kernel
+// Трения здесь нет (notes/fiber-contact/fiber-friction-projection.md, §1, §3): kernel
 // ДОПОЛНИТЕЛЬНО заполняет friction_contacts[k] для каждого primitive.
 // friction_contacts.resize(m) (m -- число primitive вида) выполняется в начале, ДО
 // parallel_for (внутри kernel аллокаций нет; память только растёт, если
@@ -1217,7 +1217,7 @@ inline std::vector<fiber::FiberDelta> compute_fiber_contact(
 // fiber_contact_pair_dt_limit -- Δt_lim ОДНОГО primitive (пункт 6 в шапке
 // файла), общая точка входа для compute_fiber_contact_dt_limit и
 // диагностики (min_dt считается ТОЙ ЖЕ формулой, что и настоящий dt_limit,
-// fiber/fiber_contact_segment_pairs.md, §7). m_red строится по ЭФФЕКТИВНЫМ
+// notes/fiber-contact/fiber-contact-segment-pairs.md, §7). m_red строится по ЭФФЕКТИВНЫМ
 // массам точек контакта (fiber_contact_side_inv_mass), а не по "якорным"
 // бусинам a0/b0, как в старой схеме -- теперь на пересечение приходится
 // ровно одна сила, и реальная жёсткость узла совпадает с той, по которой
@@ -1302,7 +1302,7 @@ inline double compute_fiber_contact_dt_limit(const rhs::CpuExecutor& exec, const
 }
 
 // ----------------------------------------------------------------------
-// Диагностика (fiber/fiber_contact_segment_pairs.md, §7). В НОВОЙ схеме
+// Диагностика (notes/fiber-contact/fiber-contact-segment-pairs.md, §7). В НОВОЙ схеме
 // «пара сегментов — одна сила» физическое пересечение двух нитей в общем
 // случае даёт РОВНО ОДИН принятый контакт (contact_count), а не несколько,
 // как в старой Meyer-подобной схеме, — это и есть цель перехода (см. шапку

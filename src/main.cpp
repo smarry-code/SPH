@@ -25,7 +25,7 @@ namespace
 {
 // Замер времени выполнения программы. Раньше жил в linked_list.cpp вместе с
 // link_list() (старый поиск соседей); при удалении старого пути
-// (fiber/PLAN.md, этап Ф4-B2) единственный оставшийся потребитель —
+// (notes/fiber-model/fiber-plan.md, этап Ф4-B2) единственный оставшийся потребитель —
 // main.cpp, поэтому функция перенесена сюда без изменений.
 const auto program_start = std::chrono::high_resolution_clock::now();
 

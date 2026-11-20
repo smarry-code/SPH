@@ -1,6 +1,6 @@
 // tests/test_jc_integration.cpp
 // Интеграционные тесты прочности и разрушения Джонсона-Кука I1-I8
-// (fiber/jc-implementation-plan.md, §5.3): одна-две частицы, без SPH-соседей,
+// (notes/johnson-cook/jc-implementation-plan.md, §5.3): одна-две частицы, без SPH-соседей,
 // через interactions::apply_material_strength (ветка JC -> apply_jc_strength).
 //
 // Драйвер. Плотность фиксирована (rho = rho0), на каждом шаге задаются

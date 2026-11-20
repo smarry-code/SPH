@@ -1,7 +1,7 @@
 // test_jh2.cpp
 // Тесты модели керамики JH-2 (src/ppochnost.cpp): приращение пластической
 // деформации, sigma_i в плоском случае, разрыхление (dp) и повреждение (D).
-// Обоснование -- jh2/jh2-code-review.md, план -- jh2/jh2-fix-plan.md.
+// Обоснование -- notes/jh2/jh2-code-review.md, план -- notes/jh2/jh2-fix-plan.md.
 // Собирается с SPH_DIM=1 (одномерная деформация: sxx -- единственная
 // ненулевая компонента девиатора, sigma_eq = 1.5*|sxx|, J2 = 0.75*sxx^2).
 // Все константы берутся из Materials (const_JH_2[0] -- B4C, itype 10).

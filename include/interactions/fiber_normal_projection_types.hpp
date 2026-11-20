@@ -1,7 +1,7 @@
 #pragma once
 // interactions/fiber_normal_projection_types.hpp
 // Типы стадии нормального контакта законов 1-3 как ПРОЕКЦИИ СКОРОСТИ
-// (fiber/LAW3_VARIANT1_VELOCITY_PROJECTION.md, fiber/TZ_LAW3_PROJECTION.md).
+// (notes/fiber-contact/law3-projection-report.md, notes/fiber-contact/law3-projection-tz.md).
 // Вынесены отдельно от алгоритма (interactions/fiber_normal_projection.hpp),
 // чтобы их могли включать fiber/model.hpp (статистика шага), checkpoint.hpp
 // (таблица тёплого старта) и kernel'ы нормального контакта без цикла include.

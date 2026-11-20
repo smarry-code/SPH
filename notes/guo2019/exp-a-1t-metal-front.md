@@ -1,7 +1,7 @@
 # Эксперимент A/1T: алюминиевая пластина спереди, ткань сзади
 
 **Источник:** Y.B. Guo, H.J. Chiang, J.J. Deng, V.P.W. Shim. *Projectile impact on fabric-metal assemblies – Influence of fabric-metal sequence.* Int. J. Impact Eng. 127 (2019) 1–16, doi:10.1016/j.ijimpeng.2019.01.004.
-PDF: `/mnt/project-files/uploads/hearth/51e5a8f1-caf4-4162-98bb-c2d15abf6681`. Общая сводка: `ARTICLE_GUO2019_SUMMARY.md`. Смежные: `EXP_1T_single_ply.md`, `EXP_1T-A_fabric_front.md`.
+PDF: `/mnt/project-files/uploads/hearth/51e5a8f1-caf4-4162-98bb-c2d15abf6681`. Общая сводка: `guo2019-article-summary.md`. Смежные: `exp-1t-single-ply.md`, `exp-1t-a-fabric-front.md`.
 
 **Условные обозначения достоверности:**
 - без пометки — прямо из текста статьи;
@@ -45,7 +45,7 @@ PDF: `/mnt/project-files/uploads/hearth/51e5a8f1-caf4-4162-98bb-c2d15abf6681`. �
 | Толщина / поверхностная плотность | 0.4 мм / 280 г/м² |
 | Нить, квазистатика | E = 65 ГПа, σ_T = 1.77 ГПа, U_T = 24 МДж/м³ |
 | Нить, динамика (200–700 с⁻¹) | E = 78–97 ГПа, σ_T = 2.0–2.3 ГПа, U_T = 30–34 МДж/м³ |
-| Шаг нитей / сечение нити | ≈ 8–9 нитей/см, ≈ 0.12 мм² **[вывод, см. `EXP_1T_single_ply.md`]** |
+| Шаг нитей / сечение нити | ≈ 8–9 нитей/см, ≈ 0.12 мм² **[вывод, см. `exp-1t-single-ply.md`]** |
 
 ## 3. Закрепление
 

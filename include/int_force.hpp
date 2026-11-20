@@ -3,7 +3,7 @@
 // Объявление urs() — диспетчера уравнения состояния (УРС) по типу материала
 // (itype). Определение — в int_force.cpp.
 //
-// fiber/PLAN.md, этап Ф4-B2: основной силовой расчёт (int_force(), горячие
+// notes/fiber-model/fiber-plan.md, этап Ф4-B2: основной силовой расчёт (int_force(), горячие
 // циклы body1/body2 — старый путь SPH) удалён вместе с direct_find/
 // linked_list/PairGraph/density/art_visc/av_vel/virt_part; урс()
 // используется НЕ ТОЛЬКО через int_force() (interactions::solid_eos,

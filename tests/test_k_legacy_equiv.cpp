@@ -228,7 +228,7 @@ void legacy_parse_k_file(const std::string& filename, ParticleSystem& sys)
         sys.x[2][idx] = it->second[2];
         sys.mass[idx]  = e.mass;
         sys.itype[idx] = e.pid;
-        // body[] = PID (fiber/PLAN.md §3.1): "для k-файла это PID". Совпадает
+        // body[] = PID (notes/fiber-model/fiber-plan.md §3.1): "для k-файла это PID". Совпадает
         // с itype здесь только потому, что itype тоже читается из PID выше —
         // но body[] хранит именно номер тела (object_id), а не материал, и
         // остаётся отдельным полем для будущего Solid-Solid-Contact (Ф4).

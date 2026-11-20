@@ -38,14 +38,14 @@ struct SimulationConfig
     int density_method          = 1;    // Метод расчёта плотности (1/2/3)
     int coloring_niac_threshold = 0;    // Порог graph coloring vs atomic
 
-    // --- ODESolver (fiber/PLAN.md, этап Ф8; §3.9) ---
+    // --- ODESolver (notes/fiber-model/fiber-plan.md, этап Ф8; §3.9) ---
     // 0 - PredictorCorrector (по умолчанию, схема проекта, на неё
     //     откалиброваны эталоны BC2/BC6), 1 - явный Euler (эталон для тестов
     //     порядка сходимости, неустойчив на незатухающих упругих связях --
     //     не для рабочих расчётов).
     int ode_solver = 0;
 
-    // --- Контакт «частица-частица» (part_0.md, ADR-007) ---
+    // --- Контакт «частица-частица» (notes/sources/sph-contact-article.md, ADR-007) ---
     // 0 - выключен (по умолчанию), 1 - пинбол Белицко, 2 - Свигл, 3 - импульсный.
     int    contact_force_type   = 0;
     double contact_penalty_scale = 1.0;   // масштабный коэффициент Kp (типы 1-2)
@@ -54,7 +54,7 @@ struct SimulationConfig
     // меньше — оставлять паре (1-gamma)*pdot. Рабочий диапазон (0; 1.6].
     double contact_impulse_gamma = 1.0;
 
-    // --- Закон нормальной силы контактов нитей (fiber/SPH.md, «Законы
+    // --- Закон нормальной силы контактов нитей (notes/fiber-model/fiber-problem-statement.md, «Законы
     //     нормальной силы»; include/interactions/fiber_contact_law.hpp) ---
     // 0 = ГЕРЦ (прежнее поведение), НЕ «выключено» -- в отличие от
     // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный, 4 - Герц + демпфер
@@ -65,14 +65,14 @@ struct SimulationConfig
     double fiber_solid_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
     double fiber_fiber_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
     double fiber_fiber_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
-    // Выталкивание типа 3 при глубоком проникании (fiber/plan-fiber-contact-laws12-fix.md;
+    // Выталкивание типа 3 при глубоком проникании (notes/fiber-contact/plan-fiber-contact-laws12-fix.md;
     // FiberContactLaw::push_tau): к pdot добавляется max(p - depth*r, 0)/tau, tau в с.
     // tau = 0 -- выключено (побитово прежний тип 3); depth -- доля суммы радиусов пары.
     double fiber_solid_contact_impulse_push_tau = 0.0;
     double fiber_fiber_contact_impulse_push_tau = 0.0;
     double fiber_contact_impulse_push_depth = 0.1;
     double fiber_contact_impulse_push_vmax = 0.0; // предел скорости выталкивания, м/с; 0 -- без предела
-    // Нормальная сила законов 1-3 как проекция скорости (fiber/TZ_LAW3_PROJECTION.md):
+    // Нормальная сила законов 1-3 как проекция скорости (notes/fiber-contact/law3-projection-tz.md):
     // 0 -- прежняя явная сила (побитово прежнее поведение), 1 -- проекция.
     int    fiber_fiber_contact_predictor = 0; // Fiber-Fiber, 0/1
     int    fiber_solid_contact_predictor = 0; // Fiber-Solid, 0/1
@@ -113,11 +113,11 @@ struct SimulationConfig
     // --- Материалы (константны после инициализации; ADR-3 этапа 6.3) ---
     Materials mats;
 
-    // --- Нити (fiber/PLAN.md, этап Ф2) ---
+    // --- Нити (notes/fiber-model/fiber-plan.md, этап Ф2) ---
     // Путь к файлу ломаных нитей (см. формат в fiber_input.cpp). Пусто (по
     // умолчанию) — нитей в расчёте нет. Если задан, а сборка сделана не с
     // SPH_DIM=3, parse_sph_config бросает std::runtime_error немедленно
-    // (fiber/SPH.md: "Нити поддерживаются только в трёхмерной постановке").
+    // (notes/fiber-model/fiber-problem-statement.md: "Нити поддерживаются только в трёхмерной постановке").
     std::string fiber_file;
 
     // --- Импорт LS-DYNA .k (readk/k-import-plan.md, этап K6) ---
@@ -147,7 +147,7 @@ struct SimulationConfig
     std::string energy_log_file = "energy_log.csv";
 #endif
 
-    // --- Нагрев Джонсона-Кука (itype 12-15), fiber/jc-implementation-plan.md §2.4 ---
+    // --- Нагрев Джонсона-Кука (itype 12-15), notes/johnson-cook/jc-implementation-plan.md §2.4 ---
     // jc_heating: 0 = energy (T = Tr + u/cp), 1 = taylor_quinney (T интегрируется
     // отдельно: dT = chi*Y*d_eps_p/(rho*cp)). Применяется к cfg.mats.jc[*].th в
     // конце parse_sph_config. jc_chi -- доля пластической работы, идущая в тепло.
@@ -216,7 +216,7 @@ inline void SimulationConfig::apply_defaults()
 #endif
 }
 
-// Проверка настроек проекции скорости нормального контакта (fiber/TZ_LAW3_PROJECTION.md).
+// Проверка настроек проекции скорости нормального контакта (notes/fiber-contact/law3-projection-tz.md).
 // Бросает std::runtime_error (по-русски). Обе проекции выключены -- ничего не делает.
 // Вызывается после разбора конфига/аргументов (input.cpp, guo2019_shot, time_integration);
 // в выстреле Guo -- дважды (guo2019_shot и run_time_integration), поэтому предупреждения

@@ -2,7 +2,7 @@
 // interactions/fiber_contact_stats.hpp
 // Диагностическая статистика нормальной силы и трения контактов нитей
 // (Fiber-Fiber и Fiber-Solid) для проверки гипотез о законах pinball / Swegle
-// (contact/12-fiber-contact-types.md; experiments/*-guo2019-1t-contact-types-friction).
+// (notes/contact/12-fiber-contact-types.md; experiments/*-guo2019-1t-contact-types-friction).
 // Только в сборке с -DSPH_CONTACT_STATS=ON (src/time_integration.cpp).
 //
 // Без hold_n модуль только ЧИТАЕТ состояние: траектория побитово та же, что

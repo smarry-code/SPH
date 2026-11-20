@@ -1,5 +1,5 @@
 // fiber_input.cpp
-// Разбор файла ломаных нитей в fiber::Model (fiber/PLAN.md, этап Ф2, пункт 3).
+// Разбор файла ломаных нитей в fiber::Model (notes/fiber-model/fiber-plan.md, этап Ф2, пункт 3).
 // Объявление load_fiber_file — в include/fiber/fiber_input.hpp.
 //
 // ФОРМАТ ФАЙЛА (текстовый, свободный формат, разделители — пробелы):
@@ -10,9 +10,9 @@
 //       обязаны быть подряд, но должны быть объявлены ДО первой ссылки на
 //       них из FIBER). E, nu, d, rho, eps_break — double (модуль Юнга,
 //       коэффициент Пуассона, диаметр, плотность, критическое удлинение
-//       разрыва; см. fiber/SPH.md, разделы Fiber-Bond и Fiber-Solid-Contact).
+//       разрыва; см. notes/fiber-model/fiber-problem-statement.md, разделы Fiber-Bond и Fiber-Solid-Contact).
 //       mu_ff — НЕОБЯЗАТЕЛЬНОЕ седьмое поле, коэффициент динамического
-//       трения нить-нить (fiber/fiber_friction_implementation.md, §8);
+//       трения нить-нить (notes/fiber-contact/fiber-friction-implementation.md, §8);
 //       если не задан, mu_ff = 0 (старое поведение без трения). Если задан,
 //       должен быть числом >= 0, иначе — ошибка формата.
 //       mu_fs — НЕОБЯЗАТЕЛЬНОЕ восьмое поле (только после mu_ff),
@@ -26,7 +26,7 @@
 //       object_id (0, 1, 2, ... в порядке следования блоков FIBER в файле).
 //   - "BOND <bead_i> <bead_j> <material_id>"
 //       НЕОБЯЗАТЕЛЬНАЯ директива: связь-стежок между бусинами разных нитей
-//       (fiber/plan-quilt-fabric.md, раздел 10). <bead_i>, <bead_j> -- глобальные
+//       (notes/fabrics/plan-quilt-fabric.md, раздел 10). <bead_i>, <bead_j> -- глобальные
 //       индексы бусин (с нуля, в порядке блоков FIBER и точек внутри них),
 //       i != j; <material_id> -- материал стежка (E, d, eps_break), объявленный
 //       директивой MATERIAL (в любом месте файла, до или после BOND). Связь
@@ -37,7 +37,7 @@
 //       материал, l0 == 0, лишние токены.
 //   - "CLAMP_BOX <xmin> <ymin> <zmin> <xmax> <ymax> <zmax> [<mask>]"
 //       НЕОБЯЗАТЕЛЬНАЯ директива кинематического закрепления бусин в
-//       прямоугольной области (interactions/clamp.hpp, fiber/SPH.md,
+//       прямоугольной области (interactions/clamp.hpp, notes/fiber-model/fiber-problem-statement.md,
 //       раздел «Clamp (кинематическое закрепление)»). Координат столько,
 //       сколько dim (в 3D — шесть чисел). <mask> — непустая строка из букв
 //       x, y, z без повторов; по умолчанию все компоненты закреплены. Бусины,
@@ -45,7 +45,7 @@
 //       Несколько директив объединяются по «или». Может появиться в файле
 //       в любом месте (до/после блоков FIBER).
 //
-//   - Неупругость связи (fiber/fiber-plasticity-design.md, раздел 6; все
+//   - Неупругость связи (notes/fiber-model/fiber-plasticity-design.md, раздел 6; все
 //     директивы необязательны, ключи КЛЮЧ=значение в любом порядке, регистр
 //     ключей не важен; могут стоять до или после MATERIAL/FIBER, материал с
 //     этим id должен быть объявлен где-нибудь в файле):
@@ -70,10 +70,10 @@
 //   0.0 0.02 0.0
 //   CLAMP_BOX 0.0 0.01 -0.01 0.0 0.02 0.01 xy
 //
-// Вычисления при разборе (fiber/SPH.md, раздел «Fiber»):
+// Вычисления при разборе (notes/fiber-model/fiber-problem-statement.md, раздел «Fiber»):
 //   l0 связи (k, k+1) = расстояние между точками файла (как заданы, без
 //   деформации);
-//   l_break = (1 + eps_break) * l0 (материал связи; fiber/SPH.md,
+//   l_break = (1 + eps_break) * l0 (материал связи; notes/fiber-model/fiber-problem-statement.md,
 //   Fiber-Bond, «Постановка проекта: только растяжение»);
 //   масса бусины k: m_k = rho_f * A * (l_{k-1,k} + l_{k,k+1}) / 2,
 //   A = pi*d^2/4, для концевой бусины берётся только один прилежащий
@@ -112,7 +112,7 @@ bool strip_comment_nonblank(std::string& line)
 }
 
 // ----------------------------------------------------------------------
-// Директивы неупругости связи (fiber/fiber-plasticity-design.md, раздел 6):
+// Директивы неупругости связи (notes/fiber-model/fiber-plasticity-design.md, раздел 6):
 // PLASTIC, PLASTIC_TABLE, RATE, VISCO, FAILURE. Разбираются в промежуточную
 // структуру по id материала и применяются к материалам ПОСЛЕ чтения всего
 // файла (директива может стоять и до, и после MATERIAL/FIBER; повторный
@@ -387,7 +387,7 @@ void parse_failure_directive(std::istringstream& iss, std::size_t line_no, Pendi
 }
 
 // DAMAGE <id> DEPS_F=<x> | GF=<Дж/м²> -- повреждённость с разупрочнением после σ_u
-// (fiber/plan-fiber-damage.md). Ровно один из ключей; требует FAILURE SIGMA_U.
+// (notes/fiber-model/fiber-damage-plan.md). Ровно один из ключей; требует FAILURE SIGMA_U.
 // THETA_C (угловой критерий) зарезервирован, пока не реализован -- ошибка, а не молчание.
 void parse_damage_directive(std::istringstream& iss, std::size_t line_no, PendingInelastic& pi)
 {
@@ -460,7 +460,7 @@ void parse_material_directive(std::istringstream& iss, std::size_t line_no, cons
     }
 
     // mu_ff (коэффициент динамического трения нить-нить,
-    // fiber/fiber_friction_implementation.md, §8) — НЕОБЯЗАТЕЛЬНОЕ
+    // notes/fiber-contact/fiber-friction-implementation.md, §8) — НЕОБЯЗАТЕЛЬНОЕ
     // седьмое поле строки MATERIAL. Если после шести обязательных
     // полей в строке больше нет токена, оставляем mu_ff = 0.0
     // (старое поведение без трения, ничего не меняющее для уже
@@ -470,7 +470,7 @@ void parse_material_directive(std::istringstream& iss, std::size_t line_no, cons
     // Разбор — потоком, как у остальных полей (локаль потока
     // "classic"), а не std::stod, зависящим от глобальной C-локали.
     // mu_fs (коэффициент трения нить-Solid, fiber/
-    // fiber_solid_friction_implementation.md, §2) -- НЕОБЯЗАТЕЛЬНОЕ
+    // fiber-solid-friction-implementation.md, §2) -- НЕОБЯЗАТЕЛЬНОЕ
     // восьмое поле (только после mu_ff), те же правила разбора и
     // проверок; по умолчанию 0.0.
     auto read_optional_mu = [&](const char* name, double& value) {

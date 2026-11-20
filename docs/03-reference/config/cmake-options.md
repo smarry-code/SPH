@@ -15,7 +15,7 @@
 | `SPH_E2E_SLOW_TESTS` | `OFF` | Регистрировать в ctest медленные полные прогоны BC2 и BC6 (метка `slow`) |
 | `SPH_BC2_RUN_TIME_LIMIT` | `900` | Бюджет сторожа на один полный прогон BC2, с (`0` — без ограничения); общий для тестов и цели `bc2_plot` |
 | `SPH_BC6_RUN_TIME_LIMIT` | `1800` | То же для BC6 |
-| `SPH_BC2_PLOT`, `SPH_BC6_PLOT` | `contact/e2e/bc{2,6}_monitor_velocity.svg` | Куда цели `bc2_plot` / `bc6_plot` пишут график (путь к файлу) |
+| `SPH_BC2_PLOT`, `SPH_BC6_PLOT` | `notes/contact/e2e/bc{2,6}_monitor_velocity.svg` | Куда цели `bc2_plot` / `bc6_plot` пишут график (путь к файлу) |
 
 ## Примеры
 

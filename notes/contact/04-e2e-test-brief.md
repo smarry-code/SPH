@@ -1,6 +1,6 @@
 # ТЗ: end-to-end тест на кейсе BC2 (удар по карбиду бора)
 
-> **Статус (2026-11-14):** реализовано частично. Тест `tests/test_e2e_bc2.cpp` (цель `test_e2e_bc2`, ctest `e2e_bc2_smoke_contact0..3`, `e2e_bc2_full_contact0..3`) существует; заготовки `tests/data/bc2_reference_smoke.txt` в репозитории нет (есть `bc2_reference.txt`). Описание геометрии и расчёта привязано к удалённому пути (`virt_part`, `density.cpp`). Актуальные тесты — [01-run-tests.md](../docs/02-how-to/01-run-tests.md).
+> **Статус (2026-11-14):** реализовано частично. Тест `tests/test_e2e_bc2.cpp` (цель `test_e2e_bc2`, ctest `e2e_bc2_smoke_contact0..3`, `e2e_bc2_full_contact0..3`) существует; заготовки `tests/data/bc2_reference_smoke.txt` в репозитории нет (есть `bc2_reference.txt`). Описание геометрии и расчёта привязано к удалённому пути (`virt_part`, `density.cpp`). Актуальные тесты — [01-run-tests.md](../../docs/02-how-to/01-run-tests.md).
 
 **Цель:** автоматизировать шаг 6 плана ([01-plan.md](01-plan.md)) — интеграционную
 проверку, которая сейчас выполняется вручную. Тест прогоняет полный конвейер на
@@ -64,7 +64,7 @@ Z4 = Z3 + 0.025400 = 0.044350
       потом `resize`), либо `resize` с запасом и усечение в конце. Двухпроходный
       вариант предпочтителен — он же даёт проверку §1.2 (ожидаемое число частиц).
 - [ ] **`moni_particle = 12973;`** — обращение к глобалу, которого больше нет.
-      Сейчас это `cfg.moni_particle` ([simulation_config.hpp](../include/simulation_config.hpp)).
+      Сейчас это `cfg.moni_particle` ([simulation_config.hpp](../../include/simulation_config.hpp)).
 - [ ] **Накопление `r += delta_x` в условии `r <= 0.04375`** — число частиц зависит от
       ошибки округления double на границе. Перенести на целочисленный счётчик
       (`for (size_t ir = 0; ir < n_r; ++ir) { double r = (0.5 + ir) * dx; }`),
@@ -94,7 +94,7 @@ Bc2Geometry build_bc2_geometry(ParticleSystem& sys, double delta_x);
 
 ## 2. Блокер: `dim` — compile-time константа
 
-[`param.hpp:8`](../include/param.hpp#L8): `constexpr size_t dim = 1`. Кейс BC2 требует
+[`param.hpp:8`](../../include/param.hpp#L8): `constexpr size_t dim = 1`. Кейс BC2 требует
 `dim = 2` и `axis_sim = true`. Тест не может изменить это в рантайме.
 
 **Решение E1 (нужен ответ владельца):**
@@ -134,7 +134,7 @@ t_total = 3e-6  save_t = 2.5e-8   print_step = 50
 
 ### 4.1 Что сравнивать
 
-Продовый вывод — [`time_integration.cpp:304-305`](../src/time_integration.cpp#L304-L305):
+Продовый вывод — [`time_integration.cpp:304-305`](../../src/time_integration.cpp#L304-L305):
 
 ```cpp
 file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particle];
@@ -162,7 +162,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 
 ### 4.2 Формат эталонного файла
 
-Заготовка создана: [`tests/data/bc2_reference.txt`](../tests/data/bc2_reference.txt).
+Заготовка создана: [`tests/data/bc2_reference.txt`](../../tests/data/bc2_reference.txt).
 Формат и порядок перегенерации описаны в её шапке.
 
 ### 4.3 Алгоритм сравнения
@@ -249,7 +249,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 ## 7. Технические требования к реализации
 
 - [ ] Стиль теста — как в проекте: `int main()`, счётчик `failures`, `std::printf`,
-      без фреймворка (образец — [`test_particle_system.cpp`](../tests/test_particle_system.cpp)).
+      без фреймворка (образец — [`test_particle_system.cpp`](../../tests/test_particle_system.cpp)).
 - [ ] Цель CMake по образцу `test_contact`; линкуются все модули конвейера
       (`src/*.cpp` кроме `main.cpp`) — вынести общий список исходников в переменную,
       чтобы не дублировать `file(GLOB)`.
@@ -295,7 +295,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 ## 10. Статус реализации
 
 Решения **E1 = A, E2 = A, E3 = «зафиксировать тестом»** приняты владельцем.
-Реализовано: [`tests/test_e2e_bc2.cpp`](../tests/test_e2e_bc2.cpp), цель CMake `test_e2e_bc2`,
+Реализовано: [`tests/test_e2e_bc2.cpp`](../../tests/test_e2e_bc2.cpp), цель CMake `test_e2e_bc2`,
 заготовка `tests/data/bc2_reference_smoke.txt`.
 
 ### Что сделано
@@ -415,17 +415,17 @@ if (axis_sim == true && dim == 2)
 ```
 
 В отличие от соседних осесимметричных членов в
-[`int_force.cpp`](../src/int_force.cpp#L417-L430) (`pmass[j] * ... * w[k]` —
+[`int_force.cpp`](../../src/int_force.cpp#L417-L430) (`pmass[j] * ... * w[k]` —
 нормальная SPH-сумма) и от закомментированных строк прямо над ним, этот член
 не взвешен ни массой, ни ядром, а применяется по одному разу на каждую пару
 с участием частицы. При ~25-50 соседях он оказывается умножен на число соседей.
 Правильная форма источника — `-rho_i * vx[0][i] / x[0][i]` **один раз на
 частицу** (ср. одномерную ветку в
-[`time_integration.cpp`](../src/time_integration.cpp#L124)). Частицы у оси
+[`time_integration.cpp`](../../src/time_integration.cpp#L124)). Частицы у оси
 (`x[0] = 0.5·dx`) получают наибольший вклад — именно там и растёт ошибка.
 
 **Смежное наблюдение.** Механизм зеркальных частиц для оси не работает:
-вызов `virt_part(...)` в [`single_step.cpp`](../src/single_step.cpp#L103-L106)
+вызов `virt_part(...)` в [`single_step.cpp`](../../src/single_step.cpp#L103-L106)
 закомментирован, причём с сигнатурой на четыре аргумента, тогда как объявление
 в `virt_part.hpp` — на три; то есть блок в
 текущем виде не компилируется. При `axis_sim = true, dim = 2` осевой столбец

@@ -1,10 +1,10 @@
-# План внедрения контактных сил «частица–частица» (типы 1–3 по `part_0.md`)
+# План внедрения контактных сил «частица–частица» (типы 1–3 по `notes/sources/sph-contact-article.md`)
 
-> **Статус (2026-11-14):** реализовано, с отличиями. Формулы типов 1–3 — `include/contact_force.hpp`, ключи — `src/input.cpp` (`contact_force_type`, `contact_penalty_scale`, `contact_impulse_gamma`). Оркестратор в `src/ext_force.cpp` (шаги 3–4 плана) больше не продовый: контакт Solid–Solid считает `include/interactions/solid_contact.hpp`, а `ext_force.cpp` линкуется только в `test_contact`; критерий пары «разные материалы» (D2=A) заменён на `body[i] != body[j]`. Номера строк и пути плана — на `a4147b9`. Актуальное описание — [Контакт Solid–Solid](../docs/04-explanation/models/03-solid-contact.md), [ADR-007](../docs/04-explanation/decisions/adr-007-contact-force-types.md).
+> **Статус (2026-11-14):** реализовано, с отличиями. Формулы типов 1–3 — `include/contact_force.hpp`, ключи — `src/input.cpp` (`contact_force_type`, `contact_penalty_scale`, `contact_impulse_gamma`). Оркестратор в `src/ext_force.cpp` (шаги 3–4 плана) больше не продовый: контакт Solid–Solid считает `include/interactions/solid_contact.hpp`, а `ext_force.cpp` линкуется только в `test_contact`; критерий пары «разные материалы» (D2=A) заменён на `body[i] != body[j]`. Номера строк и пути плана — на `a4147b9`. Актуальное описание — [Контакт Solid–Solid](../../docs/04-explanation/models/03-solid-contact.md), [ADR-007](../../docs/04-explanation/decisions/adr-007-contact-force-types.md).
 
 **Адресат:** следующий запуск Claude Code в этом репозитории.
-**Основание:** `part_0.md` (разд. 2.1, 2.3), проверено по первоисточнику.
-**Не основание:** `Report_SPH_contact.md` — его раздел «что уже есть в кодовой базе»
+**Основание:** `notes/sources/sph-contact-article.md` (разд. 2.1, 2.3), проверено по первоисточнику.
+**Не основание:** `notes/contact/report-sph-contact.md` — его раздел «что уже есть в кодовой базе»
 не соответствует репозиторию, см. [00-audit.md](00-audit.md). Ниже — самодостаточный план.
 **Перед началом:** прочитать [02-decisions.md](02-decisions.md). Если владелец не дал
 ответов, применять рекомендованные варианты (D1=A, D2=A, D3=A, D4=A, D5=A, D6=A) и
@@ -16,7 +16,7 @@
 
 ## 0. Что именно внедряется
 
-Три штрафные контактные силы из `part_0.md` §2.3, обнаружение проникания по линии
+Три штрафные контактные силы из `notes/sources/sph-contact-article.md` §2.3, обнаружение проникания по линии
 центров (2.1). Вне объёма (фиксируется в ADR как отложенные фазы):
 
 - (2.2) «средняя нормаль» — нужны нормали к свободной поверхности, которых в проекте нет;
@@ -67,7 +67,7 @@ $$F = \begin{cases} \dfrac{\lVert \mathbf v_j - \mathbf v_i\rVert}{\Delta t_{\ma
 
 $$\Delta t_{\mathrm{ref}} = \min_{k\in\{i,j\}} \frac{\mathtt{cfg.CFL}\cdot h_k}{c_k + \lVert\mathbf v_k\rVert}$$
 
-Это поформульно тот же критерий, что в [`compute_cfl_timestep`](../src/time_integration.cpp#L13-L27),
+Это поформульно тот же критерий, что в [`compute_cfl_timestep`](../../src/time_integration.cpp#L13-L27),
 суженный на пару. Отсюда **$\Delta t_{\mathrm{applied}} \le \Delta t_{\mathrm{ref}}$ всегда**
 (глобальный шаг — минимум по всем частицам). Жёсткость строится от $\Delta t_{\mathrm{ref}}$,
 а не от применяемого шага — иначе связка «жёсткость ← шаг ← ограничитель» даёт коллапс $\Delta t$.
@@ -94,13 +94,13 @@ CFL-шага $0{,}1\,h/c$ — не связывает. Ограничитель 
 
 **Цель:** проект собирается и `ctest` зелёный до начала работы над контактом.
 
-1. [`include/param.hpp:12`](../include/param.hpp#L12): `Particle::Particle();` → `Particle();`
+1. [`include/param.hpp:12`](../../include/param.hpp#L12): `Particle::Particle();` → `Particle();`
    (лишняя квалификация; Clang — ошибка). Структура `Particle` — мёртвый код, первичное
    хранилище — `ParticleSystem`; удалять её в этом шаге **не надо** (вне объёма).
-2. [`src/main.cpp:13`](../src/main.cpp#L13): обернуть `#include <windows.h>` в `#ifdef _WIN32`
+2. [`src/main.cpp:13`](../../src/main.cpp#L13): обернуть `#include <windows.h>` в `#ifdef _WIN32`
    — единственный незащищённый включатель, в остальных модулях он уже под охраной.
-3. [`CMakeLists.txt`](../CMakeLists.txt): ветка OpenMP для AppleClang. Сейчас
-   [строки 49-52, 70-73, 104-107](../CMakeLists.txt#L104-L107) выдают голый `-fopenmp`,
+3. [`CMakeLists.txt`](../../CMakeLists.txt): ветка OpenMP для AppleClang. Сейчас
+   [строки 49-52, 70-73, 104-107](../../CMakeLists.txt#L104-L107) выдают голый `-fopenmp`,
    который Apple Clang отвергает (`unsupported option '-fopenmp'`). Нужна ветка:
    `-Xpreprocessor -fopenmp`, `include`/`lib` из `brew --prefix libomp`, линковка `-lomp`.
    Windows- и GNU-пути **не менять**.
@@ -127,22 +127,22 @@ ctest --test-dir build --output-on-failure
 
 ### 1.1 `include/simulation_config.hpp`
 
-Добавить в структуру (рядом с блоком «SPH-метод и алгоритмы», [строки 29-35](../include/simulation_config.hpp#L29-L35)):
+Добавить в структуру (рядом с блоком «SPH-метод и алгоритмы», [строки 29-35](../../include/simulation_config.hpp#L29-L35)):
 
 ```cpp
-// --- Контакт «частица-частица» (part_0.md, ADR-007) ---
+// --- Контакт «частица-частица» (notes/sources/sph-contact-article.md, ADR-007) ---
 // 0 - выключен (по умолчанию), 1 - пинбол Белицко, 2 - Свигл, 3 - импульсный.
 int    contact_force_type   = 0;
 double contact_penalty_scale = 1.0;   // масштабный коэффициент Kp (типы 1-2)
 ```
 
-и **обязательно** продублировать в [`apply_defaults()`](../include/simulation_config.hpp#L68-L77)
+и **обязательно** продублировать в [`apply_defaults()`](../../include/simulation_config.hpp#L68-L77)
 — по контракту, зафиксированному в комментарии к функции.
 
 ### 1.2 `src/input.cpp`
 
 В `parse_sph_config` дописать два `else if` в конец цепочки, после ветки `print_step`
-([input.cpp:327-330](../src/input.cpp#L327-L330)), по образцу соседей:
+([input.cpp:327-330](../../src/input.cpp#L327-L330)), по образцу соседей:
 
 ```cpp
 else if (key == "contact_force_type")   { cfg.contact_force_type   = std::stoi(value); }
@@ -156,7 +156,7 @@ else if (key == "contact_penalty_scale"){ cfg.contact_penalty_scale = std::stod(
 Дописать в конец (стиль комментариев — `*`, как в файле):
 
 ```text
-* --- Контакт «частица-частица» (part_0.md, ADR-007) ---
+* --- Контакт «частица-частица» (notes/sources/sph-contact-article.md, ADR-007) ---
 * 0 - выключен, 1 - пинбол Белицко, 2 - Свигл, 3 - импульсный
 contact_force_type = 0
 * Масштабный коэффициент штрафной силы Kp (типы 1-2)
@@ -165,7 +165,7 @@ contact_penalty_scale = 1.0
 
 ### 1.4 `include/materials.hpp`
 
-Добавить после структуры `Materials` ([materials.hpp:40](../include/materials.hpp#L40)):
+Добавить после структуры `Materials` ([materials.hpp:40](../../include/materials.hpp#L40)):
 
 ```cpp
 // Модуль сдвига по номеру материала (поле itype частицы).
@@ -212,7 +212,7 @@ Header-only, `inline`, без зависимости от `dim` и от `Particl
 ```cpp
 #pragma once
 // contact_force.hpp
-// Штрафные контактные силы «частица-частица» (part_0.md, разд. 2.3; ADR-007).
+// Штрафные контактные силы «частица-частица» (notes/sources/sph-contact-article.md, разд. 2.3; ADR-007).
 // Чистые функции: вход — скалярные характеристики пары, выход — модуль
 // нормальной силы и ограничитель шага. Направление и раскладка по осям —
 // в оркестраторе (ext_force.cpp), поэтому файл не зависит от dim.
@@ -255,7 +255,7 @@ struct Result
 };
 
 // Тип 1, (2.3)-(2.5). Множитель p из буквальной (2.3) опущен: F1 и F2 —
-// силы, и p делал бы размерность Н*м (решение D1 в contact/02-decisions.md).
+// силы, и p делал бы размерность Н*м (решение D1 в notes/contact/02-decisions.md).
 inline Result pinball_force(const PairGeom& g, const PairProps& pr, double kp)
 {
     Result out;
@@ -333,7 +333,7 @@ inline Result penalty_force(int type, const PairGeom& g, const PairProps& pr,
 
 ### 2.2 Новый файл `test_contact.cpp` (математическая часть)
 
-Стиль — как в [`test_particle_system.cpp`](../tests/test_particle_system.cpp#L12-L20):
+Стиль — как в [`test_particle_system.cpp`](../../tests/test_particle_system.cpp#L12-L20):
 `int main()`, счётчик `failures`, `std::printf`, без фреймворка. Сравнение чисел —
 относительное, допуск `1e-12`.
 
@@ -354,10 +354,10 @@ inline Result penalty_force(int type, const PairGeom& g, const PairProps& pr,
 
 ### 2.3 `CMakeLists.txt`
 
-Добавить цель по образцу `test_particle_system` ([CMakeLists.txt:55-60](../CMakeLists.txt#L55-L60)):
+Добавить цель по образцу `test_particle_system` ([CMakeLists.txt:55-60](../../CMakeLists.txt#L55-L60)):
 
 ```cmake
-# --- Тест контактных сил (part_0.md, ADR-007): аналитика типов 1-3,
+# --- Тест контактных сил (notes/sources/sph-contact-article.md, ADR-007): аналитика типов 1-3,
 #     баланс импульса, ограничитель шага. Линкуется с src/ext_force.cpp,
 #     чтобы покрыть и оркестратор.
 add_executable(test_contact test_contact.cpp src/ext_force.cpp)
@@ -378,7 +378,7 @@ add_test(NAME contact_test COMMAND test_contact)
 
 ### 3.1 Диагностика и ограничитель в `include/buffers.hpp`
 
-Добавить в `WorkBuffers` ([buffers.hpp:25](../include/buffers.hpp#L25)):
+Добавить в `WorkBuffers` ([buffers.hpp:25](../../include/buffers.hpp#L25)):
 
 ```cpp
     // --- Контакт (ADR-007). Пишутся в ext_force, читаются в time_integration.
@@ -401,7 +401,7 @@ add_test(NAME contact_test COMMAND test_contact)
 
 ### 3.2 Сигнатура `ext_force`
 
-Текущая ([ext_force.hpp:16](../include/ext_force.hpp#L16)) не пропускает ни конфиг,
+Текущая ([ext_force.hpp:16](../../include/ext_force.hpp#L16)) не пропускает ни конфиг,
 ни шаг, ни буферы. Новая:
 
 ```cpp
@@ -416,12 +416,12 @@ void ext_force(const SimulationConfig& cfg, ParticleSystem& sys, double dt,
 `#include "buffers.hpp"`, `#include "contact_force.hpp"` и описать контракт типов 0–3
 в комментарии.
 
-Точка вызова — [`single_step.cpp:205`](../src/single_step.cpp#L205); `cfg`, `dt` и `wb`
+Точка вызова — [`single_step.cpp:205`](../../src/single_step.cpp#L205); `cfg`, `dt` и `wb`
 там уже в области видимости (параметры `single_step`).
 
 ### 3.3 Тело контактной ветки в `src/ext_force.cpp`
 
-Мёртвый блок `is_contact_pair_` ([ext_force.cpp:113-141](../src/ext_force.cpp#L113-L141))
+Мёртвый блок `is_contact_pair_` ([ext_force.cpp:113-141](../../src/ext_force.cpp#L113-L141))
 **заменить** контактной веткой. Пристеночное отталкивание и самогравитацию не трогать.
 
 Вспомогательные чистые функции — в анонимном namespace файла:
@@ -453,7 +453,7 @@ double pair_dt_ref(const SimulationConfig& cfg, const ParticleSystem& sys, size_
 } // namespace
 ```
 
-Тело цикла по парам (внутри существующего цикла [ext_force.cpp:76](../src/ext_force.cpp#L76),
+Тело цикла по парам (внутри существующего цикла [ext_force.cpp:76](../../src/ext_force.cpp#L76),
 после ветки `is_real_virtual_pair`):
 
 ```cpp
@@ -513,14 +513,14 @@ if (contact_type != contact::Off && is_contact_pair(sys, i, j))
 
 `contact_type` читается из `cfg` **один раз до цикла** (`const int contact_type = cfg.contact_force_type;`);
 `wb.reset_contact()` вызывается в начале `ext_force`, рядом с обнулением `dvxdt`
-([ext_force.cpp:55-62](../src/ext_force.cpp#L55-L62)).
+([ext_force.cpp:55-62](../../src/ext_force.cpp#L55-L62)).
 
-Существующая проверка NaN/Inf в конце функции ([ext_force.cpp:144-165](../src/ext_force.cpp#L144-L165))
+Существующая проверка NaN/Inf в конце функции ([ext_force.cpp:144-165](../../src/ext_force.cpp#L144-L165))
 покрывает и контактный вклад — оставить как есть.
 
 ### 3.4 Ограничение шага в `time_integration.cpp`
 
-После [строки 144](../src/time_integration.cpp#L144):
+После [строки 144](../../src/time_integration.cpp#L144):
 
 ```cpp
 dt = compute_cfl_timestep(cfg, sys, ntotal);
@@ -529,7 +529,7 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
 
 Диагностическую строку («шаг ограничен CFL / КОНТАКТОМ», `contact_pair_count`,
 `contact_max_delta`) выводить в существующем блоке печати прогресса
-([time_integration.cpp:87-88](../src/time_integration.cpp#L87-L88)) — только при
+([time_integration.cpp:87-88](../../src/time_integration.cpp#L87-L88)) — только при
 `contact_force_type != 0`, чтобы не менять вывод существующих кейсов.
 
 **Проверка шага 3:** сборка зелёная; `ctest` — все тесты проходят; запуск `SPH` с
@@ -557,7 +557,7 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
 через `apply_defaults()` + нужные поля, `WorkBuffers` — локально. `niac`/`pair_i`/`pair_j`
 задаются прямо, без вызова поиска соседей.
 
-Замечание для O1: при `dim = 1` (текущее значение [param.hpp:8](../include/param.hpp#L8))
+Замечание для O1: при `dim = 1` (текущее значение [param.hpp:8](../../include/param.hpp#L8))
 тесты идут в 1D — это нормально, формулы dim-независимы. Ветку с `dim == 2` писать не надо.
 
 **Проверка шага 4:** `ctest --test-dir build --output-on-failure` — все цели зелёные.
@@ -569,7 +569,7 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
 Параллелен шагу 4.
 
 1. **`docs/04-explanation/decisions/adr-007-contact-force-types.md`** (новый; **007**,
-   а не 012 — ADR доведены до 006). По [шаблону](../docs/04-explanation/decisions/adr-template.md).
+   а не 012 — ADR доведены до 006). По [шаблону](../../docs/04-explanation/decisions/adr-template.md).
    Обязательно зафиксировать:
    - реестр типов и смысл `contact_force_type = 0` (решение D3);
    - $m_{ij}$ вместо $\varrho R^3$ и почему (размерность при `dim ≠ 3`, единственный
@@ -586,10 +586,10 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
    геометрия по линии центров, ограничения (сила только нормальная), диагностика,
    как выбирать $K_p$.
 3. **`mkdocs.yml`**: две записи в `nav` — в раздел «Архитектура»
-   ([строки 109-115](../mkdocs.yml#L109-L115)) и в «Решения (ADR)»
-   ([строки 116-123](../mkdocs.yml#L116-L123)).
+   ([строки 109-115](../../mkdocs.yml#L109-L115)) и в «Решения (ADR)»
+   ([строки 116-123](../../mkdocs.yml#L116-L123)).
 4. **`docs/03-reference/config/initial-conditions.md`**: две строки в таблицу ключей
-   ([строки 21-38](../docs/03-reference/config/initial-conditions.md#L21-L38)).
+   ([строки 21-38](../../docs/03-reference/config/initial-conditions.md#L21-L38)).
 5. **`docs/03-reference/config/simulation-config.md`**: новые поля.
 6. **`docs/02-how-to/01-run-tests.md`**: строка `contact_test` в таблицу состава тестов.
 7. **`docs/_internal/changelog.md`**: запись в раздел «Добавлено».
@@ -602,7 +602,7 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
 
 Автоматизации не подлежит: требует выбора физического кейса и суждения о результате.
 
-1. Переключить [`param.hpp:8`](../include/param.hpp#L8) на `dim = 2` или `3`, собрать,
+1. Переключить [`param.hpp:8`](../../include/param.hpp#L8) на `dim = 2` или `3`, собрать,
    взять кейс соударения (например, из каталога «Соударение двух стальных цилиндров»
    или BC-серии по керамике).
 2. Прогнать при `contact_force_type = 0, 1, 2, 3`, прочих равных.
@@ -610,7 +610,7 @@ if (wb.min_dt_contact < dt) dt = wb.min_dt_contact;   // ADR-007: контакт
    ограниченных контактом, `vmax`, отсутствие NaN/Inf.
 4. Калибровать $K_p$ в диапазоне 0,1–10 (в статье не калиброван).
 5. **Отдельно проверить тип 3:** интегратор предиктор-корректор применяет ускорение
-   половинами шага ([time_integration.cpp:125,178](../src/time_integration.cpp#L178)),
+   половинами шага ([time_integration.cpp:125,178](../../src/time_integration.cpp#L178)),
    поэтому фактический импульс за шаг не строго равен $m_{ij}\lVert v_{ij}\rVert$;
    формула (2.10) выведена для одношагового приложения. Ожидаемое отклонение —
    неполное гашение относительной скорости за один шаг. Если это окажется существенным,

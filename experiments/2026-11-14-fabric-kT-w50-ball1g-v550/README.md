@@ -10,7 +10,7 @@
 | Статус | **завершён: k = 20** (20T П, 21T НП) |
 
 Предыдущий эксперимент с тем же вопросом на полотне 120×130 мм:
-[2026-11-09-fabric-kT-ball1g-v550](../2026-11-09-fabric-kT-ball1g-v550/), задание `fiber/fabric_penetration.md`.
+[2026-11-09-fabric-kT-ball1g-v550](../2026-11-09-fabric-kT-ball1g-v550/), задание `notes/fabrics/fabric-kt-penetration-tz.md`.
 
 ## Вопрос
 

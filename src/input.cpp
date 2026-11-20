@@ -333,7 +333,7 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         else if (key == "fiber_file")
         {
             cfg.fiber_file = value;
-            // fiber/PLAN.md, этап Ф2, пункт 5: если нити реально заданы, а
+            // notes/fiber-model/fiber-plan.md, этап Ф2, пункт 5: если нити реально заданы, а
             // dim != 3, это ошибка, и она должна выявляться здесь, на этапе
             // разбора конфигурации, а не позже в середине расчёта.
             fiber::check_fiber_requires_dim3();
@@ -592,10 +592,10 @@ void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, doub
         }
     }
 
-    // body[] = itype[] (fiber/PLAN.md §3.1): встроенные генераторы не знают
+    // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1): встроенные генераторы не знают
     // отдельного номера тела, поэтому body совпадает с материалом — это
     // сохраняет нынешний критерий Solid-Solid-Contact «разные материалы»
-    // (fiber/SPH.md, раздел «Solid -- Solid») без изменений на BC2/BC6.
+    // (notes/fiber-model/fiber-problem-statement.md, раздел «Solid -- Solid») без изменений на BC2/BC6.
     for (size_t i = 0; i < ntotal; ++i)
     {
         sys.body[i] = sys.itype[i];
@@ -768,7 +768,7 @@ void shear_cavity(ParticleSystem& sys, size_t& ntotal)
         sys.u[i] = 357.1;     // Внутренняя энергия
         sys.itype[i] = 2;     // Водяная частица
         sys.hsml[i] = dx;     // Длина сглаживания = начальный шаг
-        sys.body[i] = sys.itype[i];   // body[] = itype[] (fiber/PLAN.md §3.1)
+        sys.body[i] = sys.itype[i];   // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1)
     }
 }
 
@@ -878,7 +878,7 @@ static void input_builtin(SimulationConfig& cfg, ParticleSystem& sys, size_t& nt
             // Чтение длины сглаживания
             iss >> sys.hsml[i];
 
-            // body[] = itype[] (fiber/PLAN.md §3.1): формат particles.dat не
+            // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1): формат particles.dat не
             // содержит отдельного номера тела.
             sys.body[i] = sys.itype[i];
 

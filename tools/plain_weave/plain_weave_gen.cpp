@@ -21,7 +21,7 @@
 //   plain_weave_gen --preset=twaron_ct717 --random-cut=9 --size=0.05x0.05 --seed=3 --out=rc.fib
 //
 // Режим --random-cut: N фрагментов ткани со случайными поворотом и фазой сетки в
-// прямоугольнике W x H, сшитых стежками (fiber/tz-random-cut-quilt.md). Несовместим
+// прямоугольнике W x H, сшитых стежками (notes/fabrics/tz-random-cut-quilt.md). Несовместим
 // с --nx/--ny/--patch/--tile; пишет <out>.fib, раскладку и <out>.cut.json.
 // Ключи раскройки без --random-cut -- ошибка использования.
 

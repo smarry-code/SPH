@@ -1,6 +1,6 @@
 // tests/test_fiber_contact.cpp
 // Unit-тесты Fiber-Fiber-Contact в схеме «пара сегментов -- одна сила»
-// (fiber/fiber_contact_segment_pairs.md, §8): primitive -- пара отрезков осей
+// (notes/fiber-contact/fiber-contact-segment-pairs.md, §8): primitive -- пара отрезков осей
 // двух нитей, ближайшие точки ищутся с ограничением по отрезкам, правило
 // владения гарантирует ровно один контакт на физическое пересечение (кроме
 // изогнутых нитей с несколькими локальными минимумами -- §3, §8.3).
@@ -27,7 +27,7 @@
 // Все проверки сил -- на СУММАРНЫХ вкладах после reduce_contributions по ВСЕМ
 // primitives сцены (build_fiber_contact_search), а не по одному вручную
 // собранному primitive -- именно в этом месте старая Meyer-подобная схема
-// ошибалась (fiber_contact_segment_pairs.md, §8, шапка).
+// ошибалась (fiber-contact-segment-pairs.md, §8, шапка).
 #include "fiber/fiber_system.hpp"
 #include "interactions/fiber_contact.hpp"
 #include "param.hpp"

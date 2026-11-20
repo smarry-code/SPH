@@ -1,6 +1,6 @@
 # План внедрения модели Джонсона-Кука (прочность + разрушение) в smarry-code/SPH
 
-> **Статус (2026-11-14):** реализовано. Этапы J1–J7: `include/strength/johnson_cook.hpp`, `include/interactions/jc_strength.hpp`, `itype` 12–15 и `make_jc_library()` в `include/materials.hpp`, УРС `eos_jc`, опция Тейлора–Куинни (`jc_heating`, `jc_chi`), тесты `test_jc_*`, `test_e2e_jc_*`; решения — в ADR-009. Ссылки `файл:строка` относятся к `c76207a` и устарели. Актуальное описание — [02-constitutive.md](../docs/04-explanation/models/02-constitutive.md) (разд. 6), [ADR-009](../docs/04-explanation/decisions/adr-009-johnson-cook.md).
+> **Статус (2026-11-14):** реализовано. Этапы J1–J7: `include/strength/johnson_cook.hpp`, `include/interactions/jc_strength.hpp`, `itype` 12–15 и `make_jc_library()` в `include/materials.hpp`, УРС `eos_jc`, опция Тейлора–Куинни (`jc_heating`, `jc_chi`), тесты `test_jc_*`, `test_e2e_jc_*`; решения — в ADR-009. Ссылки `файл:строка` относятся к `c76207a` и устарели. Актуальное описание — [02-constitutive.md](../../docs/04-explanation/models/02-constitutive.md) (разд. 6), [ADR-009](../../docs/04-explanation/decisions/adr-009-johnson-cook.md).
 
 Документ для агента Claude Code. Только план, без кода. Основа:
 - анализ модели и констант: [`jc-analysis.md`](jc-analysis.md) (та же папка);
@@ -179,7 +179,7 @@ double equivalent_strain_rate(dev rates ...);  // одна реализация 
 Каждый этап — отдельный коммит (или серия) с зелёными **всеми** тестами (`ctest --test-dir build --output-on-failure`) в сборках `SPH_DIM=1,2,3`. Регрессия BC2/BC6 не должна меняться ни на одном этапе.
 
 ### J0. Подготовка
-- Ветка от `fiber_new`. Собрать, прогнать все тесты, записать базовые результаты (время, число тестов) в `johnson-cook/00-baseline.md` в репозитории (папка как `contact/`).
+- Ветка от `fiber_new`. Собрать, прогнать все тесты, записать базовые результаты (время, число тестов) в `notes/johnson-cook/00-baseline.md` в репозитории (папка как `notes/contact/`).
 - Прочитать `postprocessing.hpp`, `solid_sph.hpp` (`solid_eos`, закон Гука, энергия), `ode/ode_solver.hpp`, `materials.hpp`, `tests/test_fiber_plasticity.cpp` (стиль тестов).
 
 ### J1. Чистый модуль JC + unit-тесты

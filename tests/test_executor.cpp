@@ -1,5 +1,5 @@
 // tests/test_executor.cpp
-// Этап Ф1 (fiber/PLAN.md): unit-тест CpuExecutor (include/rhs/cpu_executor.hpp).
+// Этап Ф1 (notes/fiber-model/fiber-plan.md): unit-тест CpuExecutor (include/rhs/cpu_executor.hpp).
 // Проверяет parallel_for/parallel_reduce/parallel_scan/parallel_sort против
 // последовательных эталонов на разных N, включая пустой диапазон и один
 // элемент, при 1, 2 и 7 потоках.
@@ -392,7 +392,7 @@ int main()
 #ifdef _WIN32
     SetConsoleOutputCP(65001);
 #endif
-    std::printf("=== test_executor: CpuExecutor (fiber/PLAN.md, этап Ф1) ===\n");
+    std::printf("=== test_executor: CpuExecutor (notes/fiber-model/fiber-plan.md, этап Ф1) ===\n");
 
     test_parallel_for();
     test_parallel_reduce();
