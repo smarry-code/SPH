@@ -24,9 +24,8 @@ sph_output_00050.txt
 действует и на `fiber_output_*.txt`).
 
 !!! note "Расширение файлов"
-    В коде ([`output.cpp`](../../../src/output.cpp:23)) создаётся `.txt`. В
-    подкаталогах сценариев (`Ударная труба/...`) эталонные файлы переименованы
-    в `.dat` вручную — содержимое одинаково. Структура колонок ниже едина.
+    В коде ([`output.cpp`](../../../src/output.cpp:23)) создаётся `.txt`. Структура колонок
+    ниже едина.
 
 ### Структура
 
@@ -69,7 +68,7 @@ $$
 \sigma_i = \frac{1}{\sqrt{2}} \sqrt{(s_{xx}-s_{yy})^2 + (s_{xx}-s_{zz})^2 + (s_{yy}-s_{zz})^2 + 6(s_{xy}^2 + s_{yz}^2 + s_{xz}^2)}
 $$
 
-(см. [`Particle::vuvod()`](../../../include/particle_system.hpp:139)).
+(см. [`ParticleSystem::vuvod_index()`](../../../include/particle_system.hpp:139)).
 
 ## `sph_gp.csv` — накопительный дамп кинематики
 

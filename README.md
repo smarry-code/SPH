@@ -22,7 +22,7 @@
 
 ## Быстрый старт
 
-Требуется Clang (C++20), CMake 3.16+, Ninja, OpenMP (libomp).
+Требуется Clang (C++20), CMake 3.21+, Ninja, OpenMP (libomp).
 
 ```bash
 # Настройка и сборка
@@ -69,7 +69,7 @@ SPH/
 ├── cmake/           # Скрипты CMake (графики, регрессия по эталону)
 ├── docs/            # Документация (Markdown, MkDocs Material)
 ├── mkdocs_hooks/    # Хуки сайта документации
-├── contact/, fiber/, johnson-cook/, speedup/, Gia/   # Рабочие заметки и планы по темам
+├── contact/, fiber/, johnson-cook/, jh2/, speedup/, Gia/   # Рабочие заметки и планы по темам
 ├── experiments/     # Журналы экспериментов
 ├── SPH_Lee/         # Исходная Fortran-реализация (справочно)
 ├── Керамика/, Соударение двух стальных цилиндров/    # Исходные материалы и данные

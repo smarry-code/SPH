@@ -75,7 +75,7 @@ $i<j$, обходимые `SpatialIndex::for_each_pair_segmented` (без про
 $$
 R_{\text{search}}=d_{\max}+2L_{\max},
 $$
-$d_{\max}$ — максимальный диаметр по материалам нитей, $L_{\max}$ — максимум **текущей** (не
+$d_{\max}$ — максимальный диаметр по списку материалов, $L_{\max}$ — максимум **текущей** (не
 номинальной $l_0$) длины связи $|\mathbf x_i-\mathbf x_j|$ по всем связям
 (`fiber_max_current_bond_length`; связи рвутся в постобработке после шага, поэтому внутри шага
 сегмент может быть длиннее $l_0$). Обоснование — неравенство треугольника:
@@ -503,9 +503,9 @@ $\mathbf F_t\cdot\mathbf u_t\le0$. Прилипание достигается �
 
 Раздача: $+\mathbf F_t$ на сторону A весами $(1-s,s)$ ($\mathbf a_k=\alpha_k\mathbf F_t/m_k$), $-\mathbf F_t$ на B
 весами $(1-t,t)$; бусины с нулевым весом не эмитируются. Сумма сил равна нулю — **импульс сохраняется**.
-Момент импульса от трения для нить–нить не отслеживался в коде; точки приложения $\mathbf q_A$, $\mathbf q_B$
-разнесены на $D\mathbf n$ и $\mathbf F_t\perp\mathbf n$, поэтому момент строго не сохраняется
-(отметка в комментарии кода есть только для нить–Solid, §6.1 спецификации задачи 4).
+Момент импульса от трения нить–нить строго не сохраняется; точки приложения $\mathbf q_A$, $\mathbf q_B$
+разнесены на $D\mathbf n$ и $\mathbf F_t\perp\mathbf n$ (см. нить–Solid ниже; в коде это явно отмечено
+только для нить–Solid).
 
 Для нить–Solid: $\mathbf u=[(1-\lambda)\tilde{\mathbf v}_a+\lambda\tilde{\mathbf v}_b]-\tilde{\mathbf v}_s$, где
 $\tilde{\mathbf v}_s=(\mathbf v_{\rm base}+h\,\mathbf a_s^{\rm без\ тр.})+\mathbf v_{\rm XSPH}$ (поправка XSPH, `nullptr` у Эйлера — ровно арифметика
@@ -535,7 +535,8 @@ $=\max|\mathbf F_t|/(\mu N)$ (должно быть $\le1$), `shared_bead_count`
 ## 7. Нормальный контакт как проекция скорости
 
 Режим включается ключами `fiber_fiber_contact_predictor = 1` и/или `fiber_solid_contact_predictor = 1`
-(по умолчанию 0 — явная сила §4, счёт побитово прежний) и действует для законов 1–3. Вид контакта
+(по умолчанию 0 — явная сила §4, счёт побитово прежний) и действует для законов 1–3: при `predictor = 1` закон этого вида обязан быть 1, 2 или 3, иначе
+`validate_fiber_contact_projection` бросает исключение; `fiber_contact_projection_warm` по умолчанию 1. Вид контакта
 выбирается независимо: проекция может стоять у нить–Solid и не у нить–нить. Код —
 [fiber_normal_projection.hpp](../../../include/interactions/fiber_normal_projection.hpp),
 [fiber_normal_projection_types.hpp](../../../include/interactions/fiber_normal_projection_types.hpp);

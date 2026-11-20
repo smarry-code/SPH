@@ -8,7 +8,9 @@
 > `include/contact_force.hpp`) описаны здесь ВЕРНО и переиспользуются новым
 > путём без изменений; `ext_force.cpp` и этот документ сохранены как
 > описание/тестовый стенд именно этой математики (`tests/test_contact.cpp`;
-> в `CMakeLists.txt` `src/ext_force.cpp` линкуется только в `test_contact`),
+> `ext_force()` не вызывается в продовом пути, его используют только тесты
+> `test_contact`, `test_e2e_bc2`, `test_e2e_bc6`, хотя `src/ext_force.cpp`
+> по-прежнему компилируется в каждую цель через glob),
 > а не текущей продовой оркестрации. Различия двух путей (критерий пары,
 > диагностика) отмечены в п. 5-6.
 
@@ -233,9 +235,11 @@ bool is_contact_material_pair(const ParticleSystem& sys, size_t i, size_t j)
 Параметры: `fiber_*_contact_penalty_scale` ($K_p$), `fiber_*_contact_impulse_gamma`
 ($\gamma$, диапазон $(0;1.6]$). Опорный шаг $\Delta t_{\mathrm{ref}}$ стороны
 нити — предел шага связи, $\Delta t_{\mathrm{applied}}$ для типа 3 — шаг
-предыдущего цикла. Ключи `fiber_*_contact_impulse_push_tau`/`push_depth`/`push_vmax`
-(выталкивание типа 3) оставлены для воспроизведения старых серий и в расчётах
-не используются (источник энергии, см. комментарий у `FiberContactLaw::push_tau`).
+предыдущего цикла. Ключи `fiber_solid_contact_impulse_push_tau`/`fiber_fiber_contact_impulse_push_tau`
+и общие `fiber_contact_impulse_push_depth`/`fiber_contact_impulse_push_vmax`
+(выталкивание типа 3) оставлены для воспроизведения старых серий и не
+рекомендуются к использованию (решение владельца: источник энергии, см. комментарий у
+`FiberContactLaw::push_tau`); при `push_tau > 0` код выталкивание всё же применяет.
 Подробнее — ADR-008, раздел «Актуальное состояние».
 
 ## Связанные материалы

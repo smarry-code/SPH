@@ -10,7 +10,7 @@
 [02-constitutive.md](02-constitutive.md). Здесь они рассматриваются как входные
 поля частиц. Контакт между телами и нити описаны в других главах раздела.
 
-Источник истины — код ветки `fiber_new`: [solid_sph.hpp](../../../include/interactions/solid_sph.hpp),
+Источник истины — код репозитория: [solid_sph.hpp](../../../include/interactions/solid_sph.hpp),
 [kernel.hpp](../../../include/kernel.hpp), [h_upgrade.cpp](../../../src/h_upgrade.cpp),
 [ode_solver.hpp](../../../include/ode/ode_solver.hpp). Файлы
 [int_force.cpp](../../../src/int_force.cpp) и [int_force.hpp](../../../include/int_force.hpp)

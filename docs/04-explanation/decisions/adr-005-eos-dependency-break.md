@@ -31,7 +31,7 @@ void eos_mi_grunaizen(const Materials& mats, size_t nmat,
 **Положительные:**
 
 - Изолируемое тестирование УРС (см. [`test_jc_eos`](../../../tests/test_jc_eos.cpp));
-- Чёткое разделение: плотность — в `density.hpp`, УРС — в `eos.hpp`;
+- Чёткое разделение: УРС — в `eos.hpp` (чистые функции), плотность — в `interactions/solid_sph.hpp`;
 - Возможность подстановки моделей состояния без изменения остального конвейера.
 
 **Отрицательные:**
@@ -43,7 +43,7 @@ void eos_mi_grunaizen(const Materials& mats, size_t nmat,
 
 - [`eos.hpp`](../../../include/eos.hpp): объявления УРС.
 - [`eos.cpp`](../../../src/eos.cpp): реализации.
-- [`materials.hpp`](../../../include/materials.hpp:124): источник констант.
+- [`materials.hpp`](../../../include/materials.hpp:130): источник констант.
 
 ## Актуальное состояние (2026-11)
 

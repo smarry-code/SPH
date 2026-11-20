@@ -58,7 +58,7 @@
 | Импульсный контакт | Impulse (тип 3) | Сила гасит долю $\gamma$ нормальной скорости сближения за шаг; $\gamma$ — `contact_impulse_gamma`, рабочий диапазон $(0;1.6]$. |
 | $K_p$ | Penalty scale | Безразмерный масштаб штрафной силы (`contact_penalty_scale`, `fiber_*_contact_penalty_scale`). |
 | Закон контакта нитей | Fiber contact law | Закон нормальной силы Fiber-Solid / Fiber-Fiber, ключи `fiber_solid_contact_type`, `fiber_fiber_contact_type`: 0 Герц, 1 пинбол, 2 Свигл, 3 импульсный, 4 Герц + демпфер. Тип 0 — **не** «выключено». |
-| Push (выталкивание) | Impulse push | Добавка к скорости сближения в законе 3 при глубоком проникании: $(p-\mathrm{depth}\cdot r)/\tau$ (`*_impulse_push_tau`, `push_depth`, `push_vmax`). В расчётах не используется (источник энергии), ключи сохранены для воспроизведения серий. |
+| Push (выталкивание) | Impulse push | Добавка к скорости сближения в законе 3 при глубоком проникании: $(p-\mathrm{depth}\cdot r)/\tau$ (`fiber_{solid,fiber}_contact_impulse_push_tau`, `fiber_contact_impulse_push_depth`, `fiber_contact_impulse_push_vmax`). Не рекомендуется (источник энергии); при `push_tau > 0` код выталкивание всё же применяет, ключи сохранены для воспроизведения серий. |
 | Герц + демпфер | Hertz + damper (закон 4) | $F=F_H+c\max(\dot p,0)$, $c=K_p m_{ij}/\Delta t_{\mathrm{ref}}$; упругая часть работает и в покое. |
 | Fiber-Bond | Fiber-Bond | Связь бусин: соседних по нити (цепочка) или произвольных (стежок, директива `BOND`); только растяжение, разрыв при $l>(1+\varepsilon_b)l^0$ в Postprocessing. Материал связи — `FiberBond::mat` ($-1$ — материал бусины $i$). |
 | Fiber-Fiber-Contact | Fiber-Fiber-Contact | Контакт пар сегментов осей разных нитей, нормальная сила по Герцу или одному из законов 1-4. |

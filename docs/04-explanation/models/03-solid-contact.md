@@ -318,7 +318,8 @@ $$
 3. После сложения вкладов трения, до `advance()` — повторная проекция `dvx`, `dv`
    (без `av`); реакция прибавляется к накопленной в п. 1.
 
-Итоговая реакция — в `ClampReport` (`solid_force[dim]`, `fiber_force[dim]`).
+Итоговая реакция — в `ClampReport` (`solid_force[dim]`, `fiber_force[dim]`, а также сумма и максимум
+модулей реакций `solid_force_abs`, `fiber_force_abs`, `solid_force_max`, `fiber_force_max`).
 Реакция считается детерминированной двухуровневой суммой с блоками по
 `kClampReduceBlock = 256` (не `parallel_reduce`), списки короче
 `kClampSerialThreshold = 8192` обходятся последовательно; результат не зависит

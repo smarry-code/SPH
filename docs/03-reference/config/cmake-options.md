@@ -10,7 +10,7 @@
 | `SPH_OLEVEL` | `2` | Уровень оптимизации Clang/GCC (2 или 3) |
 | `SPH_PROFILE` | `OFF` | Определяет макрос `SPH_PROFILE` для цели `SPH`. Блоков `#ifdef SPH_PROFILE` в текущем коде нет, `force_timing.csv` не создаётся |
 | `SPH_DIM` | `1` | Размерность исполняемого `SPH` (1, 2 или 3). Тестовые цели задают свою размерность сами. Нити (`fiber_file`) и `k_mode=solid_fiber` требуют `3` |
-| `SPH_CONTACT_STATS` | `OFF` | Диагностика контактов нитей (`#ifdef SPH_CONTACT_STATS`, [`fiber_contact_stats.hpp`](../../../include/interactions/fiber_contact_stats.hpp)); включает ключи `guo2019_shot --contact-stats` и `--hold-n` |
+| `SPH_CONTACT_STATS` | `OFF` | Диагностика контактов нитей (`#ifdef SPH_CONTACT_STATS`, [`fiber_contact_stats.hpp`](../../../include/interactions/fiber_contact_stats.hpp)); включает ключи `guo2019_shot --contact-stats` и `--hold-n` (определяется только для `guo2019_shot`, не для `SPH`) |
 | `SPH_ENERGY_LOG` | `OFF` | Лог механической энергии (`#ifdef SPH_ENERGY_LOG`, [`energy_log.hpp`](../../../include/energy_log.hpp)); включает ключи `energy_log_every`/`energy_log_file` в `Initial_Conditions.txt` и `--energy-log` у `guo2019_shot`/`fabric_checks`. Определяется для `SPH`, `guo2019_shot`, `fabric_checks` |
 | `SPH_E2E_SLOW_TESTS` | `OFF` | Регистрировать в ctest медленные полные прогоны BC2 и BC6 (метка `slow`) |
 | `SPH_BC2_RUN_TIME_LIMIT` | `900` | Бюджет сторожа на один полный прогон BC2, с (`0` — без ограничения); общий для тестов и цели `bc2_plot` |
@@ -55,4 +55,4 @@ cmake -S . -B build -G Ninja -DSPH_DIM=3
 
 ## Дополнительные цели
 
-Помимо `SPH` в `CMakeLists.txt` собираются утилиты `guo2019_shot`, `fabric_checks`, `plain_weave_gen` (см. [параметры запуска](../cli.md)), демонстрации `demo_fiber_net`, `demo_fiber_layers`, `fiber_t0_dump` (`EXCLUDE_FROM_ALL`), тесты (`enable_testing()`) и служебные цели `bc2_plot`, `bc6_plot`, `regression_golden` (скрипты в `cmake/`).
+Помимо `SPH` в `CMakeLists.txt` собираются утилиты `guo2019_shot`, `fabric_checks`, `plain_weave_gen` (см. [параметры запуска](../cli.md)), демонстрации `demo_fiber_net`, `demo_fiber_layers` и `fiber_t0_dump` (только последняя с `EXCLUDE_FROM_ALL`), тесты (`enable_testing()`) и служебные цели `bc2_plot`, `bc6_plot`, `regression_golden` (скрипты в `cmake/`).

@@ -233,7 +233,7 @@ $p = 0$, контакт включается только при настоящ�
 - [`materials.hpp`](../../../include/materials.hpp): `shear_modulus_by_itype()`.
 - [`simulation_config.hpp`](../../../include/simulation_config.hpp):
   `contact_force_type`, `contact_penalty_scale`.
-- `tests/test_contact.cpp`: аналитические тесты M1-M12,
+- `tests/test_contact.cpp`: аналитические тесты M1-M13,
   тесты оркестратора O1-O9.
 - [Архитектура: контакт «частица-частица»](../architecture/contact-particle-particle.md).
 
@@ -246,8 +246,8 @@ $m_{ij}$, радиус из объёма, откат $F_2$). Отличия ре
   считает [`compute_solid_contact_contributions`](../../../include/interactions/solid_contact.hpp)
   (kernel + `ContributionWriter`, reduce по шардам, см. [ADR-008](adr-008-rhs-architecture-fiber.md)),
   а диагностику и `min_dt_contact` — `compute_solid_contact_diagnostics` каждый шаг
-  (`src/single_step.cpp`). `ext_force.cpp` линкуется только в `test_contact`
-  (тесты M1-M12, O1-O12).
+  (`src/single_step.cpp`). `src/ext_force.cpp` компилируется в общий конвейер (глоб `src/*.cpp`), но в продовом шаге
+  не вызывается; вызывает его только `test_contact` (тесты M1-M13, O1-O12).
 - **Критерий пары.** Вместо `itype[i] != itype[j]` (решение D2) продовый путь берёт
   `body[i] != body[j]` (`ParticleSystem::body`, PID детали для k-файла, `itype` для
   встроенных генераторов). Ограничение «два тела одного материала контакта не видят»

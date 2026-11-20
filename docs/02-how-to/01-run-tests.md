@@ -51,7 +51,7 @@ ctest --test-dir build --output-on-failure
 ### Тесты нитей, импорта `.k`, закреплений и Джонсона–Кука
 
 Эти тесты зарегистрированы в [`CMakeLists.txt`](../../CMakeLists.txt) наравне с перечисленными
-выше (метка `3d`, где не оговорено иное). Список сверен с `add_test` на дату правки; полный
+выше (метка `3d` у большинства; без метки — `fiber_plasticity_test`, `fiber_dim_guard_test`, `k_reader_test`, `k_solid_{1d,2d}_test`, `jc_strength_*`, `jc_eos_test`, `jc_urs_consistency_test`, `jc_integration_*`, `jh2_test`, `jh2_element_test`; `art_stress_*` — `jc`; `e2e_jc_*` — `e2e;jc`; `e2e_clamp_*` — `e2e;3d`; `fiber_plasticity_guo_smoke`, `e2e_fiber_frames_selfcheck`, `e2e_guo2019_smoke_*`, `energy_log_test`, `fabric_checks_smoke_*` — `3d;e2e`). Список сверен с `add_test` на дату правки; полный
 перечень всегда выдаёт `ctest --test-dir build -N`.
 
 | Тест (имя в ctest) | Исполняемый файл | Что проверяет |
@@ -60,8 +60,8 @@ ctest --test-dir build --output-on-failure
 | `fiber_bond_test`, `fiber_break_test` | `test_fiber_bond`, `test_fiber_break` | Сила и предел шага связи Fiber-Bond; разрыв ровно при `l > l_break` |
 | `fiber_contact_projection_test` | `test_fiber_contact_projection` | Нормальный контакт как проекция скорости (законы 1–3 при `*_contact_predictor = 1`): формула одного контакта, тёплый старт, слоты трения (U1–U6); статика под нагрузкой, лобовой удар, связанные контакты, энергия и импульс стадии (Т1–Т7) |
 | `fiber_stitch_test` | `test_fiber_stitch` | Директива `BOND` и материал связи `mat`: разбор и ошибки, сила стежка $E_1A_1(l-l_0)/l_0$ и ноль при сжатии, разрыв стежка без изменения `prev`/`next`/`object_id` |
-| `fiber_contact_test`, `fiber_contact_types_test`, `fiber_friction_test` | `test_fiber_contact`, `test_fiber_contact_types`, `test_fiber_friction` | Контакт нить–нить (пары сегментов), законы нормальной силы (Герц, пинбол, Свигл, импульсный; закон 4 «Герц + демпфер» — `include/interactions/fiber_contact_law.hpp`, отдельного теста по имени в списке не проверялось), трение проекцией скоростей |
-| `fiber_solid_test`, `fiber_solid_types_test` | `test_fiber_solid`, `test_fiber_solid_types` | Контакт нить–Solid и его законы нормальной силы |
+| `fiber_contact_test`, `fiber_contact_types_test`, `fiber_friction_test` | `test_fiber_contact`, `test_fiber_contact_types`, `test_fiber_friction` | Контакт нить–нить (пары сегментов), законы нормальной силы (Герц, пинбол, Свигл, импульсный), трение проекцией скоростей |
+| `fiber_solid_test`, `fiber_solid_types_test` | `test_fiber_solid`, `test_fiber_solid_types` | Контакт нить–Solid и его законы нормальной силы, включая закон 4 «Герц + демпфер» (формула $F_H + c\cdot\max(\dot p,0)$, разбор `fiber_*_contact_type = 4`; `fiber_solid_types_test`) |
 | `fiber_plasticity_test`, `fiber_plasticity_integration_test`, `fiber_plasticity_validation_test`, `fiber_input_inelastic_test`, `fiber_damage_test` | `test_fiber_plasticity`, `..._integration`, `..._validation`, `test_fiber_input_inelastic`, `test_fiber_damage` | Пластичность, вязкость и повреждённость связи, директивы `PLASTIC`/`RATE`/`VISCO`/`FAILURE`/`DAMAGE` в `.fib` |
 | `fiber_plasticity_guo_smoke` | `test_fiber_plasticity_guo` | Сцена Guo 2019 с упругой и упруго-пластичной нитью (метки `3d;e2e`) |
 | `fiber_dim_guard_test` | `test_fiber_dim_guard` | Нити при `SPH_DIM != 3` дают исключение (цель собрана без `SPH_DIM`) |
@@ -278,7 +278,8 @@ cmake --build build --target regression_golden
 провалиться.
 
 ```bash
-cp tests/data/bc2_initial_conditions.txt /tmp/bc2_alpha.txt   # alpha = 1.001
+cp tests/data/bc2_initial_conditions.txt /tmp/bc2_alpha.txt
+sed -i 's/^alpha = .*/alpha = 1.001/' /tmp/bc2_alpha.txt
 ./build/test_regression --case=bc2 --contact-type=0 --config=/tmp/bc2_alpha.txt
 ```
 

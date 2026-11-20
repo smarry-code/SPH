@@ -124,7 +124,8 @@ flowchart LR
 ```mermaid
 flowchart LR
     A["compute_solid_derived<br/>(EOS: p, c)"] --> B["build_ghost_set +<br/>build_solid_extended"]
-    B --> C["build_solid_sph_search<br/>(SpatialIndex, пары, примитивы)"]
+    B --> B2["build_art_stress<br/>(искусственное напряжение)"]
+    B2 --> C["build_solid_sph_search<br/>(SpatialIndex, пары, примитивы)"]
     C --> D["compute_solid_sph_contributions<br/>+ compute_solid_contact_contributions"]
     D --> E["reduce_contributions_into<br/>(по шардам)"]
     E --> F["finalize_solid"]
@@ -135,6 +136,7 @@ flowchart LR
 |---|---|---|---|
 | Производные | `compute_solid_derived` | [`solid_sph.hpp`](../../../include/interactions/solid_sph.hpp:242) | EOS по `itype`, давление и скорость звука; проверка `rho`, `mass`, `itype` |
 | Виртуальные частицы | `build_ghost_set`, `build_solid_extended` | [`solid_sph.hpp`](../../../include/interactions/solid_sph.hpp:296) | Зеркала у оси (`axis_sim` и `dim == 2`) только в `SolidExtended`, не в `sys` |
+| Искусственное напряжение | `build_art_stress` | [`single_step.cpp`](../../../src/single_step.cpp:131) | Добавка искусственного напряжения Монагана в `SolidExtended` (при `art_stress_eps > 0`) |
 | Поиск | `build_solid_sph_search` | [`solid_sph.hpp`](../../../include/interactions/solid_sph.hpp:507) | Пары $i<j$ по `SpatialIndex`, примитивы Solid-SPH, `real_pairs`, `contact_pairs` — см. [Поиск соседей](neighbor-search.md) |
 | Ядро Solid-SPH | `compute_solid_sph_contributions` | [`solid_sph.hpp`](../../../include/interactions/solid_sph.hpp:689) | Неразрывность, скорости деформаций/поворота, импульс и энергия, искусственная вязкость, XSPH → `SolidDelta` |
 | Контакт Solid–Solid | `compute_solid_contact_contributions` | [`solid_contact.hpp`](../../../include/interactions/solid_contact.hpp:91) | Межтельные пары (`body[i] != body[j]`), при `contact_force_type != 0` — см. [контакт частица–частица](contact-particle-particle.md) |
@@ -190,4 +192,4 @@ flowchart LR
 
 ## Команды обхода
 
-Полный список модулей и функций — в [справочнике API (Doxygen)](../../../_build/doxygen/html/).
+Полный список модулей и функций — в [справочнике API (Doxygen)](../../_build/doxygen/html/).

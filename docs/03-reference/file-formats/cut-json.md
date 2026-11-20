@@ -7,7 +7,7 @@
 - `plain_weave_gen --random-cut` — файл `<out>.cut.json` (например, `rc.fib.cut.json`);
 - `guo2019_shot --random-cut` — файл `guo2019_fabric.cut.json` в каталоге выстрела.
 
-Кто читает: [random_cut_plot.py](../../../tools/plain_weave/random_cut_plot.py) (графики раскройки, бусин и стежков). Модель мозаики — в [руководстве по генератору](../../02-how-to/02-plain-weave-generator.md#случайная-раскройка) и на странице [«Ткани»](../../04-explanation/models/07-fabrics.md).
+Кто читает: [random_cut_plot.py](../../../tools/plain_weave/random_cut_plot.py) (графики раскройки, бусин и стежков); по умолчанию он ищет `<fib>.cut.json`, поэтому для `guo2019_fabric.cut.json` нужен `--cut`. Модель мозаики — в [руководстве по генератору](../../02-how-to/02-plain-weave-generator.md#случайная-раскройка) и на странице [«Ткани»](../../04-explanation/models/07-fabrics.md).
 
 Общие правила: текстовый JSON; числа с 17 значащими цифрами; длины в метрах, углы в радианах (кроме `rot_max_deg`, градусы); индексы бусин и нитей глобальные, с нуля, как в `.fib`; точка `[x, y]` — плоскость ткани.
 

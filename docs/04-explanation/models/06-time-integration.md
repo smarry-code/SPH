@@ -170,7 +170,8 @@ $$
 
 1. `compute_solid_derived` — $p,c$ из EOS (результат копируется в `sys.p`, `sys.c`: «шим совместимости»,
    нужен CFL и прочности);
-2. `build_ghost_set`, `build_solid_extended` — зеркальные частицы живут только в
+2. `build_ghost_set`, `build_solid_extended`, `build_art_stress` (искусственное напряжение, см.
+   [01-sph-core.md](01-sph-core.md)) — зеркальные частицы живут только в
    `SolidExtended`, в `sys` не пишутся;
 3. `build_solid_sph_search` — пары (общие для SPH и контакта);
 4. `compute_solid_sph_contributions` — давление, девиатор, вязкость, XSPH, $d\rho$, $de$, скорости деформации;

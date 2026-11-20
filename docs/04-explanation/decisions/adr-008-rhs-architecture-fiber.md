@@ -158,7 +158,7 @@ reduce по шардам реализована ([`include/rhs/`](../../../inclu
   весами Meyer; эффективные $E^*, R^*$ — по обобщённой формуле Герца для разных
   материалов ([`fiber_contact.hpp`](../../../include/interactions/fiber_contact.hpp),
   `fiber/fiber_contact_segment_pairs.md`). Fiber-Solid-Contact использует
-  `SpatialIndex::find_pairs_cross`, свой радиус поиска и правило владения узлом
+  `SpatialIndex::find_pairs_cross_parallel`, свой радиус поиска и правило владения узлом
   ([`fiber_solid_contact.hpp`](../../../include/interactions/fiber_solid_contact.hpp)).
 - **Законы нормальной силы контактов нитей.** Ключи `fiber_solid_contact_type`,
   `fiber_fiber_contact_type` (0..4): 0 — Герц (не «выключено»), 1-3 — те же

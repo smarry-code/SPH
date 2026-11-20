@@ -13,7 +13,7 @@
 ## Решение
 
 Константы вынесены в самостоятельный модуль
-[`Materials`](../../../include/materials.hpp:124) как **подобъект**
+[`Materials`](../../../include/materials.hpp:130) как **подобъект**
 `SimulationConfig` (поле `SimulationConfig::mats`). Материалы:
 
 - инициализируются один раз (значениями по умолчанию) и не изменяются в runtime;
@@ -23,7 +23,7 @@
 Индексация: формальный номер материала — поле `itype` частицы (3 — тантал,
 4 — алюминий, 5 — LiF, 6–8 — полиуретаны, 9 — PMMA, 10 — B₄C, 11 — Al₂O₃).
 Массивы металлов/полимеров индексируются через смещение
-[`Materials::n_Me = 3`](../../../include/materials.hpp:130) (`itype - n_Me`).
+[`Materials::n_Me = 3`](../../../include/materials.hpp:136) (`itype - n_Me`).
 
 ## Последствия
 
@@ -39,13 +39,13 @@
 
 ## Связанные файлы
 
-- [`materials.hpp`](../../../include/materials.hpp:124): определение структуры.
+- [`materials.hpp`](../../../include/materials.hpp:130): определение структуры.
 - [`eos.hpp`](../../../include/eos.hpp): функции УРС, принимающие `const Materials&`.
 
 ## Актуальное состояние (2026-11)
 
-- Структура `Materials` — [`materials.hpp:124`](../../../include/materials.hpp:124),
-  `n_Me` — [`:130`](../../../include/materials.hpp:130).
+- Структура `Materials` — [`materials.hpp:130`](../../../include/materials.hpp:130),
+  `n_Me` — [`:136`](../../../include/materials.hpp:136).
 - Нумерация `itype` расширена: 12 — сталь 4340, 13 — сталь 1006, 14 — Al 7039,
   15 — Al 5083-H116 (модель Джонсона-Кука). Для них отдельный массив
   `Materials::jc` (`make_jc_library()`) и смещение `Materials::n_JC = 12`,
