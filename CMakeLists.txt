@@ -958,10 +958,10 @@ foreach(_guo_cfg A 1T 1T_A A_1T 2T 4T)
 endforeach()
 
 # --- Т0 пластичности нити: дамп состояния нитей с %.17g для побитового
-#     сравнения до/после (tests/fiber_t0_dump.cpp), без add_test. Инструмент:
+#     сравнения до/после (cases/guo2019/experiment/fiber_t0_dump.cpp), без add_test. Инструмент:
 #     EXCLUDE_FROM_ALL, собирается явно (--target fiber_t0_dump).
-add_executable(fiber_t0_dump EXCLUDE_FROM_ALL tests/fiber_t0_dump.cpp ${SPH_PIPELINE_SOURCES})
-sph_case(fiber_t0_dump guo2019 regression)
+add_executable(fiber_t0_dump EXCLUDE_FROM_ALL cases/guo2019/experiment/fiber_t0_dump.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(fiber_t0_dump guo2019 experiment)
 target_include_directories(fiber_t0_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(fiber_t0_dump PRIVATE
     SPH_DIM=3
@@ -998,11 +998,9 @@ add_test(NAME energy_log_test COMMAND test_energy_log --time-limit=200)
 set_tests_properties(energy_log_test PROPERTIES LABELS "3d;e2e" TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=2")
 
 # --- Программа серийных выстрелов Guo 2019 (ТЗ Guo 2019 §8), без add_test.
-add_executable(guo2019_shot tools/guo2019/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
-sph_case(guo2019_shot guo2019 regression)
-target_include_directories(guo2019_shot PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_executable(guo2019_shot cases/guo2019/experiment/guo2019_shot.cpp ${SPH_PIPELINE_SOURCES})
+sph_case(guo2019_shot guo2019 experiment)
+target_include_directories(guo2019_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(guo2019_shot PRIVATE
     SPH_DIM=3
     SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
@@ -1035,10 +1033,8 @@ set_tests_properties(mosaic_kt_cli_test PROPERTIES LABELS "3d" TIMEOUT 600 ENVIR
 # --- Проверочные сцены модели ткани Guo 2019 (шаг 2 диагностики): растяжение полоски, капстан, колебания
 #     лоскута (tools/fabric_checks/fabric_checks.cpp). Не тест; add_test -- только короткий smoke (ниже).
 add_executable(fabric_checks tools/fabric_checks/fabric_checks.cpp ${SPH_PIPELINE_SOURCES})
-sph_case(fabric_checks guo2019 regression)
-target_include_directories(fabric_checks PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+sph_case(fabric_checks guo2019 experiment)
+target_include_directories(fabric_checks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(fabric_checks PRIVATE
     SPH_DIM=3
     SPH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

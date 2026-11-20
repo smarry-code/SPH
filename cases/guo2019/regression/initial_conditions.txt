@@ -1,4 +1,5 @@
 * ===========================================================================
+* ЗАМОРОЖЕННАЯ КОПИЯ ДЛЯ ctest (cases/README.md). Расчёты -- cases/guo2019/experiment/.
 * Конфигурация расчёта для сцен Guo 2019 (tests/guo2019_scene.hpp,
 * tests/test_e2e_guo2019.cpp, tools/guo2019/guo2019_shot.cpp).
 *
