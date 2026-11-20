@@ -43,8 +43,46 @@ ctest --test-dir build --output-on-failure
 [`docs/03-reference/cli.md`](docs/03-reference/cli.md), тесты — в
 [Запуске тестов](docs/02-how-to/01-run-tests.md).
 
-Долгие расчёты (`guo2019_shot`) можно сохранять в чекпоинты и продолжать после обрыва:
+### Пример: эксперимент Guo 2019
+
+Серийные выстрелы стального шара по ткани и пластине Guo 2019 запускает утилита
+`guo2019_shot`. Она собирается из экспериментальной копии постановки
+[`cases/guo2019/experiment/`](cases/guo2019/experiment/) и всегда в 3D, при любом `SPH_DIM`.
+
+```bash
+# Сборка утилиты
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target guo2019_shot
+
+# Один пробный выстрел: 1 слой ткани, грубая сцена, 147 м/с, 4 потока
+OMP_NUM_THREADS=4 ./build/guo2019_shot --config=1T --level=smoke --v0=147 \
+    --out=runs/guo-1T-smoke --threads=4
+
+# Серия по скоростям статьи с поиском V_BL и чекпоинтами
+OMP_NUM_THREADS=4 ./build/guo2019_shot --config=1T --level=base --paper-shots \
+    --out=runs/guo-1T-base --threads=4 --checkpoint-every=5000 --frames=camera
+```
+
+Каждый выстрел пишет результаты в свой каталог `<out>/<cfg>_<level>_v<V0>_r<повтор>/`,
+например `runs/guo-1T-smoke/1T_smoke_v147.0_r0/`:
+
+- `shot.txt` — исход и итоговые величины;
+- `monitor.csv` — монитор по шагам;
+- кадры `sph_output_*.txt` и `fiber_output_*.txt`;
+- `log.txt` — журнал расчёта.
+
+Сводки серии `shots.csv` и `vbl.txt` (баллистический предел $V_{BL}$) лежат в `<out>`.
+
+Справочник по утилите — [`docs/03-reference/guo2019-shot.md`](docs/03-reference/guo2019-shot.md):
+там ключи мишени (`A`, `1T_A`, `<k>T`), трения, контакта, стёжки и мозаики. Если расчёт
+оборвался, его можно продолжить с того же места, добавив к тем же ключам `--restart`, см.
 [Рестарт расчёта из чекпоинта](docs/02-how-to/05-restart-checkpoints.md).
+
+Чтобы поменять постановку под расчёт, правьте
+[`cases/guo2019/experiment/`](cases/guo2019/experiment/), а не `regression/`.
+Замороженную копию в `regression/` берёт `ctest`, правила —
+[`cases/README.md`](cases/README.md#роли-постановок). Журналы прошлых серий собраны в
+[`experiments/`](experiments/README.md).
 
 ## Документация
 
