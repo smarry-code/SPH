@@ -6,7 +6,7 @@
 # Без -march=native по умолчанию (чтобы baseline совпадал с прежней сборкой).
 # ============================================================================
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 
 project(SPH LANGUAGES CXX)
 
