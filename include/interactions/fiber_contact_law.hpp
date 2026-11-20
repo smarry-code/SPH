@@ -143,9 +143,11 @@ struct FiberContactStepParams
 inline bool fiber_contact_law_is_penalty(const FiberContactLaw& law) { return law.type != 0; }
 
 // ----------------------------------------------------------------------
-// compute_fiber_bead_dt_ref -- dt_bead (см. шапку файла). Один раз на шаг,
-// O(nbonds), последовательно: минимум не зависит от порядка, результат
-// детерминирован при любом числе потоков.
+// compute_fiber_bead_dt_ref -- dt_bead (см. шапку файла). O(nbonds),
+// последовательно: минимум не зависит от порядка, результат детерминирован
+// при любом числе потоков. В основном шаге не вызывается каждый шаг: значения
+// хранит FiberDtRefCache (вариант с executor ниже), пересчёт -- только при смене
+// топологии; этот последовательный вариант зовёт диагностика fiber_contact_stats.
 // ----------------------------------------------------------------------
 inline std::vector<double>& compute_fiber_bead_dt_ref(const fiber::FiberState& state,
                                                        const fiber::FiberTopology& topology,
