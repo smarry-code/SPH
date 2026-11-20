@@ -2,8 +2,8 @@
 
 Справочник ключей и выходных файлов утилиты
 [`guo2019_shot`](../../tools/guo2019/guo2019_shot.cpp): серийные выстрелы стального
-шара по мишени Guo 2019 (алюминиевая пластина и/или пакет слоёв ткани). Утилита не
-сам не запускается как тест, но его CLI проверяют `checkpoint_cli_test`, `stitch_kt_cli_test`, `mosaic_kt_cli_test` (`ctest`). Сцену и монитор задают заголовки
+шара по мишени Guo 2019 (алюминиевая пластина и/или пакет слоёв ткани). Сама утилита
+не входит в `ctest` как тест, но её CLI проверяют `checkpoint_cli_test`, `stitch_kt_cli_test`, `mosaic_kt_cli_test` (`ctest`). Сцену и монитор задают заголовки
 [`guo2019_case.hpp`](../../tests/guo2019_case.hpp),
 [`guo2019_scene.hpp`](../../tests/guo2019_scene.hpp),
 [`guo2019_monitor.hpp`](../../tests/guo2019_monitor.hpp).
