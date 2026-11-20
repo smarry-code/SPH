@@ -8,7 +8,7 @@
 // 2019 §3, §4.1, §5). Одна функция build_guo_scene() собирает fiber::Model и
 // SimulationConfig по имени конфигурации (A, 1T, 1T_A, A_1T, 2T, 4T) и уровню
 // разрешения (smoke, base, fine). От ctest не зависит: бросает исключения, а не
-// ведёт счётчик failures. Все числа -- tests/guo2019_case.hpp.
+// ведёт счётчик failures. Все числа -- cases/guo2019/experiment/guo2019_case.hpp.
 //
 // ПОРЯДОК СБОРКИ Model (ТЗ Guo 2019 §4.1):
 //   1) частицы Solid (шар, затем пластина) -> model.solid;

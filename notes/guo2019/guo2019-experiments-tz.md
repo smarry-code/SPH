@@ -1,6 +1,6 @@
 # ТЗ: эксперименты Guo 2019 (1T, 1T/A, A/1T) в коде SPH
 
-> **Статус (2026-11-14):** реализовано (и расширено). Сцена и числа — `tests/guo2019_case.hpp`, `tests/guo2019_scene.hpp`, монитор — `tests/guo2019_monitor.hpp`, читалка кадров нитей — `tests/e2e_fiber_frames.hpp`, smoke — `tests/test_e2e_guo2019.cpp`, серийные выстрелы — `tools/guo2019/guo2019_shot.cpp`, изоляция SPH-пар по телам — `SimulationConfig::sph_same_body_only` (`include/simulation_config.hpp:78`, ключ в `src/input.cpp:297`) с тестом `tests/test_sph_body_isolation.cpp`; постановка — `notes/guo2019/guo2019-e2e.md`. Отличия от плана: конфигурации `2T` и `4T` (в ТЗ исключены) и уровни разрешения `smoke`/`scaled` добавлены, `ctest` регистрирует `e2e_guo2019_smoke_{A,1T,1T_A,A_1T,2T,4T}` (метки `3d;e2e`, `OMP_NUM_THREADS=2`); у `guo2019_shot` много ключей сверх §8.1 (чекпоинты/рестарт, `--fs-contact`, `--bracket` и др.). Расчёт идёт на текущем коде, а не на `2b67fd6`; §14 («Статус реализации») не заполнен. Актуальное описание — [CLI: `guo2019_shot`](../../docs/03-reference/cli.md) и [Запуск тестов](../../docs/02-how-to/01-run-tests.md).
+> **Статус (2026-11-14):** реализовано (и расширено). Сцена и числа — `cases/guo2019/experiment/guo2019_case.hpp`, `cases/guo2019/experiment/guo2019_scene.hpp`, монитор — `cases/guo2019/experiment/guo2019_monitor.hpp`, читалка кадров нитей — `tests/e2e_fiber_frames.hpp`, smoke — `tests/test_e2e_guo2019.cpp`, серийные выстрелы — `cases/guo2019/experiment/guo2019_shot.cpp`, изоляция SPH-пар по телам — `SimulationConfig::sph_same_body_only` (`include/simulation_config.hpp:78`, ключ в `src/input.cpp:297`) с тестом `tests/test_sph_body_isolation.cpp`; постановка — `notes/guo2019/guo2019-e2e.md`. Отличия от плана: конфигурации `2T` и `4T` (в ТЗ исключены) и уровни разрешения `smoke`/`scaled` добавлены, `ctest` регистрирует `e2e_guo2019_smoke_{A,1T,1T_A,A_1T,2T,4T}` (метки `3d;e2e`, `OMP_NUM_THREADS=2`); у `guo2019_shot` много ключей сверх §8.1 (чекпоинты/рестарт, `--fs-contact`, `--bracket` и др.). Расчёт идёт на текущем коде, а не на `2b67fd6`; §14 («Статус реализации») не заполнен. Актуальное описание — [CLI: `guo2019_shot`](../../docs/03-reference/cli.md) и [Запуск тестов](../../docs/02-how-to/01-run-tests.md).
 
 **Исполнитель:** Claude Code в локальном репозитории SPH, ветка `weave` (HEAD `fb4e8a2`, 2026-10-01: ветка `clamp` `610fd5d` + генератор полотна, 5 коммитов). В `clamp` влит `fiber_new` `738d452` целиком; поверх — кинематическое закрепление Solid и Fiber по `clamp-solid-fiber-tz.md` и его e2e-тесты по `clamp-tests.md`. Номера строк ядра ниже сверены на `610fd5d`; `weave` ядро не трогает. Исправления контакта и трения нитей (задачи 1–4, `notes/fiber-contact/friction-report.md`) в ветке есть. Если работа идёт в `fiber_new` после слияния `clamp`, номера строк сверить по контексту.
 **Автор ТЗ не видит результатов прогонов.** Всё, что помечено «оценка», исполнитель пересчитывает и фиксирует в §14.
@@ -74,7 +74,7 @@
 | `aa[0]` | 4.0e10 (`K = aa·zz = 160 ГПа`) | оценка |
 | `gamm[0]` | 2.0 | оценка |
 
-Переопределение делает функция `apply_guo_materials(Materials&)` в `tests/guo2019_case.hpp`, с комментарием, что слот 3 в этих сценах означает сталь. Проверка: `elastic_by_itype(cfg.mats, 3)` даёт `E ≈ 206 ГПа, ν ≈ 0.29`; напечатать.
+Переопределение делает функция `apply_guo_materials(Materials&)` в `cases/guo2019/experiment/guo2019_case.hpp`, с комментарием, что слот 3 в этих сценах означает сталь. Проверка: `elastic_by_itype(cfg.mats, 3)` даёт `E ≈ 206 ГПа, ν ≈ 0.29`; напечатать.
 
 ### 3.3. Ткань: 1 слой Twaron CT 717
 
@@ -129,7 +129,7 @@
 
 ### 3.6. Взаимодействия и решатель
 
-- Файл `tests/data/guo2019_initial_conditions.txt` разбирается боевым `parse_sph_config()`, как у BC6. Значения: `pa_sph = 2, nnps = 2, sle = 1, skf = 1, CFL = 0.1, epsilon = 0.25, alpha = beta = 1, etq = 0.01`, как у BC6.
+- Файл `cases/guo2019/experiment/initial_conditions.txt` разбирается боевым `parse_sph_config()`, как у BC6. Значения: `pa_sph = 2, nnps = 2, sle = 1, skf = 1, CFL = 0.1, epsilon = 0.25, alpha = beta = 1, etq = 0.01`, как у BC6.
 - `contact_force_type = 1`, `K_p = 1`: рекомендация `notes/contact/11-contact-report.md` §11. Работает между шаром и пластиной (разные `body`).
 - **Изоляция SPH по телам** (`cfg.sph_same_body_only = true`, §4.2) включена во всех четырёх конфигурациях. Без неё шар и пластина — один континуум в SPH-суммах: шар «приваривается» к пробке растяжением. В отчёте нужен один контрольный прогон A без изоляции (§8.4).
 - Fiber-Fiber, Fiber-Solid, Fiber-Bond и стадия трения (`include/interactions/fiber_friction.hpp`, вызов в `src/time_integration.cpp:279-320`) — как есть, без правок.
@@ -157,7 +157,7 @@
 **Монитор и досрочный останов** — через наблюдатель `RunGuard::set_step_observer(std::function<void(double dt, double time)>)` (`include/run_guard.hpp:60-77`). Он вызывается раз за шаг первым делом в `should_stop`, то есть после `advance`, постобработки (разрыв связей), вывода кадров, `time += dt` и строки `log.txt` (`src/time_integration.cpp:335-383`). Образец использования — `clamp_e2e::ClampMonitor` и `run_case` в `tests/clamp_e2e_common.hpp:225-489`: монитор захватывает `fiber::Model&` по ссылке и только читает его. Там же готовые `kinetic_solid`, `kinetic_fiber`, `internal_solid`, `bond_energy`, `momentum_*` (`:118-178`); переиспользовать их (подключить заголовок или вынести общие функции в `tests/e2e_energy.hpp`, на выбор исполнителя, без изменения поведения `test_e2e_clamp`).
 
 - Наблюдатель **не меняет** состояние частиц.
-- **Досрочный останов** по исходу (§6.2): наблюдатель вызывает `guard.set_step_limit(guard.steps() + 1)`. Счётчик шагов увеличивается сразу после наблюдателя (`run_guard.hpp:76-77`), поэтому `should_stop` вернёт `true` с причиной `StepLimit` на этом же шаге, а аварией это не считается (`failed() == false`). Оформить функцией `request_stop(RunGuard&)` в `tests/guo2019_monitor.hpp` с этим комментарием. Если на том же шаге сработал `WallClock` или `Stalled`, причиной останется авария — так и нужно.
+- **Досрочный останов** по исходу (§6.2): наблюдатель вызывает `guard.set_step_limit(guard.steps() + 1)`. Счётчик шагов увеличивается сразу после наблюдателя (`run_guard.hpp:76-77`), поэтому `should_stop` вернёт `true` с причиной `StepLimit` на этом же шаге, а аварией это не считается (`failed() == false`). Оформить функцией `request_stop(RunGuard&)` в `cases/guo2019/experiment/guo2019_monitor.hpp` с этим комментарием. Если на том же шаге сработал `WallClock` или `Stalled`, причиной останется авария — так и нужно.
 - Ограничение: наблюдатель не получает `SimulationConfig` и `ntotal` — их захватывает лямбда сцены.
 - Проверка механизма останова — в smoke (§9, S3): останов на заданном шаге даёт ровно это число шагов и `guard.reason() == StepLimit`.
 
@@ -172,13 +172,13 @@
 
 | Файл | Роль |
 |---|---|
-| `tests/guo2019_case.hpp` | **Все** числа постановки: шар, ткань, пластина, зажимы, материалы (`apply_guo_materials`), уровни разрешения (§7), списки скоростей статьи и ожидаемые исходы (§8.2), допуски. СИ, рядом исходные значения. Каждое число с пометкой «статья» / «рис.» / «оценка» |
-| `tests/guo2019_scene.hpp` | `build_guo_scene(config, level, V0, workdir) -> GuoScene`: строит `fiber::Model` (шар + пластина + запись `.fib` генератором во `workdir` + `load_fiber_file`, который сам заполняет `model.clamps.fiber_mask`), заполняет `model.clamps.solid_mask` (§4.1), раскладку нитей (направление, индекс, диапазон бусин), ожидаемые числа частиц, бусин и зажатых **по формулам**. Не зависит от `ctest` |
-| `tests/guo2019_monitor.hpp` | `GuoShotMonitor`: наблюдатель шага для `RunGuard::set_step_observer` (§4.1) — монитор (§6), реакция зажимов из `model.clamp_report`, критерий исхода, `request_stop`; запись `monitor.csv` |
+| `cases/guo2019/experiment/guo2019_case.hpp` | **Все** числа постановки: шар, ткань, пластина, зажимы, материалы (`apply_guo_materials`), уровни разрешения (§7), списки скоростей статьи и ожидаемые исходы (§8.2), допуски. СИ, рядом исходные значения. Каждое число с пометкой «статья» / «рис.» / «оценка» |
+| `cases/guo2019/experiment/guo2019_scene.hpp` | `build_guo_scene(config, level, V0, workdir) -> GuoScene`: строит `fiber::Model` (шар + пластина + запись `.fib` генератором во `workdir` + `load_fiber_file`, который сам заполняет `model.clamps.fiber_mask`), заполняет `model.clamps.solid_mask` (§4.1), раскладку нитей (направление, индекс, диапазон бусин), ожидаемые числа частиц, бусин и зажатых **по формулам**. Не зависит от `ctest` |
+| `cases/guo2019/experiment/guo2019_monitor.hpp` | `GuoShotMonitor`: наблюдатель шага для `RunGuard::set_step_observer` (§4.1) — монитор (§6), реакция зажимов из `model.clamp_report`, критерий исхода, `request_stop`; запись `monitor.csv` |
 | `tests/e2e_fiber_frames.hpp` | Читалка `fiber_output_*` (формат `E2E_EXPERIMENT_CONTEXT.md` §4.3, имена с 5-значным номером, `src/fiber_output.cpp:38`): NaN/Inf, число бусин и связей, выборка по id бусины. Рядом с `e2e_frames.hpp`, в том же стиле |
 | `tests/test_e2e_guo2019.cpp` | smoke-тест (§9); флаги `--config=A|1T|1T_A|A_1T`, `--keep-workdir`, `--time-limit=` |
-| `tools/guo2019/guo2019_shot.cpp` | Программа выстрелов на геометрии статьи (§8), цель `guo2019_shot`, без `add_test` |
-| `tests/data/guo2019_initial_conditions.txt` | Параметры решателя (§3.6) |
+| `cases/guo2019/experiment/guo2019_shot.cpp` | Программа выстрелов на геометрии статьи (§8), цель `guo2019_shot`, без `add_test` |
+| `cases/guo2019/experiment/initial_conditions.txt` | Параметры решателя (§3.6) |
 | правка `include/simulation_config.hpp`, `src/input.cpp`, `include/interactions/solid_sph.hpp` | §4.2 (единственная правка ядра) |
 | `tests/test_sph_body_isolation.cpp` | §4.2 |
 | `notes/contact/` или `fiber/` → новый `notes/guo2019/guo2019-e2e.md` | Постановка в духе `notes/contact/06-e2e-bc6.md`: геометрия, НУ/ГУ, что меряется, результаты, что установлено и что гипотеза |

@@ -66,7 +66,7 @@ namespace
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Материал нити Guo (как tests/guo2019_case.hpp): twaron_ct717, E = 85 ГПа, rho = 1440, nu = 0.3.
+// Материал нити Guo (как cases/guo2019/experiment/guo2019_case.hpp): twaron_ct717, E = 85 ГПа, rho = 1440, nu = 0.3.
 constexpr double kD = 0.39e-3;
 constexpr double kPitch = 1.18e-3;
 

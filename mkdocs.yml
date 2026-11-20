@@ -146,6 +146,7 @@ nav:
           - "ADR-008: Архитектура RHS и нити": 04-explanation/decisions/adr-008-rhs-architecture-fiber.md
           - "ADR-009: Модель Джонсона-Кука": 04-explanation/decisions/adr-009-johnson-cook.md
           - "ADR-010: Исправление JH-2": 04-explanation/decisions/adr-010-jh2-fix.md
+          - "ADR-011: Постановки для регрессии и экспериментов": 04-explanation/decisions/adr-011-case-setups.md
   - Внутреннее:
       - Глоссарий: _internal/glossary.md
       - Журнал изменений: _internal/changelog.md

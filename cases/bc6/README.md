@@ -11,13 +11,14 @@
    - [`source/reference-curve.txt`](source/reference-curve.txt) — эталонная кривая: 236 точек, две колонки (время, с; скорость, м/с), время 1,08–3,22 мкс.
    - [`source/reference-curve.jpg`](source/reference-curve.jpg) — график к кривой.
 5. **Код и тесты.**
-   - Числа опыта — [`tests/bc6_case.hpp`](../../tests/bc6_case.hpp), геометрия —
-     [`tests/bc6_geometry.hpp`](../../tests/bc6_geometry.hpp).
-   - Параметры решателя — [`tests/data/bc6_initial_conditions.txt`](../../tests/data/bc6_initial_conditions.txt),
-     эталон — [`tests/data/bc6_reference.txt`](../../tests/data/bc6_reference.txt); его строит из
-     `source/reference-curve.txt` скрипт [`tools/bc6_make_reference.py`](../../tools/bc6_make_reference.py)
-     (запускается вручную).
-   - Тест — [`tests/test_e2e_bc6.cpp`](../../tests/test_e2e_bc6.cpp); цели `ctest`:
+   - **Регрессия** (замороженная копия для `ctest`, [правила](../README.md#роли-постановок)) —
+     [`regression/`](regression/): числа опыта [`bc6_case.hpp`](regression/bc6_case.hpp), геометрия
+     [`bc6_geometry.hpp`](regression/bc6_geometry.hpp), параметры решателя
+     [`initial_conditions.txt`](regression/initial_conditions.txt), эталон [`reference.txt`](regression/reference.txt)
+     (строит из `source/reference-curve.txt` скрипт [`tools/bc6_make_reference.py`](../../tools/bc6_make_reference.py),
+     запускается вручную), снимки регрессии [`snapshots/`](regression/snapshots/).
+   - **Эксперимент** — копии нет; создаётся из `regression/`, когда понадобится новый расчёт.
+   - Тесты — [`tests/test_e2e_bc6.cpp`](../../tests/test_e2e_bc6.cpp), `test_regression`; цели `ctest`:
      `e2e_bc6_smoke_contact0…3`, `e2e_bc6_full_contact0…3`, `regression_bc6_contact0…3`.
 6. **Эксперименты.**
    - [`2026-09-23-bc6-art-visc`](../../experiments/2026-09-23-bc6-art-visc/README.md)

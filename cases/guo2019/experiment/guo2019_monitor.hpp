@@ -11,7 +11,7 @@
 // штатный останов (request_stop). Сводка выстрела -- write_shot_txt (§6.3).
 //
 // От ctest не зависит (нет e2e::check): им пользуются и smoke-тест
-// tests/test_e2e_guo2019.cpp, и программа выстрелов tools/guo2019/guo2019_shot.cpp.
+// tests/test_e2e_guo2019.cpp, и программа выстрелов cases/guo2019/experiment/guo2019_shot.cpp.
 //
 // Что считается на каждом шаге (O(N)): энергии, z_c/v_z шара, зажим (S6), суммы
 // масс (S7), число связей, прогибы. Дорогое (контакты нить--нить, нить--Solid,
@@ -841,7 +841,7 @@ public:
                      st_.W_p_total, st_.n_bonds_plastic, (nply_ >= 2 || proj_on_) ? "" : "\n");
         if (nply_ >= 2)
         {
-            // Новые ключи ТЗ 2T/4T §4.3 -- строго в конец строки (парсер tools/guo2019 читает по ключам).
+            // Новые ключи ТЗ 2T/4T §4.3 -- строго в конец строки (парсер guo2019_shot читает по ключам).
             std::fprintf(f, " n_plies=%d", nply_);
             for (int k = 0; k < nply_; ++k)
             {

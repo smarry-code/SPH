@@ -1,7 +1,7 @@
 # План для Claude Code: ткань-«одеяло» из патчей в генераторе plain_weave
 
 Адресат: Claude Code, работающий в репозитории `smarry-code/SPH` (ветка `Guo2T`, там генератор и сцена Guo 2019).
-Все ссылки на код проверены чтением файлов `include/fiber/plain_weave.hpp`, `tools/plain_weave/plain_weave_gen.cpp`, `tests/guo2019_scene.hpp`, `tests/guo2019_case.hpp`, `docs/02-how-to/02-plain-weave-generator.md`. Код не собирался и не запускался.
+Все ссылки на код проверены чтением файлов `include/fiber/plain_weave.hpp`, `tools/plain_weave/plain_weave_gen.cpp`, `cases/guo2019/experiment/guo2019_scene.hpp`, `cases/guo2019/experiment/guo2019_case.hpp`, `docs/02-how-to/02-plain-weave-generator.md`. Код не собирался и не запускался.
 
 ## 1. Цель
 
@@ -15,7 +15,7 @@
 2. Знаки волны: основа `j` стартует со знаком `(-1)^j`, уток `i` со знаком `-(-1)^i`. Фаза зависит только от чётности глобального индекса.
 3. Уже непрерывная нить через «стыки» получается сама собой, если задать `nx = tile_y·patch_nx`, `ny = tile_x·patch_ny`. Фаза на стыке верна автоматически. Отдельный сшивающий код не нужен.
 4. Выступы нитей за крайнюю поперечную нить: `overhang_x` (по умолчанию `p/2`) и `overhang_y`; зажим пишется двумя `CLAMP_BOX` на направление по границе `clamp_edge`. Всё это относится ко всей ткани целиком, не к патчу.
-5. Пресет `twaron_ct717` (d = 0.39 мм, p = 1.18 мм, A = 0.5d, 102 × 102, профиль `Cos`, `overhang_y = 5 мм`, `clamp = Y`, `clamp_edge = 60 мм`). Сцена `tests/guo2019_scene.hpp` берёт пресет, переопределяет `amp = 0.6·d` (`kFabricAmpOverD`), `seg`, `nx/ny`, `overhang`, `clamp`, материал и вызывает `build_fabric_stack` → `build_plain_weave`.
+5. Пресет `twaron_ct717` (d = 0.39 мм, p = 1.18 мм, A = 0.5d, 102 × 102, профиль `Cos`, `overhang_y = 5 мм`, `clamp = Y`, `clamp_edge = 60 мм`). Сцена `cases/guo2019/experiment/guo2019_scene.hpp` берёт пресет, переопределяет `amp = 0.6·d` (`kFabricAmpOverD`), `seg`, `nx/ny`, `overhang`, `clamp`, материал и вызывает `build_fabric_stack` → `build_plain_weave`.
 6. Выходной формат `.fib`: одна `MATERIAL 0`, по блоку `FIBER 0 n` на нить, затем `CLAMP_BOX`. Раскладка нитей пишется отдельным `.layout.txt` (`write_plain_weave_layout`).
 7. Тест геометрии: `tests/test_plain_weave.cpp` (`add_test(NAME plain_weave_test ...)` в `CMakeLists.txt`, около строки 658) и `tests/plain_weave_cli_test.cmake` для CLI.
 
@@ -60,7 +60,7 @@ void write_plain_weave_quilt_patches(std::ostream&, const PlainWeaveQuilt&); // 
 
 1. Заголовок `include/fiber/plain_weave_quilt.hpp` по разделу 3 с русскими комментариями в стиле `plain_weave.hpp` (шапка с геометрией, ТЗ-ссылки не нужны).
 2. CLI в `tools/plain_weave/plain_weave_gen.cpp`: ключи `--patch=NXxNY` (например `34x34`), `--tile=TXxTY` (например `3x3`), флаг `--allow-odd-patch`. При их наличии `--nx/--ny` недопустимы (ошибка конфликта). Вызов `build_plain_weave_quilt`, запись `.fib` и `.layout.txt` существующими функциями, плюс `<out>.patches.txt` (колонки: object_id, direction, index, first_bead, last_bead, затем для каждого патча диапазон бусин). Обновить `--help` и сводку (`print_plain_weave_summary`): печатать «патчей TXxTY по NXxNY нитей, размер патча Lx × Ly, окно ткани Lx_total × Ly_total».
-3. Пресет `twaron_ct717_quilt` не нужен: достаточно `--preset=twaron_ct717 --patch=34x34 --tile=3x3`. Для сцены Guo 2019 добавить в `tests/guo2019_case.hpp` константы `kFabricPatchBase = 34`, `kFabricTileBase = 3` и `static_assert(kFabricPatchBase * kFabricTileBase == kFabricNBase)`; `LevelSpec`/сцену не менять (102 нити остаются прежними).
+3. Пресет `twaron_ct717_quilt` не нужен: достаточно `--preset=twaron_ct717 --patch=34x34 --tile=3x3`. Для сцены Guo 2019 добавить в `cases/guo2019/experiment/guo2019_case.hpp` константы `kFabricPatchBase = 34`, `kFabricTileBase = 3` и `static_assert(kFabricPatchBase * kFabricTileBase == kFabricNBase)`; `LevelSpec`/сцену не менять (102 нити остаются прежними).
 4. Тесты в новом `tests/test_plain_weave_quilt.cpp`, зарегистрировать рядом с `test_plain_weave` (`add_executable`, `add_test(NAME plain_weave_quilt_test ...)`, метка `3d`, `TIMEOUT 120`), см. раздел 5.
 5. Документация: раздел «Одеяло из патчей» в `docs/02-how-to/02-plain-weave-generator.md` (таблица ключей, пример `plain_weave_gen --preset=twaron_ct717 --patch=34x34 --tile=3x3 --out=quilt.fib`, формат `.patches.txt`, правило метки стыковых бусин, связь с SCL-скриптом). Пометить, что в SCL используется профиль `arcs`, а в расчётах Guo `cos`.
 6. Обновить `CMakeLists.txt` (цель теста) и, если в `docs/` ведётся навигация, `mkdocs.yml`.
@@ -126,7 +126,7 @@ SCL-геометрия (`patch_60x60.scl`): основа вдоль x, уток 
 
 1. **Ядро:** у `FiberBond` добавить индекс материала связи (по умолчанию материал бусины `i`, побитово прежнее поведение для обычных связей). Ядро Fiber-Bond берёт `E`, `d` связи из этого материала. Проверить, что разрыв связи и `topology.version` работают для связи вне цепочки (у неё нет `prev/next`).
 2. **Формат `.fib`:** директива `BOND <bead_i> <bead_j> <material_id>` (глобальные индексы бусин в порядке блоков `FIBER`, `l0` считается по начальным координатам). Обновить `load_fiber_file`, его описание в комментарии и справочник формата в `docs/`.
-3. **Генератор:** в `plain_weave_quilt.hpp` функция построения стёжки для пакета слоёв: вход `stitch_lines = патчевые границы (x и/или y)`, `stitch_every`, материал стежка; выход список пар бусин. Запись `MATERIAL 1 ...` и строк `BOND` в `.fib` пакета (`write_fabric_stack_fib` в `tests/guo2019_scene.hpp` или общий писатель).
+3. **Генератор:** в `plain_weave_quilt.hpp` функция построения стёжки для пакета слоёв: вход `stitch_lines = патчевые границы (x и/или y)`, `stitch_every`, материал стежка; выход список пар бусин. Запись `MATERIAL 1 ...` и строк `BOND` в `.fib` пакета (`write_fabric_stack_fib` в `cases/guo2019/experiment/guo2019_scene.hpp` или общий писатель).
 4. **Сцена Guo 2019:** флаги `guo2019_shot --stitch=none|grid --stitch-every=N --stitch-E= --stitch-d= --stitch-eps-break=` для конфигураций 2T и 4T. По умолчанию `none`: прежние расчёты не меняются.
 5. **Монитор:** число целых и порванных стежков во времени, сила в стежках, относительное смещение слоёв в плоскости (среднее по точкам прокола), прогиб тыльного слоя.
 

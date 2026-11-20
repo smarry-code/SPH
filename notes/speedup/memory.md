@@ -41,7 +41,7 @@ base.md §2. Сервер `claude-compute` — виртуальная машин
 | `842e60c` | `include/rhs/contributions.hpp`, `include/rhs/spatial_index.hpp` — см. ниже | 1, 2, 3, 6 |
 | `2ff4a7e` | `SolidStepWorkspace` для Solid-шага — см. ниже | 1, 3 |
 | `8b92a3f` | постоянная рабочая память Fiber-пути и `log.txt` — см. ниже | 9, 10 |
-| `c8f6689` | `tests/guo2019_monitor.hpp`: буферы `diagnostics()` монитора стали членами класса | — |
+| `c8f6689` | `cases/guo2019/experiment/guo2019_monitor.hpp`: буферы `diagnostics()` монитора стали членами класса | — |
 
 **`842e60c`, свёртка и пространственный индекс.**
 

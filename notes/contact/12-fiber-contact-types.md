@@ -16,7 +16,7 @@
   Тип вне `0..3` сбрасывается в 0 с сообщением. На `γ ≤ 0` и `γ > 1.6` выводятся те же
   предупреждения, что у `contact_impulse_gamma`. На этапе 1 `fiber_fiber_contact_type ≠ 0` даёт
   предупреждение «пока не реализован, используется Герц» и сбрасывается в 0.
-  В `Initial_Conditions.txt` и `tests/data/guo2019_initial_conditions.txt` добавлены только
+  В `Initial_Conditions.txt` и `cases/guo2019/experiment/initial_conditions.txt` добавлены только
   закомментированные строки.
 - **`include/interactions/fiber_contact_law.hpp`**: `FiberContactLaw`, `FiberContactStepParams`,
   `compute_fiber_bead_dt_ref` (dt_ref нити), `fiber_penalty_force` (это просто
@@ -105,7 +105,7 @@
 - **Подключение** `src/time_integration.cpp`: params строятся из `cfg.fiber_fiber_contact_*`.
   `dt_bead` считается, если хотя бы один из двух типов ≠ 0. Предупреждение этапа 1
   «не реализовано» удалено.
-- **`tools/guo2019/guo2019_shot.cpp`**: флаги `--fs-contact=0..3` и `--ff-contact=0..3`
+- **`cases/guo2019/experiment/guo2019_shot.cpp`**: флаги `--fs-contact=0..3` и `--ff-contact=0..3`
   (по умолчанию значения из конфига, то есть Герц) для прогонов шага 2.5.
 - **Тесты**: `tests/test_fiber_contact_types.cpp` (цель `test_fiber_contact_types`) покрывает
   пп. 1–7 шага 2.4. В `tests/test_e2e_fiber_contact.cpp` добавлен `test_e2e_cross_types` (п. 8).
@@ -119,7 +119,7 @@
   совпадают с выводом базы `318342c` построчно (`OMP_NUM_THREADS=1`).
 - Guo A, 1T_A и `guo2019_shot` побитово равны эталону.
 - Новых видов предупреждений нет, кроме `-Wpadded` у `FiberContactLaw` (см. этап 1).
-- Монитор `tests/guo2019_monitor.hpp` вызывает диагностику без params, поэтому его `min_dt`
+- Монитор `cases/guo2019/experiment/guo2019_monitor.hpp` вызывает диагностику без params, поэтому его `min_dt`
   остаётся герцевским при любом ключе. На расчёт это не влияет: монитор только читает.
 
 ### e2e: крест двух нитей (вывод теста, не критерий)

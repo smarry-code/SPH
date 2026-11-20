@@ -145,7 +145,7 @@
 | [`src/input.cpp`](../../src/input.cpp) | стр. 341–377 | Разбор трёх ключей из `Initial_Conditions.txt` с проверкой диапазонов |
 | [`include/materials.hpp`](../../include/materials.hpp) | стр. 53–71 | `shear_modulus_by_itype()` — модуль сдвига по номеру материала для ветки Герца |
 | [`CMakeLists.txt`](../../CMakeLists.txt) | стр. 90–92 | Цель `test_contact`, тест `contact_test` |
-| `Initial_Conditions.txt`, `tests/data/bc2_initial_conditions.txt`, `tests/data/bc6_initial_conditions.txt` | — | Ключи контакта с описанием |
+| `Initial_Conditions.txt`, `cases/bc2/regression/initial_conditions.txt`, `cases/bc6/regression/initial_conditions.txt` | — | Ключи контакта с описанием |
 | [`docs/03-reference/config/initial-conditions.md`](../../docs/03-reference/config/initial-conditions.md) | — | Справочник ключей |
 
 ### 3.3. Что к контакту не относится, хотя лежит рядом
@@ -483,8 +483,8 @@ contact/10-debug-handoff.md (удалён) и
 | Файл | `contact_force_type` | $K_p$ | $\gamma$ |
 |---|---|---|---|
 | `Initial_Conditions.txt` (боевой) | 0 | 1,0 | не задан → 1,0 |
-| `tests/data/bc2_initial_conditions.txt` | 0 (тест перебирает 0–3) | закомментирован → 1,0 | закомментирован → 1,0 |
-| `tests/data/bc6_initial_conditions.txt` | 0 (тест перебирает 0–3) | закомментирован → 1,0 | **0,5** |
+| `cases/bc2/regression/initial_conditions.txt` | 0 (тест перебирает 0–3) | закомментирован → 1,0 | закомментирован → 1,0 |
+| `cases/bc6/regression/initial_conditions.txt` | 0 (тест перебирает 0–3) | закомментирован → 1,0 | **0,5** |
 
 ### 8.2. Почему именно такие диапазоны
 

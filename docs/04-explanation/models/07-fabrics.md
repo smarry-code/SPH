@@ -277,7 +277,7 @@ $W=(n_y-1)p+p$, $H=(n_x-1)p+2e_y$ (для базового уровня $120{,}3
 | Одеяло: патчи, линии шва | [plain_weave_quilt.hpp](../../../include/fiber/plain_weave_quilt.hpp) | `build_plain_weave_quilt`, `quilt_seams`, `centered_patch_seams` |
 | Стежки `grid` и `seam` | [plain_weave_quilt.hpp](../../../include/fiber/plain_weave_quilt.hpp) | `build_quilt_stitches`, `build_quilt_seam_stitches` |
 | Мозаика | [plain_weave_random_cut.hpp](../../../include/fiber/plain_weave_random_cut.hpp) | `build_plain_weave_random_cut` |
-| Пакет слоёв, `.fib` со стежками | [guo2019_scene.hpp](../../../tests/guo2019_scene.hpp) | `build_fabric_stack`, `write_fabric_stack_fib`, `StitchSpec`, `MosaicSpec` |
+| Пакет слоёв, `.fib` со стежками | [guo2019_scene.hpp](../../../cases/guo2019/experiment/guo2019_scene.hpp) | `build_fabric_stack`, `write_fabric_stack_fib`, `StitchSpec`, `MosaicSpec` |
 | Связь, материал стежка | [fiber_system.hpp](../../../include/fiber/fiber_system.hpp) | `FiberBond::mat`, `bond_material_id`, `is_chain_bond` |
 | Сила стежка | [fiber_bond.hpp](../../../include/interactions/fiber_bond.hpp) | `compute_fiber_bond_contributions` |
 | Разрыв стежка | [postprocessing.hpp](../../../include/interactions/postprocessing.hpp) | `find_fiber_break_events`, `apply_fiber_break_events` |

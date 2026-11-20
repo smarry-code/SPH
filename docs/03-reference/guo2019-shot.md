@@ -1,12 +1,12 @@
 # Утилита `guo2019_shot`
 
 Справочник ключей и выходных файлов утилиты
-[`guo2019_shot`](../../tools/guo2019/guo2019_shot.cpp): серийные выстрелы стального
+[`guo2019_shot`](../../cases/guo2019/experiment/guo2019_shot.cpp): серийные выстрелы стального
 шара по мишени Guo 2019 (алюминиевая пластина и/или пакет слоёв ткани). Сама утилита
 не входит в `ctest` как тест, но её CLI проверяют `checkpoint_cli_test`, `stitch_kt_cli_test`, `mosaic_kt_cli_test` (`ctest`). Сцену и монитор задают заголовки
-[`guo2019_case.hpp`](../../tests/guo2019_case.hpp),
-[`guo2019_scene.hpp`](../../tests/guo2019_scene.hpp),
-[`guo2019_monitor.hpp`](../../tests/guo2019_monitor.hpp).
+[`guo2019_case.hpp`](../../cases/guo2019/experiment/guo2019_case.hpp),
+[`guo2019_scene.hpp`](../../cases/guo2019/experiment/guo2019_scene.hpp),
+[`guo2019_monitor.hpp`](../../cases/guo2019/experiment/guo2019_monitor.hpp).
 
 Модель ткани — [«Ткани»](../04-explanation/models/07-fabrics.md), генератор
 переплетения — [руководство](../02-how-to/02-plain-weave-generator.md), рестарт —
@@ -93,7 +93,7 @@ guo2019_shot --config=3T --level=smoke --v0=147 --out=run1 \
 
 | Ключ | Значение | По умолчанию | Описание |
 |---|---|---|---|
-| `--fs-contact=`, `--ff-contact=` | 0..4 | как в `tests/data/guo2019_initial_conditions.txt` (ключи там закомментированы, то есть 0, Герц) | Закон нормальной силы нить–Solid и нить–нить (0 — Герц, 4 — Герц + демпфер) |
+| `--fs-contact=`, `--ff-contact=` | 0..4 | как в `cases/guo2019/experiment/initial_conditions.txt` (ключи там закомментированы, то есть 0, Герц) | Закон нормальной силы нить–Solid и нить–нить (0 — Герц, 4 — Герц + демпфер) |
 | `--ff-contact-predictor=`, `--fs-contact-predictor=` | 0, 1 | 0 | Законы 1–3 как проекция скорости нормального контакта |
 | `--contact-proj-iters=` | 1..100 | 8 | Число итераций Якоби проекции |
 | `--contact-proj-warm=` | 0, 1 | 1 | Тёплый старт проекции; 0 даёт предупреждение |

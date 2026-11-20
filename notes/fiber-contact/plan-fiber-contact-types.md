@@ -101,7 +101,7 @@ dt_ref_side   = min(dt_bead[k0], dt_bead[k1])   // k1 = −1 → dt_bead[k0]
 - `include/simulation_config.hpp`: шесть полей рядом с `contact_force_type` (строки 44-51), сброс в `apply_defaults()` (строка 109). У каждого поля комментарий «0 = Герц, не выключено».
 - `src/input.cpp`: разбор по образцу строк 165-201 (диапазон 0..3, иначе `std::cerr` и сброс в 0; `γ ≤ 0` и `γ > 1.6` теми же сообщениями, что у `contact_impulse_gamma`).
 - `fiber_fiber_contact_type != 0` в этапе 1: одно предупреждение в `std::cerr` «Fiber–Fiber: тип N пока не реализован, используется Герц».
-- `tests/data/guo2019_initial_conditions.txt`, `Initial_Conditions.txt`: только закомментированные строки с описанием ключей.
+- `cases/guo2019/experiment/initial_conditions.txt`, `Initial_Conditions.txt`: только закомментированные строки с описанием ключей.
 - **Готово, когда:** сборка без новых предупреждений, `ctest` без изменений.
 
 ### Шаг 1.2. Заголовок закона `include/interactions/fiber_contact_law.hpp`
@@ -140,7 +140,7 @@ contact::Result fiber_penalty_force(const FiberContactStepParams&, const contact
 ### Шаг 1.5. Подключение (`src/time_integration.cpp`)
 - После `compute_fiber_bond` (строка 223), только если какой-то из типов ≠ 0: `compute_fiber_bead_dt_ref(...)`.
 - Вызов 251 и 263: передать `params{ {cfg.fiber_solid_contact_type, ..._penalty_scale, ..._impulse_gamma}, dt, cfg.CFL, &bead_dt_ref }`. Здесь `dt` ещё шаг прошлого цикла.
-- `tools/guo2019/guo2019_shot.cpp` идёт через `time_integration`; собрать **все** цели CMake.
+- `cases/guo2019/experiment/guo2019_shot.cpp` идёт через `time_integration`; собрать **все** цели CMake.
 - **Готово, когда:** все цели собираются, `ctest` прежний.
 
 ### Шаг 1.6. Тесты этапа 1 (новый `tests/test_fiber_solid_types.cpp` + цель CMake по образцу `test_fiber_solid`, `CMakeLists.txt:514-527`)

@@ -1,10 +1,10 @@
 * ===========================================================================
 * ЗАМОРОЖЕННАЯ КОПИЯ ДЛЯ ctest (cases/README.md). Расчёты -- cases/guo2019/experiment/.
-* Конфигурация расчёта для сцен Guo 2019 (tests/guo2019_scene.hpp,
-* tests/test_e2e_guo2019.cpp, tools/guo2019/guo2019_shot.cpp).
+* Конфигурация расчёта для сцен Guo 2019 (cases/guo2019/regression/guo2019_scene.hpp,
+* tests/test_e2e_guo2019.cpp, cases/guo2019/experiment/guo2019_shot.cpp).
 *
 * Разбирается той же функцией parse_sph_config(), что и боевой
-* Initial_Conditions.txt (как tests/data/bc6_initial_conditions.txt): тест
+* Initial_Conditions.txt (как cases/bc6/regression/initial_conditions.txt): тест
 * проходит через реальный путь загрузки конфигурации.
 *
 * Параметры решателя те же, что у BC6 (ТЗ Guo 2019 §3.6).

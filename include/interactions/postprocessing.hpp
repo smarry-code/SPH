@@ -461,7 +461,7 @@ inline std::vector<FiberBreakEvent> find_fiber_break_events_impl(
 // ТОЛЬКО критерий l > l_break; FAILURE (EPS_P, SIGMA_U) здесь игнорируется.
 // НЕ для боевого пути -- используйте перегрузку с materials / run_fiber_topology_postprocessing.
 // Оставлена для драйверов, которым нужен только геометрический критерий
-// (tests/test_fiber_break.cpp, tests/fiber_t0_dump.cpp).
+// (tests/test_fiber_break.cpp, cases/guo2019/experiment/fiber_t0_dump.cpp).
 inline std::vector<FiberBreakEvent> find_fiber_break_events(const rhs::CpuExecutor& exec,
                                                               const fiber::FiberState& state,
                                                               const fiber::FiberTopology& topology,
@@ -613,7 +613,7 @@ inline void apply_fiber_break_events(fiber::FiberState& state, fiber::FiberTopol
 // с dt шага, по x^{n+1}), (2) поиск и применение разрывов (по образцу
 // compute_fiber_bond в interactions/fiber_bond.hpp). Конститутивный проход
 // ВСТРОЕН сюда, чтобы любой драйвер, вызывающий обёртку (боевой цикл,
-// tests/fiber_t0_dump), автоматически обновлял eps_p/q/w_p/w_v и не мог его
+// cases/guo2019/experiment/fiber_t0_dump), автоматически обновлял eps_p/q/w_p/w_v и не мог его
 // забыть. Драйверы, вызывающие find_fiber_break_events/apply_fiber_break_events
 // напрямую (tests/test_fiber_break.cpp), конститутивный проход пропускают --
 // им нужен явный вызов apply_fiber_bond_constitutive (для упругих материалов он

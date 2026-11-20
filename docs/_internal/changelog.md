@@ -72,6 +72,12 @@
 
 ### Изменено
 
+- Постановки кейсов разделены по ролям ([ADR-011](../04-explanation/decisions/adr-011-case-setups.md), 2026-11-20):
+  код сцен, числа опыта, конфиги, эталоны и снимки регрессии BC2, BC6, bc2mini3d, Guo 2019 перенесены из
+  `tests/`, `tests/data/` в `cases/<кейс>/regression/` (замороженная копия для `ctest`); у Guo 2019 —
+  экспериментальная копия `cases/guo2019/experiment/` вместе с `guo2019_shot.cpp` (бывший `tools/guo2019/`) и
+  `fiber_t0_dump.cpp`; общая библиотека `cases/common/` (`e2e_harness.hpp`, `energy.hpp`, `lattice.hpp`).
+  Ссылки в `docs/`, `notes/`, комментариях обновлены; журналы `experiments/` не менялись.
 - Исходные данные опытов собраны в [`cases/`](../../cases/README.md) (2026-11-20): реестр кейсов и карточки
   `guo2019`, `bc1`…`bc10`, `ao1`, `steel-cylinders`; `Керамика/…/BCn/`, `…/AO1/` → `cases/<кейс>/source/`
   (`initial-conditions.txt` перекодирован из Mac Cyrillic в UTF-8). Пути обновлены в `tests/data/bc{2,6}_*`,

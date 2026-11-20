@@ -23,7 +23,7 @@ ctest --test-dir build --output-on-failure
 | `e2e_bc6_smoke_contact0..3` | `test_e2e_bc6 --contact-type=N` | Сквозной прогон кейса BC6 (откол на B4C, ударник и окно PMMA) на огрублённой сетке: геометрия, живучесть конвейера, самопроверки компаратора и извлекателя лесенки. Физические проверки там пропускаются — зазор удара 1,0 мм лежит внутри носителя ядра |
 | `e2e_bc6_full_contact0..3` | `test_e2e_bc6 --full --contact-type=N` | Тот же кейс на рабочей сетке: приход фронта, уровни ступеней, отношения, период лесенки, `D = 0` до разгрузки, контакт на всех трёх границах. Метка `slow`, по умолчанию **не регистрируются** |
 | `regression_selfcheck` | `test_regression --selfcheck` | Самопроверка компаратора снимков без расчёта: ловит возмущение выше допуска и называет частицу, пропускает ниже допуска, ловит NaN, расхождение `itype`, `ntotal`, числа шагов; круг записи и чтения эталона |
-| `regression_bc{2,6}_contact0..3` | `test_regression --case=bcN --contact-type=N` | Регрессия: все поля всех частиц после 1 и 100 шагов сверяются с эталоном, снятым этим же кодом (`tests/data/regression/`). Метка `regression` |
+| `regression_bc{2,6}_contact0..3` | `test_regression --case=bcN --contact-type=N` | Регрессия: все поля всех частиц после 1 и 100 шагов сверяются с эталоном, снятым этим же кодом (`cases/<кейс>/regression/snapshots/`). Метка `regression` |
 | `kinematics_3d_test` | `test_kinematics_3d` | Ветка `dim = 3` силового расчёта на решётке 11³: простой сдвиг по трём парам осей, объёмное и одноосное сжатие, жёсткое вращение (производная Яуманна: dS/dt = R·S − S·R, след и S:S неизменны), покой при однородном и линейном поле напряжений |
 | `e2e_3d_smoke_contact0..3` | `test_e2e_3d --contact-type=N` | Сквозной прогон уменьшенного BC2 в полном 3D до 1 мкс: здоровье, сохранение массы и импульса, энергия не растёт, симметрия решётки x → −x, y → −y, x ↔ y, приход фронта к монитору |
 | `e2e_3d_energy_noxsph` | `test_e2e_3d --no-xsph` | Тот же прогон при `epsilon = 0`: полная энергия сохраняется в пределах 1 % |
@@ -180,7 +180,7 @@ ctest --test-dir build -R "kinematics_3d|e2e_3d|_3d$|bc2mini3d" --output-on-fail
   `test_axisym`. Проверки опираются на симметрию и тензорные тождества, а не
   на точность SPH-градиента;
 * `test_e2e_3d` — уменьшенный BC2
-  ([`tests/bc2_mini3d_geometry.hpp`](../../tests/bc2_mini3d_geometry.hpp)):
+  ([`cases/bc2/regression/bc2_mini3d_geometry.hpp`](../../cases/bc2/regression/bc2_mini3d_geometry.hpp)):
   материалы, толщины и скорости BC2, радиус керамики 4 мм, 3648 частиц. Полный
   BC2 в 3D даже на сетке smoke — сотни тысяч частиц;
 * `test_regression_3d` — та же программа, что `test_regression`, в сборке
@@ -209,7 +209,9 @@ ctest --test-dir build -L regression --output-on-failure -j8
 ```
 
 Набор 2D (9 тестов) идёт 10–15 с, 3D (5 тестов) — около минуты. Эталоны —
-24 файла в `tests/data/regression/`, около 20 МБ.
+24 файла в `cases/bc2/regression/snapshots/` (BC2 и уменьшенный BC2 в 3D) и
+`cases/bc6/regression/snapshots/`, около 20 МБ. Постановки, которые берёт ctest, —
+замороженные копии в `cases/<кейс>/regression/` ([правила](../../cases/README.md#роли-постановок)).
 
 ### Чем отличается от e2e
 
@@ -271,14 +273,14 @@ cmake --build build --target regression_golden
 ```
 
 Цель ставит `OMP_NUM_THREADS=1`, пересчитывает все 24 файла в
-`tests/data/regression/` (2D и 3D) и вписывает в их шапку commit и дату. Ни один
+`cases/<кейс>/regression/snapshots/` (2D и 3D) и вписывает в их шапку commit и дату. Ни один
 зарегистрированный тест в дерево исходников не пишет.
 
 Проверка, что регрессия вообще что-то ловит: прогон с другим конфигом должен
 провалиться.
 
 ```bash
-cp tests/data/bc2_initial_conditions.txt /tmp/bc2_alpha.txt
+cp cases/bc2/regression/initial_conditions.txt /tmp/bc2_alpha.txt
 sed -i 's/^alpha = .*/alpha = 1.001/' /tmp/bc2_alpha.txt
 ./build/test_regression --case=bc2 --contact-type=0 --config=/tmp/bc2_alpha.txt
 ```

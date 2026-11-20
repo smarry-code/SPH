@@ -4,7 +4,7 @@
 // в ctest: --config=A | 1T | 1T_A | A_1T | 2T | 4T.
 //
 // Прогон идёт одним непрерывным time_integration(cfg, fiber::Model&, ...) с
-// монитором GuoShotMonitor в RunGuard::set_step_observer (tests/guo2019_monitor.hpp),
+// монитором GuoShotMonitor в RunGuard::set_step_observer (cases/guo2019/regression/guo2019_monitor.hpp),
 // во временном каталоге (ScopedWorkDir), вывод конвейера заглушён.
 //
 // Для 2T и 4T (пакет из 2 и 4 слоёв) дополнительно S1m, S2m, S14, S15 (ТЗ 2T/4T §6.1).

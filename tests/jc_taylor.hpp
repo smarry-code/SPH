@@ -172,7 +172,7 @@ inline Geometry build_geometry(ParticleSystem& sys, size_t n_r)
 }
 
 // ===========================================================================
-// Конфигурация решателя (параметры BC6, tests/data/bc6_initial_conditions.txt:
+// Конфигурация решателя (параметры BC6, cases/bc6/regression/initial_conditions.txt:
 // pa_sph = 2, nnps = 2, sle = 1, skf = 1, CFL = 0.1, XSPH 0.25, alpha = beta = 1)
 // ===========================================================================
 inline void apply_config(SimulationConfig& cfg, double t_total)

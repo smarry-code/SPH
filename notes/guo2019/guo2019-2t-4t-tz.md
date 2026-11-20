@@ -1,6 +1,6 @@
 # ТЗ: эксперименты Guo 2019 с многослойной тканью (2T, 4T) в коде SPH
 
-> **Статус (2026-11-20):** реализовано: конфигурации 2T, 4T (затем обобщены до `<k>T`) — [`guo2019_case.hpp`](../../tests/guo2019_case.hpp), [`guo2019_scene.hpp`](../../tests/guo2019_scene.hpp), [`guo2019_monitor.hpp`](../../tests/guo2019_monitor.hpp), smoke-тесты в [`test_e2e_guo2019.cpp`](../../tests/test_e2e_guo2019.cpp), утилита — [справочник `guo2019_shot`](../../docs/03-reference/guo2019-shot.md). Файл перенесён из ветки `Guo2T` (коммит `71911d4`, `fiber/TZ_GUO2019_2T_4T.md`); пути к заметкам обновлены, остальное — как в оригинале, номера строк и §13 относятся к тому времени.
+> **Статус (2026-11-20):** реализовано: конфигурации 2T, 4T (затем обобщены до `<k>T`) — [`guo2019_case.hpp`](../../cases/guo2019/experiment/guo2019_case.hpp), [`guo2019_scene.hpp`](../../cases/guo2019/experiment/guo2019_scene.hpp), [`guo2019_monitor.hpp`](../../cases/guo2019/experiment/guo2019_monitor.hpp), smoke-тесты в [`test_e2e_guo2019.cpp`](../../tests/test_e2e_guo2019.cpp), утилита — [справочник `guo2019_shot`](../../docs/03-reference/guo2019-shot.md). Файл перенесён из ветки `Guo2T` (коммит `71911d4`, `fiber/TZ_GUO2019_2T_4T.md`); пути к заметкам обновлены, остальное — как в оригинале, номера строк и §13 относятся к тому времени.
 
 **Исполнитель:** Claude Code в локальном репозитории SPH, ветка `fiber_new`, HEAD `f81d8e0` (2026-10-04: слиты `readk` и `speedup`). В ней уже есть всё, на что опирается это ТЗ: сцена Guo 2019 для A, 1T, 1T/A, A/1T (`841300c`), генератор полотна (`weave`), закрепление (`clamp`), ускорение шага (`notes/speedup/final.md`). Номера строк ниже сверены на `f81d8e0`; если ветка ушла вперёд, сверить по контексту.
 **Автор ТЗ не видит результатов прогонов.** Всё, что помечено «оценка», исполнитель пересчитывает и фиксирует в §13.
@@ -36,8 +36,8 @@
 
 ## 2. Что уже есть и что проверить до начала
 
-1. **Сцена 1T.** `tests/guo2019_scene.hpp:244-273` строит один `fiber::PlainWeave` (`sc.W`) с `A = 0.6·d`, `c_z = −(A + d/2)`, зажимом `--clamp=y`; `:406-442` пишет `.fib` (`write_plain_weave_fib`) и раскладку, вызывает `load_fiber_file`, заполняет `sc.yarns`. `sc.W` вне сцены не используется (проверено поиском по `tests/` и `tools/`).
-2. **Монитор.** `tests/guo2019_monitor.hpp`: нить бусины — `yarn_of_` (`:186-189`), порванные нити — `count_broken` (`:533-548`), контакты нить–нить — `contact_ff` через `compute_fiber_contact_diagnostics` (`:551-561`), `contacts_per_crossing` делится на `spec.nx·spec.ny` (`:206`, `:593`), исход — `:691` по `sc.z_b`.
+1. **Сцена 1T.** `cases/guo2019/experiment/guo2019_scene.hpp:244-273` строит один `fiber::PlainWeave` (`sc.W`) с `A = 0.6·d`, `c_z = −(A + d/2)`, зажимом `--clamp=y`; `:406-442` пишет `.fib` (`write_plain_weave_fib`) и раскладку, вызывает `load_fiber_file`, заполняет `sc.yarns`. `sc.W` вне сцены не используется (проверено поиском по `tests/` и `tools/`).
+2. **Монитор.** `cases/guo2019/experiment/guo2019_monitor.hpp`: нить бусины — `yarn_of_` (`:186-189`), порванные нити — `count_broken` (`:533-548`), контакты нить–нить — `contact_ff` через `compute_fiber_contact_diagnostics` (`:551-561`), `contacts_per_crossing` делится на `spec.nx·spec.ny` (`:206`, `:593`), исход — `:691` по `sc.z_b`.
 3. **Формат `.fib`.** `src/fiber_input.cpp`: `object_id` — порядковый номер блока `FIBER` в файле; `CLAMP_BOX` допустимы в любом месте; маска — объединение всех боксов (`build_model_from_polylines`, `src/fiber_input.cpp:230-247`). Значит, N слоёв ложатся в один файл без правок разбора.
 4. **Контакт между слоями.** `include/interactions/fiber_contact.hpp:273`: пары допускаются при `object_id[a] != object_id[b]`, то есть нити разных слоёв контактируют штатно. Примитивы пар доступны в `FiberContactSearchResult::primitives` (`:233-242`), геометрия пары — `compute_fiber_contact_geometry` (`:454`). Этого хватает монитору, чтобы делить контакты на «внутри слоя» и «между слоями» без правок ядра.
 5. **Стоимость.** До ускорения 1T на `base` стоил 0.225–0.255 с/шаг при 8 потоках (43 248 бусин; `notes/guo2019/guo2019-e2e.md` §8, выстрел 2026-10-02 — 2.36 ч). После `speedup` шаг 1T на `scaled` стал быстрее в 5.5 раза (`notes/speedup/final.md` §1), но на `base` 1T после ускорения не замерялся. Ткань 2T и 4T — это 86 496 и 172 992 бусины. Если время шага растёт линейно с числом бусин (оценка), 4T на `base` примерно вчетверо дороже 1T. Поэтому замер стоимости (§7) обязателен до серий.
@@ -100,13 +100,13 @@
 
 ### 3.3. Шар, решатель, закрепление
 
-Без изменений относительно 1T: шар §3.2 базового ТЗ (на `scaled` — отступления О1–О4 из `notes/guo2019/guo2019-e2e.md` §8.2), `tests/data/guo2019_initial_conditions.txt`, `contact_force_type = 1`, `sph_same_body_only = true` (у 2T и 4T пластины нет, флаг на ткань не влияет, но включён ради единообразия сцен), PC, `RunGuard(time_limit, 2.0e6, 200)`, монитор через `set_step_observer`, останов через `request_stop`. Пластины нет: `model.clamps.solid_mask` заполнен нулями размера `ntotal` (как у 1T).
+Без изменений относительно 1T: шар §3.2 базового ТЗ (на `scaled` — отступления О1–О4 из `notes/guo2019/guo2019-e2e.md` §8.2), `cases/guo2019/experiment/initial_conditions.txt`, `contact_force_type = 1`, `sph_same_body_only = true` (у 2T и 4T пластины нет, флаг на ткань не влияет, но включён ради единообразия сцен), PC, `RunGuard(time_limit, 2.0e6, 200)`, монитор через `set_step_observer`, останов через `request_stop`. Пластины нет: `model.clamps.solid_mask` заполнен нулями размера `ntotal` (как у 1T).
 
 ## 4. Изменения кода
 
 Ядро не меняется. Всё ниже — в `tests/`, `tools/`, `CMakeLists.txt` и документации.
 
-### 4.1. `tests/guo2019_case.hpp`
+### 4.1. `cases/guo2019/experiment/guo2019_case.hpp`
 
 - `enum class Config`: добавить `T2` (имя `"2T"`) и `T4` (имя `"4T"`). `parse_config` принимает `2T` и `4T`. Порядок существующих значений не менять.
 - Новая функция `inline int fabric_plies(Config c)`: 0 у `A`, 1 у `1T`, `1T_A`, `A_1T`; 2 у `2T`; 4 у `4T`. `config_has_fabric(c)` переписать как `fabric_plies(c) > 0`; `config_has_plate(c)` — `false` у `1T`, `2T`, `4T`.
@@ -116,7 +116,7 @@
 - Константы нормировок статьи, только для печати: `kPaperVblRatio2T = 1.9`, `kPaperVblRatio4T = 3.4`, `kPaperERatio2T = 3.7`, `kPaperERatio4T = 11.5`, `kPaperSpecific2T = 1.87`, `kPaperSpecific4T = 2.88`, `kPaperVblExp = 0.887`, `kPaperEExp = 1.773`; разрывы 4T по слоям `{5, 6, 7, 18}`, 1T `{3}`; распущенные у кромок 1T 3, слой 1 у 4T 9; прогиб 25–27 мм.
 - `kEpsPly = kEpsG` (1e-6 м, зазор между слоями) — отдельное имя с пометкой «оценка», чтобы его можно было менять независимо от зазора ткань–пластина.
 
-### 4.2. `tests/guo2019_scene.hpp`
+### 4.2. `cases/guo2019/experiment/guo2019_scene.hpp`
 
 **Построение пакета.**
 - В `GuoScene` добавить `int n_plies`, `std::vector<fiber::PlainWeave> plies` (слой 1 первым), `std::vector<double> ply_cz`, `double ply_pitch` (`Δ_ply`), раскладку слоёв `struct PlyLayout { std::size_t bead_begin, bead_end, yarn_begin, yarn_end; int object_id_begin; }` и `std::vector<PlyLayout> ply_layout`. Поле `sc.W` оставить: это слой 1 (лицевой), чтобы не трогать код, который на него опирается.
@@ -141,7 +141,7 @@
 - Новая функция `ply_vertex_gaps(const GuoScene&) -> PlyGapReport`: для каждой пары соседних слоёв `(k, k+1)` и каждого пересечения `(i, j)` берётся нижняя по z из двух вершинных бусин слоя `k` и верхняя из двух вершинных бусин слоя `k+1` (через `vertex_bead`: у основы `j` вершина `i`, у утка `i` вершина `j`); зазор = разность z минус `d`. Отчёт: минимум, максимум, где достигнуты. Ожидание: `ε_g` с точностью `1e-12` м на всех пересечениях.
 - Печать сводки (`print_scene_summary`): число слоёв, `Δ_ply`, `c_z` каждого слоя, послойные и суммарные числа, плотность по слоям и сумма, отчёт `ply_vertex_gaps`.
 
-### 4.3. `tests/guo2019_monitor.hpp`
+### 4.3. `cases/guo2019/experiment/guo2019_monitor.hpp`
 
 При `n_plies == 1` всё, что монитор считает и пишет сейчас, остаётся побитно тем же (проверка R1). Новое включается только при `n_plies ≥ 2`, кроме пересчёта знаменателя `contacts_per_crossing`, который при N = 1 даёт то же число.
 
@@ -161,7 +161,7 @@
 - `--config=2T|4T`. Проверки §6.1. Справка CLI и сообщения об ошибках перечисляют новые имена.
 - `CMakeLists.txt:604`: список `foreach(_guo_cfg A 1T 1T_A A_1T)` дополнить `2T 4T`. Метки, `TIMEOUT 120`, `OMP_NUM_THREADS=2` — как у остальных.
 
-### 4.5. `tools/guo2019/guo2019_shot.cpp`
+### 4.5. `cases/guo2019/experiment/guo2019_shot.cpp`
 
 - `--config=2T|4T`, справка. `--paper-shots`, `--bracket`, `--repeat` работают по таблице §3.1 без особых случаев.
 - В `vbl.txt` для `2T`, `4T` дописать `V_BL` и `e_BL` статьи (`paper_vbl`, `paper_e_bl`). Нормировки на 1T считаются в отчёте (§11) по `vbl.txt` трёх серий одного уровня; в программу их не встраивать.

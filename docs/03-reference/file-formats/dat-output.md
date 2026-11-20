@@ -107,7 +107,7 @@ $$
   затем диагностические каналы мощности `P_*` (по механизмам; вариант с массой кольца
   и вариант `_flat`) и `closure`. При рестарте файл дописывается без заголовка.
 - `monitor.csv` — построчный монитор сценария Guo 2019 (тестовый харнесс,
-  [`guo2019_monitor.hpp`](../../../tests/guo2019_monitor.hpp:385), `open_csv_fresh`):
+  [`guo2019_monitor.hpp`](../../../cases/guo2019/experiment/guo2019_monitor.hpp:409), `open_csv_fresh`):
   `step,t,dt,z_c,v_z,KE_s,KE_p,KE_f,U_b,U_int,E_tot,Fs_x,Fs_y,Fs_z,Ff_x,Ff_y,Ff_z,n_bonds,n_broken_v,n_broken_h,w_f,w_p`
   (для многослойной ткани добавляются `n_broken_v_pK`, `n_broken_h_pK`, `w_f_pK`; затем
   `Fs_norm,Fs_abs_sum,Fs_abs_max,Ff_norm,Ff_abs_sum,Ff_abs_max` — модули реакций зажимов;

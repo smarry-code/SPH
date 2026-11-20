@@ -9,7 +9,7 @@
 **Источник данных:** `Керамика/Карбид бора/BC2/` (ныне [`cases/bc2/`](../../cases/bc2/README.md); `log_*.txt` удалены)
 **Источник геометрии:** `src/input.cpp:490-596` — закомментированный блок внутри
 `shock_tube()`; переносится в тело теста.
-**Новые файлы:** `tests/test_e2e_bc2.cpp`, `tests/data/bc2_reference.txt` (заготовка создана),
+**Новые файлы:** `tests/test_e2e_bc2.cpp`, `cases/bc2/regression/reference.txt` (заготовка создана),
 цель CMake `test_e2e_bc2`.
 
 > Тест общего назначения: он проверяет весь конвейер, а не только контакт. Контактная
@@ -162,7 +162,7 @@ file << time << " " << sys.vx[0][moni_particle] << " " << sys.itype[moni_particl
 
 ### 4.2 Формат эталонного файла
 
-Заготовка создана: [`tests/data/bc2_reference.txt`](../../tests/data/bc2_reference.txt).
+Заготовка создана: [`cases/bc2/regression/reference.txt`](../../cases/bc2/regression/reference.txt).
 Формат и порядок перегенерации описаны в её шапке.
 
 ### 4.3 Алгоритм сравнения

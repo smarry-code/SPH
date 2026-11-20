@@ -412,7 +412,7 @@ $p$ снова означает накопленное за шаг перекр�
 
 **Файлы** (коммит `5357558`):
 [src/time_integration.cpp:312-319](../../src/time_integration.cpp#L312);
-[tests/data/bc2_reference.txt:21-24](../../tests/data/bc2_reference.txt#L21) — предупреждение в шапке эталона;
+[cases/bc2/regression/reference.txt:21-24](../../cases/bc2/regression/reference.txt#L21) — предупреждение в шапке эталона;
 [tests/test_e2e_bc2.cpp](../../tests/test_e2e_bc2.cpp) — чтение второй колонки как осевой скорости.
 
 **Дефект.** Мониторинговый лог писал `sys.vx[0][moni_particle]` — **радиальную** компоненту.
@@ -552,7 +552,7 @@ $R$ шёл $9{,}99\cdot10^{-5} \to 1{,}43\cdot10^{-4} \to 2{,}41\cdot10^{-4} \to
 | `test_particle_system.cpp` | [tests/test_particle_system.cpp](../../tests/test_particle_system.cpp) |
 | `test_contact.cpp` | [tests/test_contact.cpp](../../tests/test_contact.cpp) |
 | `test_e2e_bc1.cpp` | [tests/test_e2e_bc2.cpp](../../tests/test_e2e_bc2.cpp) (переименован в `5357558`, сходство 89 %) |
-| `notes/contact/e2e/bc1_reference*.txt` | `tests/data/` → заменены на [tests/data/bc2_reference.txt](../../tests/data/bc2_reference.txt) |
+| `notes/contact/e2e/bc1_reference*.txt` | `tests/data/` → заменены на [cases/bc2/regression/reference.txt](../../cases/bc2/regression/reference.txt) |
 
 Сопутствующие правки:
 [CMakeLists.txt:60-92](../../CMakeLists.txt#L60) — пути к исходникам тестов;
@@ -627,8 +627,8 @@ O11 закрепляет договорённость о радиусе: `hsml` 
 [tests/test_e2e_bc2.cpp](../../tests/test_e2e_bc2.cpp) — 1321 строка в коммитах ветки
 (`5536800` — 1093 строки, `41bbe0b` +75, `40ff8e6` +58, `ba8470a` +43, `5357558` +91,
 `69d06dd` +28, `6260128` +2);
-[tests/data/bc2_initial_conditions.txt](../../tests/data/bc2_initial_conditions.txt) — 52 строки;
-[tests/data/bc2_reference.txt](../../tests/data/bc2_reference.txt) — 1757 строк;
+[cases/bc2/regression/initial_conditions.txt](../../cases/bc2/regression/initial_conditions.txt) — 52 строки;
+[cases/bc2/regression/reference.txt](../../cases/bc2/regression/reference.txt) — 1757 строк;
 [CMakeLists.txt:94-141](../../CMakeLists.txt#L94) — цель и два теста CTest;
 [notes/contact/04-e2e-test-brief.md](04-e2e-test-brief.md) — ТЗ (433 строки, коммит `40ff8e6`).
 
@@ -678,14 +678,14 @@ O11 закрепляет договорённость о радиусе: `hsml` 
    `--contact-type=N`, а перебор делает набор тестов — по одному на тип, чтобы обрыв
    одного не скрывал результат остальных.
 
-**Конфигурация теста** — [tests/data/bc2_initial_conditions.txt](../../tests/data/bc2_initial_conditions.txt).
+**Конфигурация теста** — [cases/bc2/regression/initial_conditions.txt](../../cases/bc2/regression/initial_conditions.txt).
 Разбирается **той же** `parse_sph_config()`, что и боевой `Initial_Conditions.txt` — тест
 проходит через реальный путь загрузки конфигурации, а не выставляет поля в обход него.
 Отсутствие файла — ошибка, а не молчаливый откат к умолчаниям. `t_total = 3.5e-6` вместо
 архивных `3e-6`: приборный эталон записан до 3.4926e-6 с, и при 3e-6 расчёт обрывался на
 половине окна эталона.
 
-**Эталон** — [tests/data/bc2_reference.txt](../../tests/data/bc2_reference.txt). Важно: это **не
+**Эталон** — [cases/bc2/regression/reference.txt](../../cases/bc2/regression/reference.txt). Важно: это **не
 регрессионный эталон** — он снят интерферометром (`notes/contact/e2e/gold_standart.txt`, 1714 точек,
 км/с → м/с), а не нашим кодом. Сверка с ним измеряет близость модели к физике, а не
 стабильность кода, поэтому точные регрессионные допуски к нему неприменимы — отсюда и
@@ -842,7 +842,7 @@ ctest --test-dir build -L slow --output-on-failure
 | [notes/contact/09-article-conformance.md](09-article-conformance.md) | `a25acff` | Сверка реализации со статьёй-источником эталона |
 | contact/10-debug-handoff.md (удалён) | `48997cd` | Передача отладки обрыва при `contact_force_type = 2`. Обрыв закрыт (**fix** 2.8, 2.9); документ сохранён как разбор, по которому механизм устанавливался |
 | [notes/contact/README.md](README.md) | `a25acff` | Оглавление каталога |
-| [notes/contact/e2e/gold_standart.txt](e2e/gold_standart.txt) | `a25acff` | Приборный профиль скорости — источник `tests/data/bc2_reference.txt` |
+| [notes/contact/e2e/gold_standart.txt](e2e/gold_standart.txt) | `a25acff` | Приборный профиль скорости — источник `cases/bc2/regression/reference.txt` |
 | [notes/contact/e2e/BC2_velocity_profile_raw.csv](e2e/BC2_velocity_profile_raw.csv) | `a25acff` | Тот же набор в исходном виде (км/с) |
 | `notes/contact/e2e/bc2_geometry.svg`, `bc2_monitor_velocity.svg` | `0534c4e` | Иллюстрации к 05/06 |
 | [notes/contact/report-sph-contact.md](report-sph-contact.md) | `a25acff` | Исходная заявка на внедрение. Описывает другое состояние кодовой базы (модель Wang, ADR-011, готовый `test_contact.cpp`) и планом для этого репозитория служить не может — см. `notes/contact/00-audit.md` |
@@ -896,7 +896,7 @@ atomic-суммирования в `link_list`, за ~200 шагов растё�
 контактной подсистеме отношения не имеет. Ворота по амплитуде `[0,5; 2,0]` и по фронту `[0,333; 3,0]` проходят, то есть
 §4.3 больше не провален. Но содержательно расхождение осталось: фронт воспроизводится точно,
 а пик занижен в полтора раза и спад затянут вдвое.
-[tests/data/bc2_reference.txt](../../tests/data/bc2_reference.txt) снят прибором, а не нашим кодом,
+[cases/bc2/regression/reference.txt](../../cases/bc2/regression/reference.txt) снят прибором, а не нашим кодом,
 то есть измеряет близость модели к физике, а не стабильность кода. Решение о том, что считать
 приёмочным критерием для полного режима, остаётся за владельцем.
 

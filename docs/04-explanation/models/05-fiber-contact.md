@@ -679,7 +679,7 @@ $$
 (в `src/time_integration.cpp` создаётся при `contact_stats_every > 0` и наличии нитей; поля
 `contact_stats_every`, `contact_stats_file`, `contact_stats_summary`, `contact_hold_n` в
 `SimulationConfig`; в разборе `Initial_Conditions` в `src/input.cpp` они не обнаружены — задаются
-из драйвера `tools/guo2019/guo2019_shot.cpp`). Без `hold_n` только читает состояние (траектория
+из драйвера `cases/guo2019/experiment/guo2019_shot.cpp`). Без `hold_n` только читает состояние (траектория
 не меняется). Собирает по каждому виду контакта (ff/fs), построчно в CSV каждые `every` шагов и
 сводкой в конце: G1 — доля контакт-шагов с $F=0$ среди геометрических (в т.ч. с весом $F_H$);
 G2 — прилипание/скольжение активных слотов ($|\mathbf u_t|<10^{-9}$ м/с — прилипание,

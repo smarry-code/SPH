@@ -64,14 +64,14 @@ mkdocs serve        # http://127.0.0.1:8000
 ```
 SPH/
 ├── src/, include/   # Код C++20 (include/: rhs, interactions, fiber, ode, strength, k_input)
-├── tests/           # Модульные, интеграционные и e2e-тесты, эталонные данные
-├── tools/           # Утилиты: guo2019, plain_weave, paraview, fabric_checks, скрипты
+├── tests/           # Модульные, интеграционные и e2e-тесты (постановки опытов — cases/*/regression/)
+├── tools/           # Утилиты: plain_weave, paraview, fabric_checks, скрипты (guo2019_shot — cases/guo2019/experiment/)
 ├── cmake/           # Скрипты CMake (графики, регрессия по эталону)
 ├── docs/            # Документация (Markdown, MkDocs Material)
 ├── mkdocs_hooks/    # Хуки сайта документации
 ├── notes/           # Рабочие заметки, ТЗ, планы и отчёты по темам (оглавление — notes/README.md)
 ├── experiments/     # Журналы экспериментов
-├── cases/           # Опытные кейсы: реестр, карточки, исходные данные (cases/README.md)
+├── cases/           # Опытные кейсы: исходные данные, постановки для регрессии и экспериментов (cases/README.md)
 ├── CMakeLists.txt, CMakePresets.json
 ├── Doxyfile         # Конфигурация автогенерации API
 └── mkdocs.yml       # Конфигурация сайта документации

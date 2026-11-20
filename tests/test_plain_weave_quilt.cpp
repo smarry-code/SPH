@@ -47,7 +47,7 @@ static void check(bool cond, const std::string& what)
     if (!cond) ++failures;
 }
 
-// Параметры ткани сцены Guo 2019 (tests/guo2019_scene.hpp, блок «ткань»), уровень base.
+// Параметры ткани сцены Guo 2019 (cases/guo2019/regression/guo2019_scene.hpp, блок «ткань»), уровень base.
 static PlainWeaveParams guo_params(double cz)
 {
     const guo2019::LevelSpec L = guo2019::level_spec(guo2019::Level::Base);

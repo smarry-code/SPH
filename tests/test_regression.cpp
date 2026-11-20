@@ -31,7 +31,7 @@
 // src/*.cpp (решение E1, ADR-002):
 //   test_regression    -DSPH_DIM=2  кейсы bc2, bc6 (осесимметрия), K = 100;
 //   test_regression_3d -DSPH_DIM=3  кейс bc2mini3d (уменьшенный BC2 в 3D,
-//                                   tests/bc2_mini3d_geometry.hpp), K = 50.
+//                                   cases/bc2/regression/bc2_mini3d_geometry.hpp), K = 50.
 // Состав полей эталона зависит от размерности (tests/regression_snapshot.hpp),
 // размерность пишется в шапку эталона, и эталон чужой размерности не читается.
 

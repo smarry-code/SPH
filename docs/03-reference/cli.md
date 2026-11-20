@@ -7,7 +7,7 @@
 возврата 1.
 
 !!! note "`guo2019_shot` и рестарт"
-    Утилита [`guo2019_shot`](../../tools/guo2019/guo2019_shot.cpp) принимает аргументы,
+    Утилита [`guo2019_shot`](../../cases/guo2019/experiment/guo2019_shot.cpp) принимает аргументы,
     в том числе ключи рестарта из чекпоинта: `--checkpoint`, `--checkpoint-every=<шаги>`,
     `--restart`, `--force`. Правила, риски `--force` и рекомендации —
     в [«Рестарт расчёта из чекпоинта»](../02-how-to/05-restart-checkpoints.md).
@@ -53,7 +53,7 @@
 
 | Цель | Исходник | Назначение и ключи |
 |---|---|---|
-| `guo2019_shot` | [`tools/guo2019/guo2019_shot.cpp`](../../tools/guo2019/guo2019_shot.cpp) | Серийные выстрелы Guo 2019. Обязательны `--config`, `--level`, `--out` и ровно одно из `--v0=`, `--paper-shots`, `--v0-list=`. Ключи по группам (сцена, шар, габариты ткани, материал нити, контакт и проекция, стёжка, мозаика, вывод, чекпоинт), выходные файлы и коды выхода — в [справочнике `guo2019_shot`](guo2019-shot.md). Неизвестный аргумент или ошибка значения — код 2 |
+| `guo2019_shot` | [`cases/guo2019/experiment/guo2019_shot.cpp`](../../cases/guo2019/experiment/guo2019_shot.cpp) | Серийные выстрелы Guo 2019. Обязательны `--config`, `--level`, `--out` и ровно одно из `--v0=`, `--paper-shots`, `--v0-list=`. Ключи по группам (сцена, шар, габариты ткани, материал нити, контакт и проекция, стёжка, мозаика, вывод, чекпоинт), выходные файлы и коды выхода — в [справочнике `guo2019_shot`](guo2019-shot.md). Неизвестный аргумент или ошибка значения — код 2 |
 | `fabric_checks` | [`tools/fabric_checks/fabric_checks.cpp`](../../tools/fabric_checks/fabric_checks.cpp) | Проверки лоскута ткани. Первый аргумент — подкоманда `strip`, `capstan` или `drum`, далее `--ключ=значение` (`--out`, `--tag`, `--mu`, `--threads`, `--time-limit` и ключи подкоманды) |
 | `plain_weave_gen` | [`tools/plain_weave/plain_weave_gen.cpp`](../../tools/plain_weave/plain_weave_gen.cpp) | Генератор полотняного переплетения `.fib`; обязателен `--out=<файл.fib>`. [Руководство](../02-how-to/02-plain-weave-generator.md) |
 | `test_e2e_*`, `test_regression*`, `test_energy_log`, `fiber_t0_dump` | `tests/` | Свои ключи (`--full`, `--contact-type=N`, `--time-limit=<с>`, `--keep-workdir`, `--verbose`, `--case=`, `--emit-*` и др.; e2e Джонсона–Кука: `--art-eps=` (искусственное напряжение, 0 — выкл.) и `--pmin=` у `test_e2e_jc_taylor` и `test_e2e_jc_plate`, у Тейлора ещё `--save-t=`, `--no-damage`, `--cfl=`), см. [«Запуск тестов»](../02-how-to/01-run-tests.md) |

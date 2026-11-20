@@ -8,7 +8,7 @@
 //      Ф6 (interactions/fiber_solid_contact.hpp, вызов из
 //      src/time_integration.cpp, перегрузка fiber::Model&) не должно ломать
 //      обычный Solid-путь, когда нитей нет. Кейс -- уменьшенная 3D-геометрия
-//      BC2 (tests/bc2_mini3d_geometry.hpp), та же, что использует
+//      BC2 (cases/bc2/regression/bc2_mini3d_geometry.hpp), та же, что использует
 //      test_fiber_time_integration_equivalence.cpp. Модель нитей -- ПУСТАЯ
 //      (fb.size()==0): по построению src/time_integration.cpp весь блок
 //      Ф6 (как и Ф3/Ф5) обёрнут в `if (nfiber > 0)` и при пустых нитях не

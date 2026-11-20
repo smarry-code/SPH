@@ -1,7 +1,7 @@
 // tests/test_energy_log.cpp
 // Лог механической энергии (include/energy_log.hpp, сборка с SPH_ENERGY_LOG).
 //
-// Сцены -- smoke Guo 2019 (tests/guo2019_scene.hpp): шар, Al-пластина, ткань с
+// Сцены -- smoke Guo 2019 (cases/guo2019/regression/guo2019_scene.hpp): шар, Al-пластина, ткань с
 // трением mu = 0.3, зажимы, контакт Solid-Solid типа 1, XSPH. На smoke-скорости
 // связи не рвутся, поэтому для канала D_break -- отдельный прогон 1T с порогом
 // разрыва 0.5 %.

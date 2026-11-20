@@ -6,18 +6,24 @@
    репозитории не хранится, сводка —
    [`notes/sources/guo2019-article-summary.md`](../../notes/sources/guo2019-article-summary.md).
    Данные статьи (скорости выстрелов, V_BL, поглощённая энергия, число порванных нитей) записаны
-   константами с пометкой источника в `tests/guo2019_case.hpp`.
+   константами с пометкой источника в `guo2019_case.hpp`.
 3. **Статус.** В коде и тестах.
 4. **Файлы.** Каталога `source/` нет: кроме статьи, исходных данных нет.
 5. **Код и тесты.**
-   - Числа опыта и допуски — [`tests/guo2019_case.hpp`](../../tests/guo2019_case.hpp), сцена —
-     [`tests/guo2019_scene.hpp`](../../tests/guo2019_scene.hpp), монитор —
-     [`tests/guo2019_monitor.hpp`](../../tests/guo2019_monitor.hpp).
-   - Параметры решателя — [`tests/data/guo2019_initial_conditions.txt`](../../tests/data/guo2019_initial_conditions.txt).
-   - Тест — [`tests/test_e2e_guo2019.cpp`](../../tests/test_e2e_guo2019.cpp), цели `ctest`
-     `e2e_guo2019_smoke_A`, `_1T`, `_1T_A`, `_A_1T`, `_2T`, `_4T`.
-   - Серии выстрелов — утилита [`guo2019_shot`](../../docs/03-reference/guo2019-shot.md); ткань,
-     раскладка и параметры каждого выстрела она пишет в его каталог.
+   - **Регрессия** (замороженная копия для `ctest`, [правила](../README.md#роли-постановок)) —
+     [`regression/`](regression/): числа опыта и допуски [`guo2019_case.hpp`](regression/guo2019_case.hpp),
+     сцена [`guo2019_scene.hpp`](regression/guo2019_scene.hpp), монитор
+     [`guo2019_monitor.hpp`](regression/guo2019_monitor.hpp), параметры решателя
+     [`initial_conditions.txt`](regression/initial_conditions.txt). Её берут
+     [`tests/test_e2e_guo2019.cpp`](../../tests/test_e2e_guo2019.cpp) (цели `e2e_guo2019_smoke_A`, `_1T`,
+     `_1T_A`, `_A_1T`, `_2T`, `_4T`), `test_energy_log`, `test_fiber_plasticity_guo`, `test_plain_weave_quilt`.
+   - **Эксперимент** — [`experiment/`](experiment/): те же файлы (ответвлены от `regression/` в `a9c3964`) и
+     драйверы: серийные выстрелы [`guo2019_shot.cpp`](experiment/guo2019_shot.cpp)
+     ([справочник](../../docs/03-reference/guo2019-shot.md); ткань, раскладку и параметры каждого выстрела
+     пишет в его каталог), дамп нитей [`fiber_t0_dump.cpp`](experiment/fiber_t0_dump.cpp). Её же подключает
+     `tools/fabric_checks`. Проверки этих утилит в `ctest` (`checkpoint_cli_test`, `stitch_kt_cli_test`,
+     `mosaic_kt_cli_test`, `fabric_checks_smoke_*`) идут на экспериментальной копии.
+   - Отличия копий: `diff -r cases/guo2019/regression cases/guo2019/experiment`.
 6. **Эксперименты.** Серии `fabric-kT` и `mosaic-kT` (шар 1 г, 550 м/с) идут на той же сцене через
    `guo2019_shot --config=<k>T`.
    - [`2026-10-01-guo2019-1t-scaled`](../../experiments/2026-10-01-guo2019-1t-scaled/README.md)

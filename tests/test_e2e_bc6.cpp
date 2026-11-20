@@ -19,10 +19,10 @@
 // зависит от dim. См. docs/04-explanation/decisions/adr-002-dim-constexpr.md.
 //
 // РАСКЛАДКА ПО ФАЙЛАМ:
-//   tests/bc6_case.hpp             все исходные данные кейса
-//   tests/bc6_geometry.hpp         построение геометрии, независимое от BC2
-//   tests/data/bc6_initial_conditions.txt  параметры решателя
-//   tests/data/bc6_reference.txt   приборный эталон (tools/bc6_make_reference.py)
+//   cases/bc6/regression/bc6_case.hpp             все исходные данные кейса
+//   cases/bc6/regression/bc6_geometry.hpp         построение геометрии, независимое от BC2
+//   cases/bc6/regression/initial_conditions.txt  параметры решателя
+//   cases/bc6/regression/reference.txt   приборный эталон (tools/bc6_make_reference.py)
 //   tests/e2e_*.hpp                обвязка, общая для сквозных тестов
 //
 // ОДИН ПРОГОН — ОДИН ТИП КОНТАКТА (--contact-type=0..3), как и у BC2: обрыв
@@ -924,7 +924,7 @@ void staircase_selfcheck(const Curve& ref)
 // ===========================================================================
 
 // Ворота кейса. Длительность фронта НЕ является воротами — см. пояснение
-// ниже и шапку tests/data/bc6_reference.txt.
+// ниже и шапку cases/bc6/regression/reference.txt.
 e2e::ShapeGates bc6_gates()
 {
     e2e::ShapeGates g;
@@ -1277,7 +1277,7 @@ int main(int argc, char** argv)
     rs.wall_limit_s = wall_limit_s;
     try
     {
-        // Полный режим берёт t_total из tests/data/bc6_initial_conditions.txt.
+        // Полный режим берёт t_total из cases/bc6/regression/initial_conditions.txt.
         // Smoke укорачивает расчёт: это решение обвязки, а не параметр кейса,
         // поэтому оно живёт в коде.
         rs.t_total = full ? case_t_total() : bc6::kTTotalSmoke;

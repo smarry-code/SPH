@@ -83,7 +83,7 @@ add_executable(SPH ${SPH_SOURCES})
 set_target_properties(SPH PROPERTIES OUTPUT_NAME "SPH")
 target_compile_definitions(SPH PRIVATE SPH_DIM=${SPH_DIM})
 
-# --- Тесты (исходники в tests/, данные в tests/data/; заголовки из include/) ---
+# --- Тесты (исходники в tests/, данные в tests/data/ и cases/<кейс>/regression/; заголовки из include/) ---
 enable_testing()
 
 # --- Инфраструктура нитей, этап Ф1 (notes/fiber-model/fiber-plan.md): CpuExecutor,
@@ -1132,7 +1132,7 @@ set_tests_properties(plain_weave_random_cut_test PROPERTIES LABELS "3d" TIMEOUT 
 #     TODO(Ф8)); до этого теста копия не была упражнена НИ ОДНИМ тестом с
 #     непустым Solid (test_fiber_bond.cpp проверяет только Fiber-физику при
 #     ntotal == 0). Кейс — уменьшенная 3D-геометрия BC2
-#     (tests/bc2_mini3d_geometry.hpp), та же, что использует test_e2e_3d.
+#     (cases/bc2/regression/bc2_mini3d_geometry.hpp), та же, что использует test_e2e_3d.
 add_executable(test_fiber_time_integration_equivalence
     tests/test_fiber_time_integration_equivalence.cpp ${SPH_PIPELINE_SOURCES})
 sph_case(test_fiber_time_integration_equivalence bc2 regression)
@@ -1277,8 +1277,8 @@ add_custom_target(bc2_plot
 # Откольный опыт на B4C: ударник и окно PMMA, подложка — пена 160. Схема та
 # же, что у BC2 (свои объектники конвейера с SPH_DIM=2 по решению E1, по тесту
 # на contact_force_type, smoke по умолчанию, полный режим под опцией), но
-# кейс независим: свои данные (tests/bc6_case.hpp), своя геометрия
-# (tests/bc6_geometry.hpp), свой конфиг и свой эталон в tests/data/.
+# кейс независим: свои данные (cases/bc6/regression/bc6_case.hpp), своя геометрия
+# (cases/bc6/regression/bc6_geometry.hpp), свой конфиг и свой эталон там же.
 # Общая обвязка вынесена в tests/e2e_*.hpp; tests/test_e2e_bc2.cpp НЕ изменён
 # и продолжает жить со своими копиями.
 add_executable(test_e2e_bc6 tests/test_e2e_bc6.cpp ${SPH_PIPELINE_SOURCES})
@@ -1358,7 +1358,7 @@ add_custom_target(bc6_plot
 
 # --- Сквозной 3D-тест на уменьшенном BC2 (tests/test_e2e_3d.cpp) -----------
 # Материалы, толщины и скорости BC2, радиусы уменьшены до 4 мм у керамики
-# (tests/bc2_mini3d_geometry.hpp). Проверяет ветку dim = 3 целиком: здоровье,
+# (cases/bc2/regression/bc2_mini3d_geometry.hpp). Проверяет ветку dim = 3 целиком: здоровье,
 # сохранение массы, импульса и энергии, симметрию решётки, приход волны.
 # Свои объектники конвейера с SPH_DIM=3 (решение E1).
 add_executable(test_e2e_3d tests/test_e2e_3d.cpp ${SPH_PIPELINE_SOURCES})

@@ -137,7 +137,7 @@ guo2019_shot --config=1T --level=base --v0=73 --mu=0.1 --fs-contact=3 --ff-conta
 | θ_c | там же, отдельной проверкой |
 | разбор `DAMAGE` | `src/fiber_input.cpp` |
 | канал `W_d_fiber` | лог энергии (`energy_log`), `time_integration.cpp` |
-| поля `shot.txt`, столбец D в кадрах | `tools/guo2019/guo2019_shot.cpp`, `src/fiber_output.cpp` |
+| поля `shot.txt`, столбец D в кадрах | `cases/guo2019/experiment/guo2019_shot.cpp`, `src/fiber_output.cpp` |
 
 ## 6. Сроки
 

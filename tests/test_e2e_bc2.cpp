@@ -43,7 +43,7 @@
 //   без аргументов  — smoke (delta_x = 8e-4, t_total = 3e-7), цель < 30 с;
 //   --full          — полный кейс (delta_x = 2e-4, t_total из конфига);
 //   --emit-reference— напечатать эталон текущего режима в stdout (см. шапку
-//                     tests/data/bc2_reference.txt);
+//                     cases/bc2/regression/reference.txt);
 //   --verbose       — не глушить вывод конвейера.
 #include <algorithm>
 #include <array>
@@ -111,7 +111,7 @@ void note(const std::string& what)
 // ===========================================================================
 // 1. Геометрия кейса BC2
 // ===========================================================================
-// Построение вынесено в tests/bc2_geometry.hpp: его использует и регрессионный
+// Построение вынесено в cases/bc2/regression/bc2_geometry.hpp: его использует и регрессионный
 // тест (tests/test_regression.cpp). Здесь — только привязка имён.
 using bc2::LayerSpec;
 using bc2::Bc2Geometry;
@@ -2055,7 +2055,7 @@ int main(int argc, char** argv)
     rs.name = full ? "full" : "smoke";
     rs.contact_force_type = contact_type;
     rs.delta_x = case_delta_x(full);
-    // Полный режим берёт t_total из tests/data/bc2_initial_conditions.txt.
+    // Полный режим берёт t_total из cases/bc2/regression/initial_conditions.txt.
     // Smoke укорачивает расчёт: это решение обвязки (быстрый прогон в CI),
     // а не параметр кейса, поэтому оно и живёт в коде, а не в конфиге.
     rs.t_total = full ? case_t_total() : 3e-7;

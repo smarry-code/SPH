@@ -134,7 +134,7 @@ plain_weave_gen --out=<файл.fib> [--layout=<файл>] [--preset=<имя>]
 8. **Профиль `arcs`.** Точки лежат на полуэллипсах из §3.3 с допуском 1e-12. Бусины есть на вершинах.
 9. **Ошибки параметров.** `p < d` и `2A < d` без `--allow-penetration` дают исключение с понятным текстом. С флагом генерация проходит, а предупреждение печатается. `--clamp=y` без `--clamp-edge` (вне пресета) и `c_e` вне диапазона §3.5 — исключение всегда, независимо от `--allow-penetration`.
 
-Регистрация в `ctest`: `add_test(NAME plain_weave_test ...)`, метка `3d`, `TIMEOUT 120`. CLI проверяется отдельным `add_test`: запуск `plain_weave_gen --preset=test --out=<tmp>` должен завершиться с кодом 0. Временные файлы пишутся в каталог по образцу `e2e::ScopedWorkDir` (`tests/e2e_harness.hpp:78`), рабочее дерево не меняется.
+Регистрация в `ctest`: `add_test(NAME plain_weave_test ...)`, метка `3d`, `TIMEOUT 120`. CLI проверяется отдельным `add_test`: запуск `plain_weave_gen --preset=test --out=<tmp>` должен завершиться с кодом 0. Временные файлы пишутся в каталог по образцу `e2e::ScopedWorkDir` (`cases/common/e2e_harness.hpp:80`), рабочее дерево не меняется.
 
 ## 6. Что нельзя менять
 
