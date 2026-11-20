@@ -15,8 +15,8 @@
 # time: 8.7621030317636783e-09
 # dt: 8.7621030317636783e-09
 # threads: 1
-# commit: 69963be
-# date: 2026-11-16
+# commit: a12b711
+# date: 2026-11-20
 # generated: cmake --build build --target regression_golden
 #
 # columns: i itype x0 x1 v0 v1 rho p u c hsml e_pl D sxx syy szz sxy
