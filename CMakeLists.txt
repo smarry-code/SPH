@@ -1019,8 +1019,9 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 # --- Экспериментальные утилиты керамики BC2 и BC6 (cases/<кейс>/experiment/, драйвер
-#     cases/common/ceramic_shot.hpp), без add_test. 2D-постановки: свои объектники конвейера
-#     с SPH_DIM=2, как у test_e2e_bc2/test_e2e_bc6.
+#     cases/common/ceramic_shot.hpp) и проверки самих утилит bc2_shot_cli_test,
+#     bc6_shot_cli_test. 2D-постановки: свои объектники конвейера с SPH_DIM=2, как у
+#     test_e2e_bc2/test_e2e_bc6.
 foreach(_kase bc2 bc6)
     add_executable(${_kase}_shot cases/${_kase}/experiment/${_kase}_shot.cpp ${SPH_PIPELINE_SOURCES})
     sph_case(${_kase}_shot ${_kase} experiment)
@@ -1036,6 +1037,12 @@ foreach(_kase bc2 bc6)
         target_compile_options(${_kase}_shot PRIVATE -fopenmp)
         target_link_options(${_kase}_shot PRIVATE -fopenmp)
     endif()
+    # Проверка самой утилиты (cases/README.md, правило 4): коды выхода, файлы, серия,
+    # рестарт против непрерывного прогона (tests/ceramic_shot_cli_test.sh). Физику проверяют
+    # test_e2e_bc2 / test_e2e_bc6.
+    add_test(NAME ${_kase}_shot_cli_test
+             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/ceramic_shot_cli_test.sh $<TARGET_FILE:${_kase}_shot> ${_kase})
+    set_tests_properties(${_kase}_shot_cli_test PROPERTIES LABELS "e2e" TIMEOUT 300 ENVIRONMENT OMP_NUM_THREADS=1)
 endforeach()
 
 # --- CLI чекпоинтов guo2019_shot: коды ошибок и сравнение раздельного прогона с непрерывным
