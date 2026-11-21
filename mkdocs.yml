@@ -2,7 +2,8 @@ site_name: SPH — Документация
 
 site_description: Симулятор гидродинамики сглаженных частиц (SPH) на C++20/OpenMP
 site_url: https://placeholder.invalid/
-repo_url: https://placeholder.invalid/
+repo_url: https://github.com/smarry-code/SPH
+repo_name: smarry-code/SPH
 
 docs_dir: docs
 

@@ -72,6 +72,8 @@
 
 ### Изменено
 
+- Ссылка на репозиторий GitHub (https://github.com/smarry-code/SPH) (2026-11-21): `repo_url`/`repo_name` в `mkdocs.yml`
+  (кнопка репозитория на сайте), `git clone` в [Быстром старте](../01-tutorials/01-quick-start.md), строка в `README.md`.
 - Раздел [«Эксперименты»](../05-experiments/index.md) (2026-11-21): керамика — BC2 (и BC2 в 3D), BC6,
   кейсы без постановки (BC1, BC3–BC5, BC7–BC10, AO1); Guo 2019. Для каждого опыта — постановка, запуск,
   ключи командной строки и параметры решателя; строка в навигации `mkdocs.yml`, ссылки из `docs/index.md` и `README.md`.

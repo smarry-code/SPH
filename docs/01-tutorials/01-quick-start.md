@@ -23,7 +23,7 @@
 ## Шаг 1. Клонирование
 
 ```bash
-git clone <url-репозитория> SPH
+git clone https://github.com/smarry-code/SPH.git SPH
 cd SPH
 ```
 
