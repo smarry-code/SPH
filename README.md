@@ -88,6 +88,90 @@ OMP_NUM_THREADS=4 ./build/guo2019_shot --config=1T --level=base --paper-shots \
 [`cases/README.md`](cases/README.md#роли-постановок). Журналы прошлых серий собраны в
 [`experiments/`](experiments/README.md).
 
+### Пример: геометрия из LS-DYNA `.k`
+
+Произвольную геометрию можно взять из keyword-файла `.k`, например экспорта
+LS-PrePost. Из `.k` читаются узлы, SPH-частицы (`*ELEMENT_SPH`), нити
+(цепочки `*ELEMENT_BEAM`) и закрепления (`*BOUNDARY_SPC_*`); каждая деталь
+(PID) — отдельное тело. Материал и начальную скорость детали задаёт таблица
+деталей, контакт — ключи `Initial_Conditions.txt`; `*MAT_*`, `*CONTACT_*`,
+`*INITIAL_VELOCITY*` пропускаются.
+
+Пример: стальной ударник (PID 1) летит на нить (PID 3) над алюминиевой
+пластиной (PID 2), модель в миллиметрах. В каталоге запуска лежат три файла.
+
+`model.k`:
+
+```text
+*KEYWORD
+*PART
+Ударник
+1
+*PART
+Пластина
+2
+*PART
+Нить
+3
+*NODE
+1, 0.0, 0.0, 3.0
+2, 0.0, 0.0, 2.0
+11, -1.0, 0.0, 0.0
+12, 0.0, 0.0, 0.0
+13, 1.0, 0.0, 0.0
+21, -1.0, 0.0, 1.0
+22, 0.0, 0.0, 1.0
+23, 1.0, 0.0, 1.0
+*ELEMENT_SPH
+1, 1, -1.0, 2
+11, 2, -1.0, 13
+*ELEMENT_BEAM
+1, 3, 21, 22
+2, 3, 22, 23
+*BOUNDARY_SPC_NODE
+11, 0, 1, 1, 1, 0, 0, 0
+13, 0, 1, 1, 1, 0, 0, 0
+*END
+```
+
+`model.parts` — физика деталей (`itype` — номер материала проекта):
+
+```text
+SOLID_PART 1 12 7830 v=0 0 -200   # ударник: сталь 4340, 200 м/с против z
+SOLID_PART 2 4  2700              # пластина: алюминий
+# нить: E, nu, d, rho, eps_break, mu_ff, mu_fs
+MATERIAL 0 1.0e11 0.3 2.0e-4 1440 0.03 0.1 0.2
+FIBER_PART 3 0
+```
+
+`Initial_Conditions.txt` — обычные параметры решателя (за основу можно взять
+[`cases/guo2019/experiment/initial_conditions.txt`](cases/guo2019/experiment/initial_conditions.txt))
+и ключи импорта, контакта и времени:
+
+```text
+k_file = model.k
+k_mode = solid_fiber
+k_parts_file = model.parts
+k_length_scale = 1.0e-3
+contact_force_type = 3
+fiber_solid_contact_type = 3
+t_total = 2.0e-6
+save_t = 1.0e-6
+```
+
+```bash
+# Нити требуют 3D-сборки
+cmake -S . -B build3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DSPH_DIM=3
+cmake --build build3 --target SPH
+cd <каталог с тремя файлами> && /путь/к/build3/SPH
+```
+
+Перед расчётом печатается сводка импорта (число частиц и нитей, габарит в
+метрах), результаты — кадры `sph_output_*.txt`, `fiber_output_*.txt` и
+`log.txt` в том же каталоге. Что где задаётся (тела, нити, контакт) —
+[«Тела, нити и контакт»](docs/03-reference/file-formats/k-file.md#тела-нити-и-контакт),
+пошагово — [Из LS-PrePost в расчёт](docs/02-how-to/03-ls-prepost-to-calculation.md).
+
 ## Документация
 
 Сайт документации (MkDocs Material) — каталог [`docs/`](docs/):
