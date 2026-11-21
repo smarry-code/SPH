@@ -25,6 +25,79 @@
 
 ## Запуск
 
+Расчёты ведёт утилита `bc6_shot` ([`cases/bc6/experiment/bc6_shot.cpp`](../../cases/bc6/experiment/bc6_shot.cpp)),
+по образцу `guo2019_shot`. Она берёт экспериментальную копию постановки
+[`cases/bc6/experiment/`](../../cases/bc6/experiment/) и собирается с `SPH_DIM=2` независимо от общей
+настройки. Общий драйвер — [`cases/common/ceramic_shot.hpp`](../../cases/common/ceramic_shot.hpp).
+
+```bash
+cmake --build build --target bc6_shot
+
+# Полный кейс: Δx = 0,2 мм, до t_total = 4,3 мкс, импульсный контакт, чекпоинт каждые 500 шагов
+OMP_NUM_THREADS=4 ./build/bc6_shot --contact-type=3 --threads=4 --out=runs/bc6 --checkpoint-every=500
+
+# Оборвался — продолжить с теми же ключами
+OMP_NUM_THREADS=4 ./build/bc6_shot --contact-type=3 --threads=4 --out=runs/bc6 --checkpoint-every=500 --restart
+
+# Сходимость по Δx
+OMP_NUM_THREADS=4 ./build/bc6_shot --contact-type=3 --dx-list=4e-4,2e-4,1e-4 --threads=4 --out=runs/bc6-dx
+
+# Быстрая проверка (Δx = 0,8 мм, 1 мкс)
+./build/bc6_shot --delta-x=8e-4 --t-total=1e-6 --out=runs/bc6-smoke
+```
+
+Полный прогон на 4 потоках (Release) — около 6–8 минут.
+
+### Выходные файлы
+
+Каталог прогона — `<out>/bc6_dx<Δx, мкм>_c<тип>[_<tag>]/`, например `runs/bc6/bc6_dx200_c3/`:
+
+- `log.txt` — монитор конвейера, строка на шаг (время, осевая скорость, `itype`);
+- `sph_output_*.txt` — кадры раз в `save_t` (в ParaView — через `tools/paraview`);
+- `curve.txt` — кривая монитора без повторов после рестарта;
+- `compare.svg` — расчёт против приборного эталона;
+- `shot.txt` — итог в виде `ключ=значение`: параметры, число частиц, исход
+  (`completed`, `stopped`, `guard`, `error`), `t_reached`, `steps`, `wall_s` и метрики сверки
+  (лесенка расчёта и эталона — фронт по 10 % и 50 %, ступени, провалы, отношения ступеней, периоды; признаки допусков `front_ok`, `plateau1_ok`, `ratio12_ok`, `period1_ok` и др.; отношение амплитуд к эталону);
+- `initial_conditions.used.txt` — копия применённого файла параметров решателя;
+- `scene_id.txt`, `checkpoint.ckpt[.prev]` — при `--checkpoint-every`.
+
+Сводка серии — `<out>/runs.csv`, строка на прогон.
+
+Допуски — те же, что у теста (`bc6_case.hpp`), но утилита ими не проваливается: признак `*_ok`
+только сообщает, попало ли значение в допуск. Эталон на графике совмещён по t10 фронта
+(`ref_shift_t10`).
+
+### Ключи `bc6_shot`
+
+| Ключ | По умолчанию | Описание |
+|---|---|---|
+| `--out=<каталог>` | `runs/bc6` | Корень результатов |
+| `--contact-type=N` | из конфига (0) | `contact_force_type`: 0 — выкл., 1 — пинбол, 2 — Свигл, 3 — импульсный ([ADR-007](../04-explanation/decisions/adr-007-contact-force-types.md)) |
+| `--contact-list=N,M,…` | — | Серия по типам контакта |
+| `--delta-x=МЕТРЫ` | 2·10⁻⁴ (полный кейс) | Шаг решётки |
+| `--dx-list=М,М,…` | — | Серия по шагу решётки (сходимость) |
+| `--t-total=С`, `--save-t=С` | из конфига | Время расчёта, интервал кадров |
+| `--ic=<файл>` | `cases/bc6/experiment/initial_conditions.txt` | Другой файл параметров решателя |
+| `--threads=N` | `OMP_NUM_THREADS` | Число потоков OpenMP |
+| `--time-limit=СЕК` | 0 (без лимита) | Бюджет стенного времени на прогон |
+| `--max-steps=N` | — | Останов после N шагов (штатный, исход `stopped`) |
+| `--checkpoint-every=N` | выкл. | Чекпоинт `checkpoint.ckpt` каждые N шагов |
+| `--restart` [`--force`] | — | Продолжить прогон из чекпоинта с теми же ключами сцены ([рестарт](../02-how-to/05-restart-checkpoints.md)) |
+| `--overwrite` | — | Стереть прежний каталог прогона и считать заново (без ключа повторный запуск в занятый каталог — ошибка) |
+| `--tag=<строка>` | — | Суффикс имени каталога прогона |
+| `--quiet` | — | Не печатать вывод конвейера |
+| `-h`, `--help` | — | Справка |
+
+Коды выхода: 0 — все прогоны дошли до `t_total` (или до `--max-steps`), 1 — хотя бы один оборван
+(сторож времени или застоя, исключение), 2 — ошибка ключей.
+
+## Регрессия: сквозной тест `test_e2e_bc6`
+
+Тест [`tests/test_e2e_bc6.cpp`](../../tests/test_e2e_bc6.cpp) считает замороженную постановку
+[`cases/bc6/regression/`](../../cases/bc6/regression/) и проверяет её воротами; его меняют только по
+[правилам регрессии](../../cases/README.md#роли-постановок).
+
 Программа — сквозной тест [`tests/test_e2e_bc6.cpp`](../../tests/test_e2e_bc6.cpp), сборка
 с `SPH_DIM=2` независимо от общей настройки.
 
@@ -62,7 +135,7 @@ cmake --build build --target bc6_plot
 [`source/reference-curve.txt`](../../cases/bc6/source/reference-curve.txt) скрипт
 [`tools/bc6_make_reference.py`](../../tools/bc6_make_reference.py), запускаемый вручную.
 
-## Ключи командной строки
+### Ключи `test_e2e_bc6`
 
 | Ключ | По умолчанию | Описание |
 |---|---|---|
@@ -79,7 +152,8 @@ cmake --build build --target bc6_plot
 
 ## Параметры решателя
 
-Файл [`cases/bc6/regression/initial_conditions.txt`](../../cases/bc6/regression/initial_conditions.txt)
+Файл [`cases/bc6/experiment/initial_conditions.txt`](../../cases/bc6/experiment/initial_conditions.txt)
+(у теста — копия в `regression/`)
 ([справочник ключей](../03-reference/config/initial-conditions.md)).
 
 | Ключ | Значение | Смысл |

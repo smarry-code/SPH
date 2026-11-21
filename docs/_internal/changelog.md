@@ -10,6 +10,11 @@
 
 ### Добавлено
 
+- Экспериментальные постановки BC2 и BC6 (`cases/bc2/experiment/`, `cases/bc6/experiment/`) и утилиты
+  `bc2_shot`, `bc6_shot` по образцу `guo2019_shot`: постоянный каталог прогона, серии по Δx и типу
+  контакта, чекпоинты и рестарт, `shot.txt`, `curve.txt`, `compare.svg`, `runs.csv`. Общий драйвер —
+  `cases/common/ceramic_shot.hpp`; обвязка сверки `e2e_{curve,shape,staircase,frames,plot}.hpp`
+  перенесена из `tests/` в `cases/common/`.
 - Каркас каталога `docs/` по модели Diátaxis.
 - Главная страница сайта документации ([`index.md`](../index.md)).
 - Корневой `README.md` (корень репозитория) — точка входа для отображения на GitHub.

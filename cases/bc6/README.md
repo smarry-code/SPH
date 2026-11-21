@@ -17,7 +17,11 @@
      [`initial_conditions.txt`](regression/initial_conditions.txt), эталон [`reference.txt`](regression/reference.txt)
      (строит из `source/reference-curve.txt` скрипт [`tools/bc6_make_reference.py`](../../tools/bc6_make_reference.py),
      запускается вручную), снимки регрессии [`snapshots/`](regression/snapshots/).
-   - **Эксперимент** — копии нет; создаётся из `regression/`, когда понадобится новый расчёт.
+   - **Эксперимент** (живая копия, ответвлена от `regression/` в 265f959) — [`experiment/`](experiment/):
+     числа опыта [`bc6_case.hpp`](experiment/bc6_case.hpp), геометрия [`bc6_geometry.hpp`](experiment/bc6_geometry.hpp), [`initial_conditions.txt`](experiment/initial_conditions.txt),
+     [`reference.txt`](experiment/reference.txt) и утилита [`bc6_shot.cpp`](experiment/bc6_shot.cpp)
+     (цель `bc6_shot`, драйвер [`cases/common/ceramic_shot.hpp`](../common/ceramic_shot.hpp)); запуск и ключи —
+     [docs/05-experiments/ceramics-bc6.md](../../docs/05-experiments/ceramics-bc6.md).
    - Тесты — [`tests/test_e2e_bc6.cpp`](../../tests/test_e2e_bc6.cpp), `test_regression`; цели `ctest`:
      `e2e_bc6_smoke_contact0…3`, `e2e_bc6_full_contact0…3`, `regression_bc6_contact0…3`.
 6. **Эксперименты.**

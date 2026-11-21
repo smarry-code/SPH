@@ -75,7 +75,8 @@ OMP_NUM_THREADS=4 ./build/guo2019_shot --config=1T --level=base --paper-shots \
 
 Сводки серии `shots.csv` и `vbl.txt` (баллистический предел $V_{BL}$) лежат в `<out>`.
 
-Все опыты (керамика BC2/BC6, Guo 2019) с запуском и ключами — раздел
+Керамику BC2 и BC6 так же считают утилиты `bc2_shot` и `bc6_shot`
+(`--contact-type=3 --out=runs/bc2 --threads=4`). Все опыты с запуском и ключами — раздел
 [«Эксперименты»](docs/05-experiments/index.md). Справочник по утилите — [`docs/03-reference/guo2019-shot.md`](docs/03-reference/guo2019-shot.md):
 там ключи мишени (`A`, `1T_A`, `<k>T`), трения, контакта, стёжки и мозаики. Если расчёт
 оборвался, его можно продолжить с того же места, добавив к тем же ключам `--restart`, см.
@@ -106,7 +107,7 @@ mkdocs serve        # http://127.0.0.1:8000
 SPH/
 ├── src/, include/   # Код C++20 (include/: rhs, interactions, fiber, ode, strength, k_input)
 ├── tests/           # Модульные, интеграционные и e2e-тесты (постановки опытов — cases/*/regression/)
-├── tools/           # Утилиты: plain_weave, paraview, fabric_checks, скрипты (guo2019_shot — cases/guo2019/experiment/)
+├── tools/           # Утилиты: plain_weave, paraview, fabric_checks, скрипты (guo2019_shot, bc2_shot, bc6_shot — cases/<кейс>/experiment/)
 ├── cmake/           # Скрипты CMake (графики, регрессия по эталону)
 ├── docs/            # Документация (Markdown, MkDocs Material)
 ├── mkdocs_hooks/    # Хуки сайта документации

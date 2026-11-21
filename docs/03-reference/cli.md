@@ -54,10 +54,11 @@
 | Цель | Исходник | Назначение и ключи |
 |---|---|---|
 | `guo2019_shot` | [`cases/guo2019/experiment/guo2019_shot.cpp`](../../cases/guo2019/experiment/guo2019_shot.cpp) | Серийные выстрелы Guo 2019. Обязательны `--config`, `--level`, `--out` и ровно одно из `--v0=`, `--paper-shots`, `--v0-list=`. Ключи по группам (сцена, шар, габариты ткани, материал нити, контакт и проекция, стёжка, мозаика, вывод, чекпоинт), выходные файлы и коды выхода — в [справочнике `guo2019_shot`](guo2019-shot.md). Неизвестный аргумент или ошибка значения — код 2 |
+| `bc2_shot`, `bc6_shot` | [`cases/bc2/experiment/bc2_shot.cpp`](../../cases/bc2/experiment/bc2_shot.cpp), [`cases/bc6/experiment/bc6_shot.cpp`](../../cases/bc6/experiment/bc6_shot.cpp) | Расчёты керамики BC2 и BC6 (2D). Ключи `--out`, `--contact-type`/`--contact-list`, `--delta-x`/`--dx-list`, `--t-total`, `--save-t`, `--ic`, `--threads`, `--time-limit`, `--max-steps`, `--checkpoint-every`, `--restart`, `--overwrite`, `--tag`, `--quiet`; выходные файлы — на страницах [BC2](../05-experiments/ceramics-bc2.md) и [BC6](../05-experiments/ceramics-bc6.md). Ошибка ключа — код 2 |
 | `fabric_checks` | [`tools/fabric_checks/fabric_checks.cpp`](../../tools/fabric_checks/fabric_checks.cpp) | Проверки лоскута ткани. Первый аргумент — подкоманда `strip`, `capstan` или `drum`, далее `--ключ=значение` (`--out`, `--tag`, `--mu`, `--threads`, `--time-limit` и ключи подкоманды) |
 | `plain_weave_gen` | [`tools/plain_weave/plain_weave_gen.cpp`](../../tools/plain_weave/plain_weave_gen.cpp) | Генератор полотняного переплетения `.fib`; обязателен `--out=<файл.fib>`. [Руководство](../02-how-to/02-plain-weave-generator.md) |
 | `test_e2e_*`, `test_regression*`, `test_energy_log`, `fiber_t0_dump` | `tests/` | Свои ключи (`--full`, `--contact-type=N`, `--time-limit=<с>`, `--keep-workdir`, `--verbose`, `--case=`, `--emit-*` и др.; e2e Джонсона–Кука: `--art-eps=` (искусственное напряжение, 0 — выкл.) и `--pmin=` у `test_e2e_jc_taylor` и `test_e2e_jc_plate`, у Тейлора ещё `--save-t=`, `--no-damage`, `--cfl=`), см. [«Запуск тестов»](../02-how-to/01-run-tests.md) |
 
-`guo2019_shot` и `fabric_checks` на время расчёта переходят в рабочий подкаталог
+`guo2019_shot`, `bc2_shot`, `bc6_shot` и `fabric_checks` на время расчёта переходят в рабочий подкаталог
 (`chdir`), поэтому файлы конвейера (`log.txt`, кадры) пишутся туда, а не в каталог
 запуска.

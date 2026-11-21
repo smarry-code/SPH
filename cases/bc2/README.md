@@ -18,7 +18,11 @@
      [`initial_conditions.txt`](regression/initial_conditions.txt) (значения из `source/initial-conditions.txt`),
      эталон [`reference.txt`](regression/reference.txt), снимки регрессии [`snapshots/`](regression/snapshots/)
      (`bc2_*`, `bc2mini3d_*`).
-   - **Эксперимент** — копии нет; создаётся из `regression/`, когда понадобится новый расчёт.
+   - **Эксперимент** (живая копия, ответвлена от `regression/` в 265f959) — [`experiment/`](experiment/):
+     геометрия [`bc2_geometry.hpp`](experiment/bc2_geometry.hpp), [`initial_conditions.txt`](experiment/initial_conditions.txt),
+     [`reference.txt`](experiment/reference.txt) и утилита [`bc2_shot.cpp`](experiment/bc2_shot.cpp)
+     (цель `bc2_shot`, драйвер [`cases/common/ceramic_shot.hpp`](../common/ceramic_shot.hpp)); запуск и ключи —
+     [docs/05-experiments/ceramics-bc2.md](../../docs/05-experiments/ceramics-bc2.md).
    - Тесты — [`tests/test_e2e_bc2.cpp`](../../tests/test_e2e_bc2.cpp), `test_e2e_3d`, `test_regression`; цели `ctest`:
      `e2e_bc2_smoke_contact0…3`, `e2e_bc2_full_contact0…3`, `e2e_3d_smoke_contact0…3`,
      `regression_bc2_contact0…3`, `regression_bc2mini3d_contact0…3`; конфиг BC2 берут также
