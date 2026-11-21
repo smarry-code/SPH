@@ -73,7 +73,8 @@ OMP_NUM_THREADS=4 ./build/guo2019_shot --config=1T --level=base --paper-shots \
 
 Сводки серии `shots.csv` и `vbl.txt` (баллистический предел $V_{BL}$) лежат в `<out>`.
 
-Справочник по утилите — [`docs/03-reference/guo2019-shot.md`](docs/03-reference/guo2019-shot.md):
+Все опыты (керамика BC2/BC6, Guo 2019) с запуском и ключами — раздел
+[«Эксперименты»](docs/05-experiments/index.md). Справочник по утилите — [`docs/03-reference/guo2019-shot.md`](docs/03-reference/guo2019-shot.md):
 там ключи мишени (`A`, `1T_A`, `<k>T`), трения, контакта, стёжки и мозаики. Если расчёт
 оборвался, его можно продолжить с того же места, добавив к тем же ключам `--restart`, см.
 [Рестарт расчёта из чекпоинта](docs/02-how-to/05-restart-checkpoints.md).

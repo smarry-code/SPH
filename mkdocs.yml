@@ -119,6 +119,13 @@ nav:
       - Материалы:
           - Реестр материалов: 03-reference/materials/registry.md
       - API (Doxygen): _build/doxygen/html/index.html
+  - Эксперименты:
+      - 05-experiments/index.md
+      - Керамика:
+          - "BC2: удар по карбиду бора": 05-experiments/ceramics-bc2.md
+          - "BC6: откольный опыт": 05-experiments/ceramics-bc6.md
+          - Кейсы без постановки: 05-experiments/ceramics-archive.md
+      - Guo 2019: 05-experiments/guo2019.md
   - Теория и Архитектура:
       - Математические модели:
           - 04-explanation/models/index.md
