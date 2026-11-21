@@ -17,6 +17,7 @@
   перенесена из `tests/` в `cases/common/`.
 - Тесты `bc2_shot_cli_test`, `bc6_shot_cli_test` (`tests/ceramic_shot_cli_test.sh`): коды выхода,
   выходные файлы, серия и рестарт утилит `bc2_shot`, `bc6_shot`.
+- `tools/ceramic_contact_plot.py`: сводный график BC2/BC6 по типам контакта из каталогов `bc*_shot` в PDF/SVG/PNG.
 - Каркас каталога `docs/` по модели Diátaxis.
 - Главная страница сайта документации ([`index.md`](../index.md)).
 - Корневой `README.md` (корень репозитория) — точка входа для отображения на GitHub.

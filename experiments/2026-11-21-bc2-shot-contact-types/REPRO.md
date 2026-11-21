@@ -35,6 +35,13 @@ for c in 0 1 2 3; do cp $HOME/ceramics/runs/bc2_dx200_c$c/curve.txt $P/bc2_curve
 (`~/ceramics/run_bc2_c012.sh`: те же команды по очереди, при наличии чекпоинта — `--restart`).
 Рестартов не было.
 
+PDF-версия графика (на сервере — окружение с matplotlib 3.11.2, Python 3.14):
+
+```bash
+python3 tools/ceramic_contact_plot.py --case=bc2 --runs=$HOME/ceramics/runs --dx-um=200 \
+    --reference=cases/bc2/experiment/reference.txt --out=bc2_contact_types.pdf
+```
+
 ## 5. Стоимость
 
 Типы 0–2: 85,0 + 85,1 + 110,5 с на 4 потоках (параллельно с BC6); кадры на сервере ~1 ГБ на прогон, в журнал не взяты.

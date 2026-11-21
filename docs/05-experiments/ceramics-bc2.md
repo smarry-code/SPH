@@ -64,6 +64,13 @@ OMP_NUM_THREADS=4 ./build/bc2_shot --contact-type=3 --dx-list=4e-4,2e-4,1e-4 --t
 
 Сводка серии — `<out>/runs.csv`, строка на прогон.
 
+Сводный график нескольких типов контакта (PDF, SVG или PNG — по расширению; нужен matplotlib):
+
+```bash
+python3 tools/ceramic_contact_plot.py --case=bc2 --runs=runs/bc2 --dx-um=200 \
+    --reference=cases/bc2/experiment/reference.txt --out=bc2_contact_types.pdf
+```
+
 Время эталона не привязано к моменту удара, поэтому сверка идёт по форме: эталон совмещается с
 расчётом по t50 переднего фронта, сдвиг — справочная величина (`shift_t50`).
 

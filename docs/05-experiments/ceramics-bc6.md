@@ -66,8 +66,17 @@ OMP_NUM_THREADS=4 ./build/bc6_shot --contact-type=3 --dx-list=4e-4,2e-4,1e-4 --t
 
 Сводка серии — `<out>/runs.csv`, строка на прогон.
 
+Сводный график нескольких типов контакта (PDF, SVG или PNG — по расширению; нужен matplotlib):
+
+```bash
+python3 tools/ceramic_contact_plot.py --case=bc6 --runs=runs/bc6 --dx-um=200 \
+    --reference=cases/bc6/experiment/reference.txt --out=bc6_contact_types.pdf
+```
+
 Допуски — те же, что у теста (`bc6_case.hpp`), но утилита ими не проваливается: признак `*_ok`
-только сообщает, попало ли значение в допуск. Эталон на графике совмещён по t10 фронта
+только сообщает, попало ли значение в допуск. Если найден один провал (`calc_dips=1`), извлекатель
+берёт «плато 2» как медиану всего хвоста после провала: `calc_plateau2`, `calc_ratio12`, `ratio12_ok`
+тогда не описывают вторую ступень — её уровень мерить по окну времени из `curve.txt`. Эталон на графике совмещён по t10 фронта
 (`ref_shift_t10`).
 
 ### Ключи `bc6_shot`

@@ -35,6 +35,13 @@ for c in 0 1 2 3; do cp $HOME/ceramics/runs/bc6_dx200_c$c/curve.txt $P/bc6_curve
 (`~/ceramics/run_bc6_c012.sh`: те же команды по очереди, при наличии чекпоинта — `--restart`).
 Рестартов не было.
 
+PDF-версия графика (на сервере — окружение с matplotlib 3.11.2, Python 3.14):
+
+```bash
+python3 tools/ceramic_contact_plot.py --case=bc6 --runs=$HOME/ceramics/runs --dx-um=200 \
+    --reference=cases/bc6/experiment/reference.txt --out=bc6_contact_types.pdf
+```
+
 ## 5. Стоимость
 
 Типы 0–2: 90,1 + 91,3 + 94,1 с на 4 потоках (параллельно с BC2); кадры на сервере ~0,8 ГБ на прогон, в журнал не взяты.
