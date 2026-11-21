@@ -1,0 +1,1 @@
+case=bc2 delta_x=0.00020000000000000001 ntotal=33944 moni=10074 contact=3

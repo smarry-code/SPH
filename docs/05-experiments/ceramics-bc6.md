@@ -176,3 +176,4 @@ cmake --build build --target bc6_plot
 - [`2026-09-23-bc6-resolution`](../../experiments/2026-09-23-bc6-resolution/README.md)
 - [`2026-09-23-bc6-xsph`](../../experiments/2026-09-23-bc6-xsph/README.md)
 - [`2026-09-24-bc6-contact-dx010`](../../experiments/2026-09-24-bc6-contact-dx010/README.md)
+- [`2026-11-21-bc6-shot-contact3`](../../experiments/2026-11-21-bc6-shot-contact3/README.md)

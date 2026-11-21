@@ -33,6 +33,7 @@
    - [`2026-09-22-bc2-contact-types`](../../experiments/2026-09-22-bc2-contact-types/README.md)
    - [`2026-09-22-bc2-kp-sweep`](../../experiments/2026-09-22-bc2-kp-sweep/README.md)
    - [`2026-09-22-bc2-resolution-scheme`](../../experiments/2026-09-22-bc2-resolution-scheme/README.md)
+   - [`2026-11-21-bc2-shot-contact3`](../../experiments/2026-11-21-bc2-shot-contact3/README.md)
 7. **Постановка.** [`04-e2e-test-brief.md`](../../notes/contact/04-e2e-test-brief.md),
    [`05-e2e-math.md`](../../notes/contact/05-e2e-math.md), [`06-e2e-case.md`](../../notes/contact/06-e2e-case.md),
    [`08-phase-shift.md`](../../notes/contact/08-phase-shift.md).

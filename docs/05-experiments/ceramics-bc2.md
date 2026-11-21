@@ -198,3 +198,4 @@ OMP_NUM_THREADS=4 ./build/test_e2e_3d --full --contact-type=0 --time-limit=0
 - [`2026-09-22-bc2-contact-types`](../../experiments/2026-09-22-bc2-contact-types/README.md)
 - [`2026-09-22-bc2-kp-sweep`](../../experiments/2026-09-22-bc2-kp-sweep/README.md)
 - [`2026-09-22-bc2-resolution-scheme`](../../experiments/2026-09-22-bc2-resolution-scheme/README.md)
+- [`2026-11-21-bc2-shot-contact3`](../../experiments/2026-11-21-bc2-shot-contact3/README.md)
