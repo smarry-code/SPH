@@ -1,0 +1,43 @@
+# Вычисляемые артефакты, снятые с учёта git по правилу объёма (README.md §3):
+# файлы остаются на диске, в репозиторий не попадают; пересчёт — scripts/rebuild_artifacts.sh
+# соответствующего каталога.
+2026-10-01-clamp-fiber-viz/*.gif
+2026-10-01-clamp-fiber-viz/*.png
+2026-10-01-clamp-fiber-viz/*.svg
+2026-10-01-clamp-solid-viz/*.gif
+2026-10-01-clamp-solid-viz/*.png
+2026-10-01-clamp-solid-viz/*.svg
+2026-10-01-guo2019-1t-scaled/anim_1t.gif
+2026-10-02-guo2019-1t-base/anim_1t_base.gif
+
+# GIF ткани с двух сторон (anim2_*), 3-15 МБ: на диске, в git не кладутся (лимит 2,5 МБ)
+2026-10-17-guo2019-1t-pinball-vbl/anim_damage/*/anim2_*.gif
+2026-10-18-guo2019-2t-law4/anim_damage/*/anim2_*.gif
+
+# 2026-11-08-guo2019-1t-law3push-mu027: GIF и PNG выстрелов 69 и 70 (37 МБ), пересчёт -- scripts/rebuild_artifacts.sh
+2026-11-08-guo2019-1t-law3push-mu027/anim/
+
+# 2026-11-14: GIF ткани, у которых в git есть PNG-снимки тех же кадров, сняты с учёта (правило объёма, §3).
+# vz_anim_*.gif (v_z(t)) остаются в git. Пересчёт — scripts/animate*.py соответствующего каталога.
+2026-09-26-fiber-net-demo/data/*/anim.gif
+2026-09-27-fiber-layers-demo/data/**/anim.gif
+2026-10-17-guo2019-1t-pinball-vbl/anim_*/**/anim_*.gif
+2026-10-18-guo2019-2t-law4/anim*/**/anim_*.gif
+
+# 2026-11-14: снимки ткани anim2_* — в git по одному (последнему) кадру на расчёт; остальные на диске.
+2026-10-17-guo2019-1t-pinball-vbl/anim_damage/*/anim2_*_frame*.png
+2026-10-18-guo2019-2t-law4/anim_damage/*/anim2_*_frame*.png
+
+# 2026-11-15-mosaic-kT-ball1g-v550: каталоги выстрелов (кадры по 24 МБ, чекпоинты по 40 МБ), бинарник, служебные
+# файлы очереди; отчёт одним файлом (4,4 МБ) собирается scripts/build_report_file.py. Итоги выстрелов -- в data/.
+2026-11-15-mosaic-kT-ball1g-v550/runs/
+2026-11-15-mosaic-kT-ball1g-v550/bin/
+2026-11-15-mosaic-kT-ball1g-v550/queue.out
+2026-11-15-mosaic-kT-ball1g-v550/queue.err
+2026-11-15-mosaic-kT-ball1g-v550/queue.pid
+2026-11-15-mosaic-kT-ball1g-v550/report_session.html
+
+# 2026-11-14-guo2019-2t-mosaic: каталоги выстрелов (кадры, чекпоинты) и GIF по 2,7-2,8 МБ (сверх лимита 2,5 МБ;
+# пересчёт -- scripts/viz/animate_mosaic.py, снимки кадров -- в anim/*.png). Итоги выстрелов -- в data/.
+2026-11-14-guo2019-2t-mosaic/runs/2T_base_*/
+2026-11-14-guo2019-2t-mosaic/anim/*.gif

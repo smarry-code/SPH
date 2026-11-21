@@ -7,6 +7,7 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,6 +28,8 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
     {
         throw std::runtime_error("Не удалось открыть файл для вывода данных");
     }
+    // Отладка расхождения траекторий: SPH_FRAME_PRECISION=<n> -- число значащих цифр кадра (см. fiber_output.cpp).
+    if (const char* p = std::getenv("SPH_FRAME_PRECISION")) file.precision(std::atoi(p));
 
     // Запись заголовка
     /*file << "SPH Simulation Output\n";
@@ -74,7 +77,7 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
         file << "vx" << " " << "vy" << " " << "vz" << " ";
     }
     file << "rho" << " " << "p" << " " << "u" << " " << "c" << " " << "sigma_i" << " " << "e_pl" << " " << "D" << " " << "hsml" << " "
-         << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << "\n";
+         << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << " " << "T" << " " << "edot" << "\n";
     for (size_t i = 0; i < ntotal; ++i)
     {
         // Запись основных данных
@@ -103,7 +106,7 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
     file1.close();
     //--------------------------
     // Вывод информации о сохранении данных
-    std::wcout << "Данные сохранены в файл: " << filename.str().c_str() << "\n";
-    std::wcout << "Шаг по времени: " << dt << " Время расчета: " << time << "\n";
-    std::wcout << "Текущий цикл: " << itimestep << "\n";
+    std::cout << "Данные сохранены в файл: " << filename.str().c_str() << "\n";
+    std::cout << "Шаг по времени: " << dt << " Время расчета: " << time << "\n";
+    std::cout << "Текущий цикл: " << itimestep << "\n";
 }

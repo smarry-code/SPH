@@ -1,0 +1,14 @@
+*KEYWORD
+*INCLUDE_PATH
+sub
+*PART
+P
+1
+*INCLUDE
+inc_nodes.k
+*INCLUDE
+inc_in_path.k
+*ELEMENT_SPH
+1,1,1.0
+2,1,1.0
+*END

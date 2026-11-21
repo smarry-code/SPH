@@ -2,7 +2,8 @@ site_name: SPH — Документация
 
 site_description: Симулятор гидродинамики сглаженных частиц (SPH) на C++20/OpenMP
 site_url: https://placeholder.invalid/
-repo_url: https://placeholder.invalid/
+repo_url: https://github.com/smarry-code/SPH
+repo_name: smarry-code/SPH
 
 docs_dir: docs
 
@@ -75,6 +76,11 @@ markdown_extensions:
   - tables
   - toc:
       permalink: "#"
+      # Юникодные якоря: стандартный slugify выбрасывает кириллицу, и ссылки вида
+      # [..](#что-сохраняется) не работают. pymdownx.slugs сохраняет буквы.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
 
 # KaTeX: локальные скрипты и стили кладутся в docs/assets/ при необходимости.
 # Здесь подключаются CDN-версии (требуется интернет при просмотре).
@@ -92,27 +98,51 @@ nav:
   - Обучение:
       - Быстрый старт: 01-tutorials/01-quick-start.md
   - Практика:
-      - Запуск тестов и бенчмарков: 02-how-to/01-run-tests.md
+      - Запуск тестов: 02-how-to/01-run-tests.md
+      - Генератор ткани, стёжка и мозаика: 02-how-to/02-plain-weave-generator.md
+      - Из LS-PrePost в расчёт: 02-how-to/03-ls-prepost-to-calculation.md
+      - Визуализация в ParaView: 02-how-to/04-paraview.md
+      - Рестарт из чекпоинта: 02-how-to/05-restart-checkpoints.md
+      - Модель Джонсона-Кука: 02-how-to/06-johnson-cook-material.md
   - Справка:
       - Параметры запуска: 03-reference/cli.md
+      - Утилита guo2019_shot: 03-reference/guo2019-shot.md
       - Конфигурация:
           - Initial_Conditions.txt: 03-reference/config/initial-conditions.md
           - SimulationConfig: 03-reference/config/simulation-config.md
           - Опции CMake: 03-reference/config/cmake-options.md
       - Форматы файлов:
           - Выходные файлы (.dat/.txt): 03-reference/file-formats/dat-output.md
+          - Файл нитей (.fib) и вывод нитей: 03-reference/file-formats/fib-file.md
+          - Файл раскройки (.cut.json): 03-reference/file-formats/cut-json.md
           - Файлы геометрии (*.k): 03-reference/file-formats/k-file.md
+          - Таблица деталей для .k: 03-reference/file-formats/k-parts.md
       - Материалы:
           - Реестр материалов: 03-reference/materials/registry.md
       - API (Doxygen): _build/doxygen/html/index.html
+  - Эксперименты:
+      - 05-experiments/index.md
+      - Керамика:
+          - "BC2: удар по карбиду бора": 05-experiments/ceramics-bc2.md
+          - "BC6: откольный опыт": 05-experiments/ceramics-bc6.md
+          - Кейсы без постановки: 05-experiments/ceramics-archive.md
+      - Guo 2019: 05-experiments/guo2019.md
   - Теория и Архитектура:
+      - Математические модели:
+          - 04-explanation/models/index.md
+          - "1. Ядро SPH-расчёта": 04-explanation/models/01-sph-core.md
+          - "2. Определяющие соотношения": 04-explanation/models/02-constitutive.md
+          - "3. Контакт SPH-тел и закрепления": 04-explanation/models/03-solid-contact.md
+          - "4. Механика нитей": 04-explanation/models/04-fiber-mechanics.md
+          - "5. Контакт нитей": 04-explanation/models/05-fiber-contact.md
+          - "6. Интегрирование по времени": 04-explanation/models/06-time-integration.md
+          - "7. Ткани: одеяло и мозаика": 04-explanation/models/07-fabrics.md
       - Архитектура:
           - Обзор конвейера: 04-explanation/architecture/pipeline-overview.md
           - Раскладка данных (SoA): 04-explanation/architecture/data-layout-soa.md
           - Поиск соседей: 04-explanation/architecture/neighbor-search.md
-          - Связный список (link_list): 04-explanation/architecture/linked-list.md
-          - Сетка FlatGrid: 04-explanation/architecture/flat-grid.md
           - Параллелизм: 04-explanation/architecture/parallelism.md
+          - "Контакт частица-частица": 04-explanation/architecture/contact-particle-particle.md
       - Решения (ADR):
           - Шаблон ADR: 04-explanation/decisions/adr-template.md
           - "ADR-001: Выбор метода SPH": 04-explanation/decisions/adr-001-sph-method-selection.md
@@ -120,7 +150,11 @@ nav:
           - "ADR-003: SimulationConfig": 04-explanation/decisions/adr-003-simulation-config-extraction.md
           - "ADR-004: Подобъект Materials": 04-explanation/decisions/adr-004-materials-subobject.md
           - "ADR-005: Размыкание EOS": 04-explanation/decisions/adr-005-eos-dependency-break.md
-          - "ADR-006: Graph coloring": 04-explanation/decisions/adr-006-pair-graph-coloring.md
+          - "ADR-007: Контактные силы (типы 1-3)": 04-explanation/decisions/adr-007-contact-force-types.md
+          - "ADR-008: Архитектура RHS и нити": 04-explanation/decisions/adr-008-rhs-architecture-fiber.md
+          - "ADR-009: Модель Джонсона-Кука": 04-explanation/decisions/adr-009-johnson-cook.md
+          - "ADR-010: Исправление JH-2": 04-explanation/decisions/adr-010-jh2-fix.md
+          - "ADR-011: Постановки для регрессии и экспериментов": 04-explanation/decisions/adr-011-case-setups.md
   - Внутреннее:
       - Глоссарий: _internal/glossary.md
       - Журнал изменений: _internal/changelog.md

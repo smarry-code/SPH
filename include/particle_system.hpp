@@ -9,7 +9,7 @@
 // __restrict__.
 //
 // Стратегия: СОСУЩЕСТВОВАНИЕ AoS+SoA.
-// ParticleSystem живёт всю симуляцию рядом с WorkBuffers/PairGraph (в
+// ParticleSystem живёт всю симуляцию рядом с WorkBuffers (в
 // time_integration). Перед расчётом потребителей par вызывается gather()
 // (AoS->SoA), горячие циклы работают на плоских массивах с __restrict__,
 // после — scatter() (SoA->AoS) для изменённых полей. Так миграция выполняется
@@ -40,6 +40,14 @@ struct ParticleSystem
 
     // --- термодинамика / скаляры ---
     std::vector<double> mass, rho, rho_0, p, u, c, s, e, hsml, dp, e_pl, D;
+    // Модель Джонсона-Кука: температура, К (T_r при создании JC-частицы,
+    // 0 для прочих материалов) и эквивалентная скорость деформации, 1/с.
+    std::vector<double> T, edot;
+    // Начальная координата x[0] (в 2D осесимметрии -- начальный радиус r0).
+    // Задаётся один раз до цикла по времени (init_reference_radius), хранится
+    // в чекпоинте. Нужна для учёта энергии: в осесимметрии масса частицы
+    // «плоская» (m = rho0*dx^2), физическая масса кольца -- 2*pi*r0*m (energy_mass).
+    std::vector<double> r0;
 
     // --- тензор напряжений (девиатор) ---
     std::vector<double> sxx, syy, szz, sxy, syz, sxz;
@@ -53,6 +61,14 @@ struct ParticleSystem
     // --- классификация ---
     std::vector<int> itype;
     std::vector<char>   axis;     // bool-семантика, плотное хранение
+
+    // --- номер тела (object_id, notes/fiber-model/fiber-plan.md §3.1) ---
+    // Для k-файла — PID (parse_k_file); для встроенных генераторов (shock_tube
+    // и др.) — совпадает с itype, чтобы критерий Solid-Solid-Contact на
+    // BC2/BC6 ("разные материалы") не изменился (см. notes/fiber-model/fiber-problem-statement.md, раздел
+    // «Solid -- Solid»). Сама фильтрация контакта по body[] реализуется в
+    // Ф4 — здесь только поле и его заполнение.
+    std::vector<int> body;
 
     size_t n = 0;                 // актуальное число частиц
 
@@ -71,6 +87,7 @@ struct ParticleSystem
         mass.resize(n);   rho.resize(n);   rho_0.resize(n);
         p.resize(n);      u.resize(n);     c.resize(n);     s.resize(n);     e.resize(n);
         hsml.resize(n);   dp.resize(n);    e_pl.resize(n);  D.resize(n);
+        T.resize(n);      edot.resize(n);  r0.resize(n);
         sxx.resize(n);    syy.resize(n);   szz.resize(n);
         sxy.resize(n);    syz.resize(n);   sxz.resize(n);
         exx.resize(n);    eyy.resize(n);   ezz.resize(n);
@@ -78,6 +95,7 @@ struct ParticleSystem
         rxy.resize(n);    rxz.resize(n);   ryz.resize(n);
         itype.resize(n);
         axis.resize(n);
+        body.resize(n);
     }
 
     size_t size() const { return n; }
@@ -102,12 +120,14 @@ struct ParticleSystem
         itype[i] = 0; mass[i] = 0.0; rho[i] = 0.0; rho_0[i] = 0.0;
         p[i] = 0.0; u[i] = 0.0; c[i] = 0.0; s[i] = 0.0; e[i] = 0.0;
         hsml[i] = 0.0; dp[i] = 0.0; e_pl[i] = 0.0; D[i] = 0.0;
+        T[i] = 0.0; edot[i] = 0.0; r0[i] = 0.0;
         sxx[i] = 0.0; syy[i] = 0.0; szz[i] = 0.0;
         sxy[i] = 0.0; syz[i] = 0.0; sxz[i] = 0.0;
         exx[i] = 0.0; eyy[i] = 0.0; ezz[i] = 0.0;
         exy[i] = 0.0; exz[i] = 0.0; eyz[i] = 0.0;
         rxy[i] = 0.0; rxz[i] = 0.0; ryz[i] = 0.0;
         axis[i] = 0;
+        body[i] = 0;
     }
 
     // Инициализация частицы i (эквивалент Particle::inzializ). В исходном AoS
@@ -129,7 +149,8 @@ struct ParticleSystem
         filename << " " << rho[i] << " " << p[i] << " " << u[i] << " " << c[i] << " " << sigma_i
                  << " " << e_pl[i] << " " << D[i] << " " << hsml[i]
                  << " " << sxx[i] << " " << syy[i] << " " << szz[i]
-                 << " " << sxy[i] << " " << syz[i] << " " << sxz[i] << "\n";
+                 << " " << sxy[i] << " " << syz[i] << " " << sxz[i]
+                 << " " << T[i] << " " << edot[i] << "\n";
     }
 
     // Осесимметричное зеркалирование: частица dst = симметричный образ src
@@ -152,5 +173,27 @@ struct ParticleSystem
         eyz[dst] = eyz[src]; exz[dst] = exz[src];
         rxz[dst] = rxz[src]; ryz[dst] = ryz[src];
         D[dst] = D[src]; dp[dst] = dp[src]; hsml[dst] = hsml[src]; e_pl[dst] = e_pl[src];
+        T[dst] = T[src]; edot[dst] = edot[src]; r0[dst] = -r0[src];
+        body[dst] = body[src];
+    }
+
+    // r0 = текущая x[0] для частиц [0, count). Вызывается ОДИН раз до цикла по
+    // времени и НЕ вызывается при рестарте (r0 восстанавливается из чекпоинта).
+    void init_reference_radius(size_t count)
+    {
+        for (size_t i = 0; i < count; ++i) r0[i] = x[0][i];
     }
 };
+
+// Масса частицы i для учёта энергии (лог энергии и его каналы).
+// 2D осесимметрия: масса кольца 2*pi*r0*m постоянна во времени, поэтому
+// sum energy_mass*(|v|^2/2 + u) -- физическая энергия тела, которая должна
+// сохраняться; сумма с «плоской» массой m сохраняющейся величиной не является
+// (notes/johnson-cook/03-pmin-energy.md, §2.1). Остальные постановки: m.
+inline double energy_mass(const ParticleSystem& sys, size_t i)
+{
+    if constexpr (axis_sim && dim == 2)
+        return 2.0 * 3.14159265358979323846 * sys.r0[i] * sys.mass[i];
+    else
+        return sys.mass[i];
+}

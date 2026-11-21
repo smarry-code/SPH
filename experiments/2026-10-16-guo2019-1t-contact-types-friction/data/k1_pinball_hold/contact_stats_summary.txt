@@ -1,0 +1,34 @@
+steps = 71983, hold_n = 1, fs_type = 1, ff_type = 1
+
+[fiber-fiber]
+contact_steps = 1674711729   (контакт-шагов: геометрический контакт)
+G1 zero_fn_frac = 0.305519   (доля контакт-шагов с fn = 0)
+G1 zero_fn_frac_hertz_weighted = 0.224146   (доля силы Герца на контактах с fn = 0)
+G1 held_slots = 510548800   (заполнено удержанием N)
+G2 active_slots = 1673603959, stick_frac = 0.000010 (|u_t| < 1e-9), near_stick_frac = 0.000111 (|u_t| < 1e-3), slip_frac = 0.999990
+G2 lost_slots = 510523854   (активен на прошлом шаге, сейчас fn = 0), lost_per_active = 0.305045
+G2 sumN / sumN_hertz = 0.000804
+G3 corr(N, N_hertz) = 0.0118, corr(N, pdot) = 0.4922   (по контакт-шагам с fn > 0, n = 1163055159)
+G3 pinball_visc_frac = 0.987879, swegle_capped_frac = 0.000000   (среди контакт-шагов с fn > 0)
+G4 flips = 60528893, flips_per_active = 0.036167, flips_after_zero_frac = 0.930399
+G4 run_hist (1, 2, 3-5, 6-10, 11-30, >30) = 59019120 199909 166508 150742 357127 635487   (всего 60528893)
+G4 N_cv = 0.618770   (коэф. вариации суммарного N по шагам с силой)
+G4 keys = 117936, contact_steps_per_key = 14200.174   (экспозиция)
+G5 max_pen_d = 1.000000
+
+[fiber-solid]
+contact_steps = 9564448   (контакт-шагов: геометрический контакт)
+G1 zero_fn_frac = 0.499273   (доля контакт-шагов с fn = 0)
+G1 zero_fn_frac_hertz_weighted = 0.497065   (доля силы Герца на контактах с fn = 0)
+G1 held_slots = 4761782   (заполнено удержанием N)
+G2 active_slots = 9550964, stick_frac = 0.000015 (|u_t| < 1e-9), near_stick_frac = 0.000074 (|u_t| < 1e-3), slip_frac = 0.999985
+G2 lost_slots = 4761591   (активен на прошлом шаге, сейчас fn = 0), lost_per_active = 0.498546
+G2 sumN / sumN_hertz = 0.010052
+G3 corr(N, N_hertz) = 0.3099, corr(N, pdot) = 0.3294   (по контакт-шагам с fn > 0, n = 4789182)
+G3 pinball_visc_frac = 0.790770, swegle_capped_frac = 0.000000   (среди контакт-шагов с fn > 0)
+G4 flips = 736874, flips_per_active = 0.077152, flips_after_zero_frac = 0.978428
+G4 run_hist (1, 2, 3-5, 6-10, 11-30, >30) = 663992 2882 8036 16491 20077 25396   (всего 736874)
+G4 N_cv = 1.270544   (коэф. вариации суммарного N по шагам с силой)
+G4 keys = 1395, contact_steps_per_key = 6856.235   (экспозиция)
+G5 max_pen_d = 0.633389
+

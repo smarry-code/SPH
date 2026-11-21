@@ -1,0 +1,20 @@
+V0=69 E0=16.6635 Дж outcome=not_perforated V_R=0 t_end=2100.8 мкс steps_long=64486
+  v_z(1,5 мс)=-5.990 м/с (строка t=1498.0 мкс); v_z(t_end)=0.095; z_c(t_end)=-42.25 мм; v_z=0 при 2085 мкс
+  первый разрыв 454.1 мкс, w_f при нём 26.83 мм; порвано 10/0; |Ff_z|max(выборка)=2901 Н при 464 мкс; F_clamp_f_z_max=326.85385 Н
+  энергия на t_end, доли E0: KE_solid 0.0000, D_friction 0.8104, D_contact_fiber 0.1603, KE_fiber 0.0104, U_bond 0.0001, W_p_fiber 0.0106, D_xsph 0.0073, residual 0.0004
+  e (поглощено шаром) = 16.6635 Дж = 1.0000 E0; E_tot_end/E_tot_0 = 0.0118461315; max δff/d = 0.102066857, max δfs/d = 0.127678753, n_tunnel = 0
+V0=70 E0=17.1500 Дж outcome=perforated V_R=0.324422314 t_end=2001.4 мкс steps_long=53819
+  v_z(1,5 мс)=-5.139 м/с (строка t=1497.9 мкс); v_z(t_end)=-0.324; z_c(t_end)=-41.48 мм; v_z=0 при нет
+  первый разрыв 448.4 мкс, w_f при нём 26.88 мм; порвано 10/0; |Ff_z|max(выборка)=2769 Н при 454 мкс; F_clamp_f_z_max=166.658662 Н
+  энергия на t_end, доли E0: KE_solid 0.0000, D_friction 0.8059, D_contact_fiber 0.1619, KE_fiber 0.0123, U_bond 0.0002, W_p_fiber 0.0115, D_xsph 0.0073, residual 0.0004
+  e (поглощено шаром) = 17.1496316 Дж = 1.0000 E0; E_tot_end/E_tot_0 = 0.0137406049; max δff/d = 0.101638934, max δfs/d = 0.127609965, n_tunnel = 0
+V0=71 E0=17.6435 Дж outcome=perforated V_R=0.23334177 t_end=2023.8 мкс steps_long=56224
+  v_z(1,5 мс)=-5.215 м/с (строка t=1497.8 мкс); v_z(t_end)=-0.233; z_c(t_end)=-41.93 мм; v_z=0 при нет
+  первый разрыв 441.4 мкс, w_f при нём 26.87 мм; порвано 10/0; |Ff_z|max(выборка)=2877 Н при 450 мкс; F_clamp_f_z_max=163.92817 Н
+  энергия на t_end, доли E0: KE_solid 0.0000, D_friction 0.8071, D_contact_fiber 0.1619, KE_fiber 0.0112, U_bond 0.0002, W_p_fiber 0.0116, D_xsph 0.0071, residual 0.0004
+  e (поглощено шаром) = 17.6433094 Дж = 1.0000 E0; E_tot_end/E_tot_0 = 0.012715453; max δff/d = 0.10193578, max δfs/d = 0.127629151, n_tunnel = 0
+V0=82 E0=23.5340 Дж outcome=perforated V_R=6.97951923 t_end=1914.6 мкс steps_long=44564
+  v_z(1,5 мс)=-11.109 м/с (строка t=1500.5 мкс); v_z(t_end)=-6.980; z_c(t_end)=-51.94 мм; v_z=0 при нет
+  первый разрыв 378.2 мкс, w_f при нём 26.79 мм; порвано 11/1; |Ff_z|max(выборка)=3029 Н при 389 мкс; F_clamp_f_z_max=222.39829 Н
+  энергия на t_end, доли E0: KE_solid 0.0073, D_friction 0.8235, D_contact_fiber 0.1434, KE_fiber 0.0100, U_bond 0.0002, W_p_fiber 0.0093, D_xsph 0.0057, residual 0.0003
+  e (поглощено шаром) = 23.3635021 Дж = 0.9928 E0; E_tot_end/E_tot_0 = 0.018432581; max δff/d = 0.100950926, max δfs/d = 0.127873272, n_tunnel = 0

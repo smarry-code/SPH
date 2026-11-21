@@ -20,9 +20,19 @@
 #include <vector>
 #include <cstddef>
 #include <algorithm>
+#include <memory>
 
 struct WorkBuffers
 {
+    // Постоянная рабочая память шага Solid (interactions::SolidStepWorkspace,
+    // interactions/solid_workspace.hpp). Создаётся лениво в single_step.
+    // Тип стёрт (shared_ptr<void> запоминает деструктор при создании), чтобы
+    // buffers.hpp не тянул тяжёлые заголовки interactions/rhs, а потребители,
+    // не линкующие single_step.cpp (test_contact), не требовали внешнего
+    // определения деструктора. WorkBuffers не копируют; при копировании
+    // рабочая память была бы общей.
+    std::shared_ptr<void> solid_ws;
+
     // Компоненты тензора скоростей сдвига (заполняются в int_force при visc=true,
     // читаются в параллельном цикле расчёта сил). Размер = ntotal.
     std::vector<double> txx;
@@ -31,6 +41,36 @@ struct WorkBuffers
     std::vector<double> txy;
     std::vector<double> txz;
     std::vector<double> tyz;
+
+    // --- Контакт (ADR-007). Пишутся в ext_force, читаются в time_integration.
+    // ext_force обходит пары последовательно (OpenMP там нет), гонок нет.
+    double min_dt_contact    = 1e30;  // ограничитель шага; 1e30 => контакт не ограничивает (contact::kNoLimit)
+    size_t contact_pair_count = 0;    // число пар с p > 0 за шаг
+    double contact_max_delta  = 0.0;  // max(p) за шаг, м
+#ifdef SPH_ENERGY_LOG
+    // Лог энергии (include/energy_log.hpp). energy_log -- выставляет
+    // time_integration при включённом логе; только тогда single_step
+    // заполняет contact_dv (отдельная свёртка вкладов контакта Solid-Solid).
+    bool energy_log = false;
+    std::vector<double> du_av;                   // тепло ИВ, du/dt, [0, ntotal)
+    std::vector<std::vector<double>> contact_dv; // ускорение контакта Solid-Solid, [dim][ntotal]
+    bool has_contact_dv = false;                 // contact_dv заполнен на этом шаге
+    // Диагностика механизмов (energy_log.hpp, DiagChannels): [ntotal]; dv_* -- [dim][ntotal].
+    // dv_pair = полное dv SPH - hoop - ИВ (давление + девиатор планарно).
+    std::vector<std::vector<double>> dv_pair, dv_hoop, dv_av;
+    std::vector<double> du_pair, du_dev, du_szz, du_pdv;
+#endif
+
+    // Сброс контактной диагностики перед накоплением на текущем шаге.
+    void reset_contact()
+    {
+        min_dt_contact = 1e30;
+        contact_pair_count = 0;
+        contact_max_delta = 0.0;
+#ifdef SPH_ENERGY_LOG
+        has_contact_dv = false;
+#endif
+    }
 
     // Гарантирует вместимость n элементов во всех тензорных буферах.
     // Растёт только вверх (без усечения), поэтому на шагах после первого — no-op.

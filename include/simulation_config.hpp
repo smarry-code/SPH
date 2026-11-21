@@ -1,4 +1,9 @@
 #pragma once
+#include <atomic>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 // simulation_config.hpp
 // Инкапсуляция runtime-параметров симуляции (подэтап 5.7 этапа 6.3
 // «Архитектурная чистота»).
@@ -20,6 +25,7 @@
 //     переключатели веток компиляции; не являются mutable состоянием.
 // Эти constexpr-сущности корректны с точки зрения ODR и не блокируют 5.2-В.
 #include <cstddef>
+#include <string>
 #include "materials.hpp"
 
 struct SimulationConfig
@@ -31,6 +37,56 @@ struct SimulationConfig
     int skf    = 1;                     // Тип ядра сглаживания
     int density_method          = 1;    // Метод расчёта плотности (1/2/3)
     int coloring_niac_threshold = 0;    // Порог graph coloring vs atomic
+
+    // --- ODESolver (notes/fiber-model/fiber-plan.md, этап Ф8; §3.9) ---
+    // 0 - PredictorCorrector (по умолчанию, схема проекта, на неё
+    //     откалиброваны эталоны BC2/BC6), 1 - явный Euler (эталон для тестов
+    //     порядка сходимости, неустойчив на незатухающих упругих связях --
+    //     не для рабочих расчётов).
+    int ode_solver = 0;
+
+    // --- Контакт «частица-частица» (notes/sources/sph-contact-article.md, ADR-007) ---
+    // 0 - выключен (по умолчанию), 1 - пинбол Белицко, 2 - Свигл, 3 - импульсный.
+    int    contact_force_type   = 0;
+    double contact_penalty_scale = 1.0;   // масштабный коэффициент Kp (типы 1-2)
+    // Доля нормальной скорости сближения, снимаемая за шаг (только тип 3).
+    // 1.0 — гасить сближение пары за шаг полностью (буквальная (2.10));
+    // меньше — оставлять паре (1-gamma)*pdot. Рабочий диапазон (0; 1.6].
+    double contact_impulse_gamma = 1.0;
+
+    // --- Закон нормальной силы контактов нитей (notes/fiber-model/fiber-problem-statement.md, «Законы
+    //     нормальной силы»; include/interactions/fiber_contact_law.hpp) ---
+    // 0 = ГЕРЦ (прежнее поведение), НЕ «выключено» -- в отличие от
+    // contact_force_type. 1 - пинбол, 2 - Свигл, 3 - импульсный, 4 - Герц + демпфер
+    // (Kp -- масштаб демпфера).
+    int    fiber_solid_contact_type          = 0;   // Fiber-Solid; 0 = Герц, не выключено
+    int    fiber_fiber_contact_type          = 0;   // Fiber-Fiber; 0 = Герц, не выключено
+    double fiber_solid_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_solid_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    double fiber_fiber_contact_penalty_scale = 1.0; // Kp (типы 1, 2)
+    double fiber_fiber_contact_impulse_gamma = 1.0; // gamma (тип 3), рабочий диапазон (0; 1.6]
+    // Выталкивание типа 3 при глубоком проникании (notes/fiber-contact/plan-fiber-contact-laws12-fix.md;
+    // FiberContactLaw::push_tau): к pdot добавляется max(p - depth*r, 0)/tau, tau в с.
+    // tau = 0 -- выключено (побитово прежний тип 3); depth -- доля суммы радиусов пары.
+    double fiber_solid_contact_impulse_push_tau = 0.0;
+    double fiber_fiber_contact_impulse_push_tau = 0.0;
+    double fiber_contact_impulse_push_depth = 0.1;
+    double fiber_contact_impulse_push_vmax = 0.0; // предел скорости выталкивания, м/с; 0 -- без предела
+    // Нормальная сила законов 1-3 как проекция скорости (notes/fiber-contact/law3-projection-tz.md):
+    // 0 -- прежняя явная сила (побитово прежнее поведение), 1 -- проекция.
+    int    fiber_fiber_contact_predictor = 0; // Fiber-Fiber, 0/1
+    int    fiber_solid_contact_predictor = 0; // Fiber-Solid, 0/1
+    int    fiber_contact_projection_iters = 8; // число итераций проекции, 1..100
+    int    fiber_contact_projection_warm  = 1; // тёплый старт импульсов, 0/1
+    // Множитель общего шага по времени (проверка сходимости по шагу); 1 -- без изменений,
+    // допустимо (0; 1].
+    double dt_scale = 1.0;
+
+    // --- Изоляция SPH-сумм Solid по телам ---
+    // При true SPH-пары реальных частиц разных тел (sys.body) отвергаются;
+    // тела взаимодействуют только через Solid-Solid-Contact
+    // (contact_force_type != 0). По умолчанию false (прежнее поведение).
+    bool sph_same_body_only = false;
 
     // --- Шаг по времени / вывод ---
     double CFL       = 0.1;             // Число Куранта
@@ -57,6 +113,71 @@ struct SimulationConfig
     // --- Материалы (константны после инициализации; ADR-3 этапа 6.3) ---
     Materials mats;
 
+    // --- Нити (notes/fiber-model/fiber-plan.md, этап Ф2) ---
+    // Путь к файлу ломаных нитей (см. формат в fiber_input.cpp). Пусто (по
+    // умолчанию) — нитей в расчёте нет. Если задан, а сборка сделана не с
+    // SPH_DIM=3, parse_sph_config бросает std::runtime_error немедленно
+    // (notes/fiber-model/fiber-problem-statement.md: "Нити поддерживаются только в трёхмерной постановке").
+    std::string fiber_file;
+
+    // --- Импорт LS-DYNA .k (readk/k-import-plan.md, этап K6) ---
+    // k_file пуст (по умолчанию) -- импорта нет. Непустой k_file имеет
+    // приоритет над встроенными генераторами (shocktube/shearcavity).
+    std::string k_file;
+    std::string k_mode = "solid";           // "solid" | "solid_fiber"
+    std::string k_parts_file;               // таблица деталей (Р2); пусто -- режим без таблицы
+    double k_length_scale = 1.0;            // множитель координат (Р5), > 0
+    double k_mass_scale   = 1.0;            // множитель масс (Р5), > 0
+    long long k_monitor_nid = -1;           // NID мониторной частицы; < 0 -- не задан
+    std::string k_solid_elements = "skip";  // "skip" | "particles" (*ELEMENT_SOLID)
+
+    // --- Чекпоинты / рестарт (include/checkpoint.hpp) ---
+    // Настройки запуска, не физика: в чекпоинт не сериализуются и не сравниваются.
+    // Пустые/0 -- выключено, цикл побитово прежний.
+    std::string checkpoint_file;            // путь чекпоинта; пусто -- не писать
+    size_t checkpoint_every_steps = 0;      // период записи, в шагах интегрирования; 0 -- выкл.
+    std::string restart_file;               // чекпоинт для продолжения; пусто -- старт с нуля
+    bool restart_force = false;             // --force: разрешить менять физические настройки при рестарте
+
+#ifdef SPH_ENERGY_LOG
+    // --- Лог механической энергии (include/energy_log.hpp) ---
+    // Только в сборке с -DSPH_ENERGY_LOG=ON. energy_log_every = k > 0 -- строка
+    // лога каждые k шагов (после шага интегратора), 0 -- лог выключен.
+    size_t energy_log_every = 0;
+    std::string energy_log_file = "energy_log.csv";
+#endif
+
+    // --- Нагрев Джонсона-Кука (itype 12-15), notes/johnson-cook/jc-implementation-plan.md §2.4 ---
+    // jc_heating: 0 = energy (T = Tr + u/cp), 1 = taylor_quinney (T интегрируется
+    // отдельно: dT = chi*Y*d_eps_p/(rho*cp)). Применяется к cfg.mats.jc[*].th в
+    // конце parse_sph_config. jc_chi -- доля пластической работы, идущая в тепло.
+    int jc_heating = 0;
+    double jc_chi = 0.9;
+
+    // --- XSPH (поправка epsilon * av) ---
+    // xsph_mode: 0 = velocity (av входит в скорость: v = ... + av; x += dt*v; прежнее
+    // поведение), 1 = position (классический XSPH Монаганa: скорость без av,
+    // x += dt*(v + av); кинетическая энергия не меняется, D_xsph = 0). Только PC-решатель.
+    int xsph_mode = 0;
+
+    // --- Искусственное напряжение Монагана (interactions/artificial_stress.hpp) ---
+    // Против неустойчивости SPH при растяжении (Monaghan 2000; Gray, Monaghan,
+    // Swift 2001). art_stress_eps <= 0 -- выключено, поведение побитово прежнее;
+    // типичное значение 0.3. art_stress_n -- показатель в f^n, f = W(r)/W(dp).
+    double art_stress_eps = 0.0;
+    double art_stress_n = 4.0;
+
+#ifdef SPH_CONTACT_STATS
+    // --- Диагностика контактов нитей (interactions/fiber_contact_stats.hpp) ---
+    // Только в сборке с -DSPH_CONTACT_STATS=ON. contact_stats_every = k > 0 --
+    // строка CSV каждые k шагов и сводка в конце; contact_hold_n -- контрфакт
+    // «удержание N» (меняет физику, только для диагностики).
+    size_t contact_stats_every = 0;
+    std::string contact_stats_file = "contact_stats.csv";
+    std::string contact_stats_summary = "contact_stats_summary.txt";
+    bool contact_hold_n = false;
+#endif
+
     // Установка значений по умолчанию (перенос значений из бывших param.hpp).
     // Вызывается из main ДО parse_sph_config: явно фиксирует контракт
     // инициализации конфига (независимо от default member initializers).
@@ -69,8 +190,81 @@ inline void SimulationConfig::apply_defaults()
 {
     pa_sph = 2;  nnps = 1;  sle = 1;  skf = 1;
     density_method = 1;  coloring_niac_threshold = 0;
+    ode_solver = 0;
+    sph_same_body_only = false;
+    contact_force_type = 0;  contact_penalty_scale = 1.0;  contact_impulse_gamma = 1.0;
+    // Контакты нитей: 0 = Герц (не «выключено»).
+    fiber_solid_contact_type = 0;  fiber_solid_contact_penalty_scale = 1.0;  fiber_solid_contact_impulse_gamma = 1.0;
+    fiber_fiber_contact_type = 0;  fiber_fiber_contact_penalty_scale = 1.0;  fiber_fiber_contact_impulse_gamma = 1.0;
+    fiber_solid_contact_impulse_push_tau = 0.0;  fiber_fiber_contact_impulse_push_tau = 0.0;
+    fiber_contact_impulse_push_depth = 0.1;  fiber_contact_impulse_push_vmax = 0.0;  dt_scale = 1.0;
+    fiber_fiber_contact_predictor = 0;  fiber_solid_contact_predictor = 0;
+    fiber_contact_projection_iters = 8;  fiber_contact_projection_warm = 1;
     CFL = 0.1;  t_total = 3e-6;  save_t = 2.5e-8;  print_step = 50;
     alpha = 1.0;  beta = 1.0;  etq = 0.01;  epsilon = 0.3;  xi = 0.001;  epsilon_h = 0.01;
     num_threads = 7;
     maxn = 0;  max_interaction = 0;  moni_particle = 0;
+    fiber_file.clear();
+    k_file.clear();  k_mode = "solid";  k_parts_file.clear();
+    k_length_scale = 1.0;  k_mass_scale = 1.0;  k_monitor_nid = -1;
+    k_solid_elements = "skip";
+    jc_heating = 0;  jc_chi = 0.9;
+    xsph_mode = 0;
+    art_stress_eps = 0.0;  art_stress_n = 4.0;
+#ifdef SPH_ENERGY_LOG
+    energy_log_every = 0;  energy_log_file = "energy_log.csv";
+#endif
+}
+
+// Проверка настроек проекции скорости нормального контакта (notes/fiber-contact/law3-projection-tz.md).
+// Бросает std::runtime_error (по-русски). Обе проекции выключены -- ничего не делает.
+// Вызывается после разбора конфига/аргументов (input.cpp, guo2019_shot, time_integration);
+// в выстреле Guo -- дважды (guo2019_shot и run_time_integration), поэтому предупреждения
+// (γ != 1; warm = 0) печатаются ОДИН раз за процесс.
+inline void validate_fiber_contact_projection(const SimulationConfig& cfg)
+{
+    const int pf = cfg.fiber_fiber_contact_predictor, ps = cfg.fiber_solid_contact_predictor;
+    if (pf == 0 && ps == 0) return;
+    if (pf != 0 && pf != 1)
+        throw std::runtime_error("fiber_fiber_contact_predictor: допустимы 0 и 1, получено " + std::to_string(pf));
+    if (ps != 0 && ps != 1)
+        throw std::runtime_error("fiber_solid_contact_predictor: допустимы 0 и 1, получено " + std::to_string(ps));
+    if (cfg.fiber_contact_projection_iters < 1 || cfg.fiber_contact_projection_iters > 100)
+        throw std::runtime_error("fiber_contact_projection_iters: допустимо 1..100, получено " +
+                                 std::to_string(cfg.fiber_contact_projection_iters));
+    if (cfg.fiber_contact_projection_warm != 0 && cfg.fiber_contact_projection_warm != 1)
+        throw std::runtime_error("fiber_contact_projection_warm: допустимы 0 и 1, получено " +
+                                 std::to_string(cfg.fiber_contact_projection_warm));
+    std::string gamma_names; // виды контакта с γ != 1 (для одного общего предупреждения)
+    auto check_kind = [&](const char* name, int predictor, int type, double push_tau, double gamma)
+    {
+        if (predictor != 1) return;
+        if (type < 1 || type > 3)
+            throw std::runtime_error(std::string(name) + "_contact_predictor = 1 требует закона контакта 1, 2 или 3, а " +
+                                     name + "_contact_type = " + std::to_string(type));
+        if (push_tau > 0.0)
+            throw std::runtime_error(std::string(name) + "_contact_impulse_push_tau > 0 запрещён в режиме проекции (" +
+                                     name + "_contact_predictor = 1)");
+        if (gamma != 1.0)
+        {
+            if (!gamma_names.empty()) gamma_names += ", ";
+            std::ostringstream os;
+            os << name << "_contact_impulse_gamma = " << gamma;
+            gamma_names += os.str();
+        }
+    };
+    check_kind("fiber_fiber", pf, cfg.fiber_fiber_contact_type, cfg.fiber_fiber_contact_impulse_push_tau,
+               cfg.fiber_fiber_contact_impulse_gamma);
+    check_kind("fiber_solid", ps, cfg.fiber_solid_contact_type, cfg.fiber_solid_contact_impulse_push_tau,
+               cfg.fiber_solid_contact_impulse_gamma);
+
+    // Один раз за процесс (функция вызывается из одного потока; atomic -- на случай нескольких).
+    static std::atomic<bool> gamma_warned{false};
+    if (!gamma_names.empty() && !gamma_warned.exchange(true))
+        std::cerr << "ПРЕДУПРЕЖДЕНИЕ: " << gamma_names << " != 1: γ игнорируется в режиме проекции\n";
+    static std::atomic<bool> warm_warned{false};
+    if (cfg.fiber_contact_projection_warm == 0 && !warm_warned.exchange(true))
+        std::cerr << "ПРЕДУПРЕЖДЕНИЕ: fiber_contact_projection_warm = 0 (без тёплого старта) в режиме проекции: "
+                     "K итераций Якоби при ударе недостаточно (серия Guo 1T, V0 = 79: прогон C5 с K = 8 и warm = 0 дал "
+                     "n_tunnel = 44 и пробитие, с тёплым стартом -- 0). Рекомендуется fiber_contact_projection_warm = 1.\n";
 }

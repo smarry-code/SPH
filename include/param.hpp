@@ -5,11 +5,19 @@
 #include <sstream>
 #include <vector>
 #include <cstddef>
-constexpr size_t dim = 1; // Размерность задачи (1, 2 или 3)
+// Размерность задачи (1, 2 или 3).
+// Значение задаётся при сборке макросом SPH_DIM (решение E1,
+// notes/contact/04-e2e-test-brief.md §2); без него — 1, как раньше. Семантика
+// не меняется: dim остаётся constexpr и определяет размер C-массивов
+// x[dim]/vx[dim] на этапе компиляции (ADR-002).
+#ifndef SPH_DIM
+#define SPH_DIM 1
+#endif
+constexpr size_t dim = SPH_DIM;
 // Общие параметры
 struct Particle
 {
-    Particle::Particle();
+    Particle();
     std::vector<double> x;
     std::vector<double> vx;
     int itype;

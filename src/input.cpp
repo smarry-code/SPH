@@ -1,8 +1,12 @@
 // input.cpp
 // Определения функций ввода/инициализации данных.
-// Объявления — в input.hpp. Вспомогательные функции разбора (parse_k_file,
-// shock_tube, shear_cavity) — внутренние (internal linkage / static) этого TU.
+// Объявления — в input.hpp. Вспомогательные функции разбора (shock_tube,
+// shear_cavity) — внутренние (internal linkage / static) этого TU.
 #include "input.hpp"
+#include "fiber/fiber_system.hpp"
+#include "fiber/fiber_input.hpp"
+#include "k_input/k_geometry.hpp"
+#include <cctype>
 #include <cmath>
 #include <stdexcept>
 #include <limits>
@@ -19,12 +23,6 @@
 #include <windows.h>
 #endif
 
-struct RawSph
-{
-    long long nid;           // ID узла/частицы
-    int pid;                 // PID / signed material type
-    double mass;             // MASS (>0 по допущению)
-};
 // Вспомогательная функция для форматированного вывода
 static void format_output(std::ofstream& file, size_t particle_id, const std::vector<double>& values)
 {
@@ -43,205 +41,72 @@ static void format_output_other(std::ofstream& file, size_t particle_id, int ity
          << std::setw(2) << itype_val << "  "
          << std::setw(8) << std::scientific << hsml_val << "\n";
 }
-enum class BlockState
-{
-    None,
-    Node,
-    ElementSPH
-};
-static void trim_comment(std::string &line)
-{
-    std::size_t pos = line.find('$');
-    if (pos != std::string::npos)
-    {
-        line.erase(pos);
-    }        
-}
 static void trim_spaces(std::string& s)
 {
-    auto not_space = [](int ch){ return !std::isspace(ch); };
+    // Приведение к unsigned char обязательно. std::isspace принимает int, но
+    // допустимы только значения, представимые в unsigned char, и EOF; передача
+    // отрицательного — неопределённое поведение. На char со знаком (x86) любой
+    // байт UTF-8 со старшим битом даёт отрицательное значение, а в
+    // Initial_Conditions.txt комментарии русские, и строка, кончающаяся
+    // кириллицей, приводит сюда байт вроде 0xB9 = -71.
+    // На Windows с UCRT это срабатывание внутреннего assert и немедленный
+    // abort: процесс умирает молча, до единой строки вывода, ещё на разборе
+    // конфигурации. Так падали ОБА сквозных теста, BC2 и BC6.
+    auto not_space = [](unsigned char ch){ return !std::isspace(ch); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
 }
-static std::vector<std::string> split_by_commas_preserve_empty(const std::string& line)
+// Положительное конечное число для ключей k_*; иначе исключение с именем ключа.
+static double parse_k_positive(const char* key, const std::string& value)
 {
-    std::vector<std::string> fields;
-    std::string current;
-
-    for (char c : line)
+    std::size_t pos = 0;
+    double v = 0.0;
+    try
     {
-        if (c == ',')
-        {
-            // конец поля
-            trim_spaces(current);
-            fields.push_back(current);
-            current.clear();
-        }
-        else
-        {
-            current.push_back(c);
-        }
+        v = std::stod(value, &pos);
     }
-    // последнее поле
-    trim_spaces(current);
-    fields.push_back(current);
-
-    return fields;
-}
-static long long to_int_or_zero(const std::string& s)
-{
-    if (s.empty())
+    catch (const std::exception&)
     {
+        pos = 0;
+    }
+    if (pos == 0 || pos != value.size() || !std::isfinite(v) || !(v > 0.0))
+    {
+        throw std::runtime_error(std::string(key) + ": ожидается конечное число > 0, получено '" + value + "'");
+    }
+    return v;
+}
+// Закон нормальной силы контакта нитей (fiber_*_contact_type): 0..4,
+// 0 = Герц (НЕ «выключено», в отличие от contact_force_type), 4 = Герц +
+// демпфер. Вне диапазона -- сообщение и откат к 0.
+static int parse_fiber_contact_type(const std::string& key, const std::string& value)
+{
+    const int v = std::stoi(value);
+    if (v < 0 || v > 4)
+    {
+        std::cerr << key << " вне диапазона 0..4: " << v << ", откат к 0 (Герц)\n";
         return 0;
-    }      
-    return std::stoll(s);
+    }
+    return v;
 }
 
-// безопасное чтение double: пустая строка => 0.0
-static double to_double_or_zero(const std::string& s)
+// gamma типа 3 контакта нитей: те же границы и сообщения, что у
+// contact_impulse_gamma.
+static double parse_fiber_contact_gamma(const std::string& key, const std::string& value)
 {
-    if (s.empty())
+    const double v = std::stod(value);
+    if (!(v > 0.0))
     {
-        return 0.0;
-    }      
-    return std::stod(s);
+        std::cerr << key << " = " << v << " <= 0: тип 3 фактически выключен\n";
+    }
+    else if (v > 1.6)
+    {
+        std::cerr << key << " = " << v
+                  << " > 1.6: включается ограничитель шага контакта,"
+                     " возможен коллапс dt\n";
+    }
+    return v;
 }
 
-void parse_k_file(SimulationConfig& cfg, const std::string& filename, ParticleSystem& sys)
-{
-    std::ifstream in(filename);
-    // узлы: NID -> (x,y,z)
-    std::unordered_map<long long, std::array<double,3>> nodes;
-    nodes.reserve(1024);
-
-    // сырые SPH-элементы
-    std::vector<RawSph> sph_elements;
-    sph_elements.reserve(1024);
-
-    BlockState state = BlockState::None;
-    std::string line;
-    while (std::getline(in, line))
-    {
-        if (line.empty())
-        {
-            continue;
-        }
-        // заголовки ключевых слов
-        if (!line.empty() && line[0] == '*')
-        {
-            std::string header = line;
-            trim_comment(header);
-            for (char& c : header)
-            {
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            }
-            if (header.find("*NODE") == 0)
-            {
-                state = BlockState::Node;
-            }
-            else if (header.find("*ELEMENT_SPH") == 0)
-            {
-                state = BlockState::ElementSPH;
-            }
-            else
-            {
-                state = BlockState::None;
-            }
-            continue;
-        }
-        // обрезаем комментарий и проверяем на пустоту
-        trim_comment(line);
-        bool only_space = true;
-        for (char c : line)
-        {
-            if (!std::isspace(static_cast<unsigned char>(c)))
-            {
-                only_space = false;
-                break;
-            }
-        }
-        if (only_space)
-        {
-            continue;
-        }
-        // free format: делим по запятым
-        auto fields = split_by_commas_preserve_empty(line);
-        if (fields.empty())
-        {
-            continue;
-        }  
-        if (state == BlockState::Node)
-        {
-            // NID, x, y, z (недостающие поля -> 0)
-            if (fields.size() < 4)
-                fields.resize(4);
-
-            long long nid = to_int_or_zero(fields[0]);
-            double x = to_double_or_zero(fields[1]);
-            double y = to_double_or_zero(fields[2]);
-            double z = to_double_or_zero(fields[3]);
-            if (nid < 0)
-            {
-                continue;
-            }            
-            nodes[nid] = {x, y, z};
-        }
-        else if (state == BlockState::ElementSPH)
-        {
-            // NID, PID, MASS (недостающие поля -> 0)
-            if (fields.size() < 3)
-            {
-                fields.resize(3);
-            }                
-            long long nid = to_int_or_zero(fields[0]);
-            int pid = fields[1].empty() ? 0 : std::stoi(fields[1]);
-            double mass = to_double_or_zero(fields[2]);
-            if (nid < 0)
-            {
-                continue;
-            }                
-            RawSph e{nid, pid, mass};
-            sph_elements.push_back(e);
-        }                  
-    }
-    // объединение: по каждому RawSph ищем координаты узла.
-    // Сначала подсчитываем число валидных элементов (с найденным узлом),
-    // затем resize sys и заполняем плоские массивы.
-    size_t valid = 0;
-    for (const auto& e : sph_elements)
-    {
-        if (nodes.find(e.nid) != nodes.end()) ++valid;
-    }
-    sys.resize(valid);
-    size_t idx = 0;
-    for (const auto& e : sph_elements)
-    {
-        auto it = nodes.find(e.nid);
-        if (it == nodes.end())
-        {
-            // узел не найден — пропускаем
-            continue;
-        }
-        sys.inzializ_index(idx);  // обнулить все поля (эквивалент default Particle)
-        sys.x[0][idx] = it->second[0];
-        sys.x[1][idx] = it->second[1];
-        sys.x[2][idx] = it->second[2];
-        sys.mass[idx]  = e.mass;
-        sys.itype[idx] = e.pid;
-        if (sys.x[0][idx] > 0.0131 && sys.itype[idx] == 3 &&
-            sys.x[1][idx] > -1.9e-4 && sys.x[1][idx] < 1.9e-4 &&
-            sys.x[2][idx] > -1.9e-4 && sys.x[2][idx] < 1.9e-4)
-        {
-            cfg.moni_particle = idx;
-            std::ofstream file("log.txt", std::ios::app);
-            file << "Частица номер " << cfg.moni_particle << " с координатами " << sys.x[0][idx] << ", " << sys.x[1][idx]
-                 << ", " << sys.x[2][idx] << std::endl;
-            file.close();
-        }
-        ++idx;
-    }
-    in.close();
-}
 void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
 {
     std::ifstream in(filename);
@@ -329,8 +194,283 @@ void parse_sph_config(SimulationConfig& cfg, const std::string& filename)
         {
             cfg.print_step = static_cast<size_t>(std::stoull(value));
         }
+        else if (key == "contact_force_type")
+        {
+            const int v = std::stoi(value);
+            if (v < 0 || v > 3)
+            {
+                std::cerr << "contact_force_type вне диапазона 0..3: " << v
+                          << ", откат к 0 (контакт выключен)\n";
+                cfg.contact_force_type = 0;
+            }
+            else
+            {
+                cfg.contact_force_type = v;
+            }
+        }
+        else if (key == "contact_penalty_scale")
+        {
+            cfg.contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "contact_impulse_gamma")
+        {
+            const double v = std::stod(value);
+            // Границы: <= 0 равносильно выключенному контакту типа 3 (ранний
+            // выход в impulse_force), > 1.6 включает ограничитель шага, который
+            // сам зависит от урезанного шага (петля «жёсткость -> шаг»).
+            // Значение принимается как есть, но молча это не проходит.
+            if (!(v > 0.0))
+            {
+                std::cerr << "contact_impulse_gamma = " << v
+                          << " <= 0: тип 3 фактически выключен\n";
+            }
+            else if (v > 1.6)
+            {
+                std::cerr << "contact_impulse_gamma = " << v
+                          << " > 1.6: включается ограничитель шага контакта,"
+                             " возможен коллапс dt\n";
+            }
+            cfg.contact_impulse_gamma = v;
+        }
+        else if (key == "fiber_solid_contact_type")
+        {
+            cfg.fiber_solid_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_solid_contact_penalty_scale")
+        {
+            cfg.fiber_solid_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_solid_contact_impulse_gamma")
+        {
+            cfg.fiber_solid_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
+        else if (key == "fiber_fiber_contact_predictor")
+        {
+            cfg.fiber_fiber_contact_predictor = std::stoi(value);
+        }
+        else if (key == "fiber_solid_contact_predictor")
+        {
+            cfg.fiber_solid_contact_predictor = std::stoi(value);
+        }
+        else if (key == "fiber_contact_projection_iters")
+        {
+            cfg.fiber_contact_projection_iters = std::stoi(value);
+        }
+        else if (key == "fiber_contact_projection_warm")
+        {
+            cfg.fiber_contact_projection_warm = std::stoi(value);
+        }
+        else if (key == "fiber_fiber_contact_type")
+        {
+            cfg.fiber_fiber_contact_type = parse_fiber_contact_type(key, value);
+        }
+        else if (key == "fiber_fiber_contact_penalty_scale")
+        {
+            cfg.fiber_fiber_contact_penalty_scale = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_gamma")
+        {
+            cfg.fiber_fiber_contact_impulse_gamma = parse_fiber_contact_gamma(key, value);
+        }
+        else if (key == "fiber_solid_contact_impulse_push_tau")
+        {
+            cfg.fiber_solid_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_fiber_contact_impulse_push_tau")
+        {
+            cfg.fiber_fiber_contact_impulse_push_tau = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_vmax")
+        {
+            cfg.fiber_contact_impulse_push_vmax = std::stod(value);
+        }
+        else if (key == "fiber_contact_impulse_push_depth")
+        {
+            cfg.fiber_contact_impulse_push_depth = std::stod(value);
+        }
+        else if (key == "dt_scale")
+        {
+            const double v = std::stod(value);
+            if (!(v > 0.0) || v > 1.0)
+                std::cerr << "dt_scale = " << v << " вне (0; 1], откат к 1\n";
+            else
+                cfg.dt_scale = v;
+        }
+        else if (key == "ode_solver")
+        {
+            const int v = std::stoi(value);
+            if (v != 0 && v != 1)
+            {
+                std::cerr << "ode_solver вне диапазона 0..1: " << v
+                          << ", откат к 0 (PredictorCorrector)\n";
+                cfg.ode_solver = 0;
+            }
+            else
+            {
+                cfg.ode_solver = v;
+            }
+        }
+        else if (key == "sph_same_body_only")
+        {
+            // Принимаются 0/1 и true/false (без учёта регистра); иное -- откат к false.
+            std::string low = value;
+            for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (low == "1" || low == "true")
+            {
+                cfg.sph_same_body_only = true;
+            }
+            else if (low == "0" || low == "false")
+            {
+                cfg.sph_same_body_only = false;
+            }
+            else
+            {
+                std::cerr << "sph_same_body_only: недопустимое значение '" << value
+                          << "' (ожидается 0/1/true/false), откат к 0\n";
+                cfg.sph_same_body_only = false;
+            }
+        }
+        else if (key == "fiber_file")
+        {
+            cfg.fiber_file = value;
+            // notes/fiber-model/fiber-plan.md, этап Ф2, пункт 5: если нити реально заданы, а
+            // dim != 3, это ошибка, и она должна выявляться здесь, на этапе
+            // разбора конфигурации, а не позже в середине расчёта.
+            fiber::check_fiber_requires_dim3();
+        }
+        else if (key == "k_file")
+        {
+            cfg.k_file = value;
+        }
+        else if (key == "k_mode")
+        {
+            // Геометрия важнее удобства: неверное значение -- ошибка, не откат.
+            if (value != "solid" && value != "solid_fiber")
+            {
+                throw std::runtime_error("k_mode: допустимы solid и solid_fiber, получено '" + value + "'");
+            }
+            cfg.k_mode = value;
+            if (value == "solid_fiber")
+            {
+                fiber::check_fiber_requires_dim3();
+            }
+        }
+        else if (key == "k_parts_file")
+        {
+            cfg.k_parts_file = value;
+        }
+        else if (key == "k_length_scale")
+        {
+            cfg.k_length_scale = parse_k_positive("k_length_scale", value);
+        }
+        else if (key == "k_mass_scale")
+        {
+            cfg.k_mass_scale = parse_k_positive("k_mass_scale", value);
+        }
+        else if (key == "k_monitor_nid")
+        {
+            std::size_t pos = 0;
+            long long v = 0;
+            try
+            {
+                v = std::stoll(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            if (pos == 0 || pos != value.size())
+            {
+                throw std::runtime_error("k_monitor_nid: ожидается целое число, получено '" + value + "'");
+            }
+            cfg.k_monitor_nid = v;
+        }
+        else if (key == "k_solid_elements")
+        {
+            if (value != "skip" && value != "particles")
+            {
+                throw std::runtime_error("k_solid_elements: допустимы skip и particles, получено '" + value + "'");
+            }
+            cfg.k_solid_elements = value;
+        }
+        else if (key == "jc_heating")
+        {
+            if (value == "energy") cfg.jc_heating = 0;
+            else if (value == "taylor_quinney") cfg.jc_heating = 1;
+            else throw std::runtime_error("jc_heating: допустимы energy и taylor_quinney, получено '" + value + "'");
+        }
+        else if (key == "xsph_mode")
+        {
+            if (value == "velocity") cfg.xsph_mode = 0;
+            else if (value == "position") cfg.xsph_mode = 1;
+            else throw std::runtime_error("xsph_mode: допустимы velocity и position, получено '" + value + "'");
+        }
+        else if (key == "art_stress_eps" || key == "art_stress_n")
+        {
+            std::size_t pos = 0;
+            double v = 0.0;
+            try
+            {
+                v = std::stod(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            const bool is_eps = key == "art_stress_eps";
+            if (pos == 0 || pos != value.size() || !std::isfinite(v) || (is_eps ? v < 0.0 : v <= 0.0))
+            {
+                throw std::runtime_error(key + (is_eps ? ": ожидается число >= 0" : ": ожидается число > 0")
+                                         + ", получено '" + value + "'");
+            }
+            (is_eps ? cfg.art_stress_eps : cfg.art_stress_n) = v;
+        }
+        else if (key == "jc_chi")
+        {
+            std::size_t pos = 0;
+            double v = 0.0;
+            try
+            {
+                v = std::stod(value, &pos);
+            }
+            catch (const std::exception&)
+            {
+                pos = 0;
+            }
+            if (pos == 0 || pos != value.size() || !(v >= 0.0 && v <= 1.0))
+            {
+                throw std::runtime_error("jc_chi: ожидается число в [0, 1], получено '" + value + "'");
+            }
+            cfg.jc_chi = v;
+        }
+#ifdef SPH_ENERGY_LOG
+        else if (key == "energy_log_every")
+        {
+            cfg.energy_log_every = static_cast<size_t>(std::stoull(value));
+        }
+        else if (key == "energy_log_file")
+        {
+            cfg.energy_log_file = value;
+        }
+#else
+        else if (key == "energy_log_every" || key == "energy_log_file")
+        {
+            // Ключ лога энергии без кода лога: молча не игнорируем.
+            std::cerr << key << ": сборка без SPH_ENERGY_LOG (cmake -DSPH_ENERGY_LOG=ON), лог энергии не пишется\n";
+        }
+#endif
     }
-    in.close();    
+    in.close();
+
+    // Нагрев JC (itype 12-15) -- в таблицу материалов. Рестарт: cfg и при нём собирается
+    // этим же разбором; чекпоинт лишь сверяет jc_heating/jc_chi (visit_cfg).
+    for (JcMaterial& m : cfg.mats.jc)
+    {
+        m.th.heating = cfg.jc_heating == 1 ? jc::Heating::TaylorQuinney : jc::Heating::Energy;
+        m.th.chi = cfg.jc_chi;
+    }
+
+    validate_fiber_contact_projection(cfg);
 }
 // Функция инициализации частиц для теста "ударная трубка"
 void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& delta_x)
@@ -450,6 +590,15 @@ void shock_tube(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, doub
             sys.vx[0][i] = 0.0;
             sys.x[0][i] += delta_x; //=======
         }
+    }
+
+    // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1): встроенные генераторы не знают
+    // отдельного номера тела, поэтому body совпадает с материалом — это
+    // сохраняет нынешний критерий Solid-Solid-Contact «разные материалы»
+    // (notes/fiber-model/fiber-problem-statement.md, раздел «Solid -- Solid») без изменений на BC2/BC6.
+    for (size_t i = 0; i < ntotal; ++i)
+    {
+        sys.body[i] = sys.itype[i];
     }
 
     // Контроль корректности инициализации: каждая частица обязана получить
@@ -619,16 +768,13 @@ void shear_cavity(ParticleSystem& sys, size_t& ntotal)
         sys.u[i] = 357.1;     // Внутренняя энергия
         sys.itype[i] = 2;     // Водяная частица
         sys.hsml[i] = dx;     // Длина сглаживания = начальный шаг
+        sys.body[i] = sys.itype[i];   // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1)
     }
 }
 
-// Основная функция ввода данных
-void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& dx)
+// Встроенные источники Solid: particles.dat / shock_tube / shear_cavity.
+static void input_builtin(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& dx)
 {
-#ifdef _WIN32
-    SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
-#endif
-    parse_sph_config(cfg, "Initial_Conditions.txt");
     // Если загрузка из файла включена
     if (config_input)
     {
@@ -642,10 +788,10 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
         }
 
         xv_file >> ntotal;
-        std::wcout << " ******************************\n";
-        std::wcout << " Загрузка начальной конфигурации...\n";
-        std::wcout << " Общее количество частиц " << ntotal << "\n";
-        std::wcout << " ******************************\n";
+        std::cout << " ******************************\n";
+        std::cout << " Загрузка начальной конфигурации...\n";
+        std::cout << " Общее количество частиц " << ntotal << "\n";
+        std::cout << " ******************************\n";
 
         for (size_t i = 0; i < ntotal; ++i)
         {
@@ -732,6 +878,10 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
             // Чтение длины сглаживания
             iss >> sys.hsml[i];
 
+            // body[] = itype[] (notes/fiber-model/fiber-plan.md §3.1): формат particles.dat не
+            // содержит отдельного номера тела.
+            sys.body[i] = sys.itype[i];
+
             // Проверка на ошибки чтения
             if (iss.fail())
             {
@@ -744,75 +894,6 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
     // Иначе генерируем данные
     else
     {
-        /*parse_k_file("1.k", Elem);
-        double delta_x = 0.0003;
-        ntotal = sys.size();
-        std::ofstream file("test.txt");
-        file << "N" << " " << "Nmat" << " " << "M" << " ";
-        if (dim == 1)
-        {
-            file << "x" << " ";
-        }
-        else if (dim == 2)
-        {
-            file << "x" << " " << "y" << " ";
-        }
-        else if (dim == 3)
-        {
-            file << "x" << " " << "y" << " " << "z" << " ";
-        }
-        if (dim == 1)
-        {
-            file << "vx" << " ";
-        }
-        else if (dim == 2)
-        {
-            file << "vx" << " " << "vy" << " ";
-        }
-        else if (dim == 3)
-        {
-            file << "vx" << " " << "vy" << " " << "vz" << " ";
-        }
-        file << "rho" << " " << "p" << " " << "u" << " " << "c" << " " << "sigma_i" << " " << "e_pl" << " " << "D" << " " << "hsml" << " "
-             << "sxx" << " " << "syy" << " " << "szz" << " " << "sxy" << " " << "syz" << " " << "sxz" << "\n";
-        for (size_t i = 0; i < ntotal; ++i)
-        {
-            sys.hsml[i] = 2 * delta_x;
-
-            if (sys.x[0][i] < 0.0045)
-            {
-                sys.vx[0][i] = 1546;
-            }
-            if (sys.itype[i] == 1)
-            {
-                sys.itype[i] = 7;
-                sys.rho[i] = 320;
-                sys.rho_0[i] = sys.rho[i];
-                //sys.vx[0][i] = 1546;
-            }
-            else if (sys.itype[i] == 2)
-            {
-                sys.itype[i] = 10;
-                sys.rho[i] = 2510;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            else if (sys.itype[i] == 3)
-            {
-                sys.itype[i] = 10;
-                sys.rho[i] = 2510;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            else if (sys.itype[i] == 4)
-            {
-                sys.itype[i] = 5;
-                sys.rho[i] = 2638;
-                sys.rho_0[i] = sys.rho[i];
-            }
-            // Запись основных данных
-            file << i + 1; // ID частицы (в Fortran индексы начинаются с 1)
-            sys.vuvod_index(i, file);
-        }
-        file.close();*/
         if (shocktube)
         {
             shock_tube(cfg, sys, ntotal, dx);
@@ -822,9 +903,95 @@ void input(SimulationConfig& cfg, ParticleSystem& sys, size_t& ntotal, double& d
         {
             shear_cavity(sys, ntotal);
         }
-        std::wcout << " ******************************\n";
-        std::wcout << " Начальная конфигурация сгенерирована\n";
-        std::wcout << " Общее количество частиц " << ntotal << "\n";
-        std::wcout << " ******************************\n";
+        std::cout << " ******************************\n";
+        std::cout << " Начальная конфигурация сгенерирована\n";
+        std::cout << " Общее количество частиц " << ntotal << "\n";
+        std::cout << " ******************************\n";
+    }
+}
+
+// Сводка импорта .k (readk/k-import-plan.md, раздел 4.4).
+static void print_k_summary(const SimulationConfig& cfg, const k_input::KImportSummary& sm)
+{
+    std::cout << " ******************************\n";
+    std::cout << " Импорт LS-DYNA .k: " << cfg.k_file << " (режим " << cfg.k_mode << ")\n";
+    std::cout << " Узлов в колоде " << sm.nodes << "\n";
+    std::cout << " Частиц: SPH " << sm.sph_particles << ", из солидов " << sm.solid_element_particles << "\n";
+    std::cout << " Габарит SPH, м: x [" << sm.bbox_min[0] << ", " << sm.bbox_max[0] << "]"
+              << ", y [" << sm.bbox_min[1] << ", " << sm.bbox_max[1] << "]"
+              << ", z [" << sm.bbox_min[2] << ", " << sm.bbox_max[2] << "]\n";
+    std::cout << " dx_median, м: " << sm.dx_median << "\n";
+    if (sm.fibers > 0 || sm.beads > 0)
+    {
+        std::cout << " Нитей " << sm.fibers << ", бусин " << sm.beads << ", связей " << sm.bonds << "\n";
+        std::cout << " Сегмент l0, м: [" << sm.seg_min << ", " << sm.seg_max << "], l/d: ["
+                  << sm.ld_min << ", " << sm.ld_max << "]\n";
+    }
+    if (sm.clamped_particles > 0 || sm.clamped_beads > 0)
+    {
+        std::cout << " Зажато частиц " << sm.clamped_particles << ", бусин " << sm.clamped_beads << "\n";
+    }
+    for (const std::string& w : sm.warnings)
+    {
+        std::cout << " Предупреждение: " << w << "\n";
+    }
+    for (const auto& kv : sm.skipped)
+    {
+        std::cout << " Пропущено " << kv.first << ": " << kv.second << "\n";
+    }
+    std::cout << " ******************************\n";
+}
+
+// Основная функция ввода данных
+void input(SimulationConfig& cfg, fiber::Model& model, size_t& ntotal, double& dx)
+{
+#ifdef _WIN32
+    SetConsoleOutputCP(65001); // Активация UTF-8 в Windows
+#endif
+    parse_sph_config(cfg, "Initial_Conditions.txt");
+
+    const bool solid_fiber = (cfg.k_mode == "solid_fiber");
+    // Р10: два источника нитей одновременно не допускаются.
+    if (solid_fiber && !cfg.fiber_file.empty())
+    {
+        throw std::runtime_error("k_mode=solid_fiber вместе с fiber_file: два источника нитей");
+    }
+
+    if (!cfg.k_file.empty())
+    {
+        if (config_input)
+        {
+            throw std::runtime_error("k_file несовместим с config_input (загрузка particles.dat)");
+        }
+        k_input::KImportOptions opts;
+        opts.k_file = cfg.k_file;
+        opts.mode = solid_fiber ? k_input::KMode::SolidFiber : k_input::KMode::Solid;
+        opts.parts_file = cfg.k_parts_file;
+        opts.length_scale = cfg.k_length_scale;
+        opts.mass_scale = cfg.k_mass_scale;
+        opts.monitor_nid = cfg.k_monitor_nid;
+        opts.solid_elements = (cfg.k_solid_elements == "particles") ? k_input::KSolidElements::Particles
+                                                                    : k_input::KSolidElements::Skip;
+        const k_input::KImportSummary summary = k_input::load_k_geometry(opts, cfg.mats, model, cfg.moni_particle);
+        ntotal = model.solid.size();
+        // Для печати/совместимости: интегратор delta_x не использует.
+        dx = summary.dx_median;
+        print_k_summary(cfg, summary);
+    }
+    else
+    {
+        input_builtin(cfg, model.solid, ntotal, dx);
+    }
+
+    if (!cfg.fiber_file.empty())
+    {
+        fiber::load_fiber_file(cfg.fiber_file, model);
+        std::size_t fibers = 0;
+        for (std::size_t k = 0; k < model.fiber.size(); ++k)
+        {
+            fibers = std::max<std::size_t>(fibers, static_cast<std::size_t>(model.fiber.object_id[k]) + 1);
+        }
+        std::cout << " Нити из " << cfg.fiber_file << ": бусин " << model.fiber.size()
+                  << ", связей " << model.topology.bonds.size() << ", нитей " << fibers << "\n";
     }
 }

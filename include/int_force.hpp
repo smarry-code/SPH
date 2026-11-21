@@ -1,31 +1,23 @@
 #pragma once
 // int_force.hpp
-// Объявления функций внутренних сил SPH (urs — диспетчер УРС, int_force —
-// основной силовой расчёт). Определения — в int_force.cpp.
+// Объявление urs() — диспетчера уравнения состояния (УРС) по типу материала
+// (itype). Определение — в int_force.cpp.
 //
-// Горячие циклы (body1/body2) переведены с AoS-доступа на плоские
-// __restrict__-указатели в ParticleSystem (SoA): потоковые чтения/записи в
-// непрерывные массивы -> кэш-дружелюбность, доказательство неалиасинга для
-// автовекторизации.
+// notes/fiber-model/fiber-plan.md, этап Ф4-B2: основной силовой расчёт (int_force(), горячие
+// циклы body1/body2 — старый путь SPH) удалён вместе с direct_find/
+// linked_list/PairGraph/density/art_visc/av_vel/virt_part; урс()
+// используется НЕ ТОЛЬКО через int_force() (interactions::solid_eos,
+// include/interactions/solid_sph.hpp, — точная копия того же диспетчера для
+// нового пути), но и напрямую в нескольких тестах для инициализации
+// начального состояния (p, c) ПЕРЕД первым шагом расчёта:
+// tests/regression_cases.hpp, tests/test_e2e_bc2.cpp, tests/test_e2e_bc6.cpp,
+// tests/test_e2e_3d.cpp, tests/test_fiber_time_integration_equivalence.cpp —
+// поэтому файл не осиротел целиком и не удалён, удалена только мёртвая
+// часть (int_force()).
 #include <cstddef>
-#include <vector>
-#include <array>
-#include <cassert>
-#include "buffers.hpp"
-#include "pair_graph.hpp"
 #include "particle_system.hpp"
-#include "simulation_config.hpp"
 #include "eos.hpp"
 
 // Диспетчеризация уравнения состояния по типу материала (itype) через switch
 // с default — управляемый отказ.
 void urs(const Materials& mats, ParticleSystem& sys, size_t i);
-
-// Основная функция расчёта внутренних сил SPH.
-void int_force(const SimulationConfig& cfg, ParticleSystem& sys, size_t ntotal, size_t niac,
-               const std::vector<double>& eta, const std::vector<size_t>& pair_i,
-               const std::vector<size_t>& pair_j, const std::vector<std::vector<double>>& dwdx,
-               const std::vector<double>& w, std::vector<double>& t,
-               std::vector<std::vector<double>>& dvxdt, std::vector<double>& tdsdt, std::vector<double>& dedt, std::vector<double>& dsxx, std::vector<double>& dsyy,
-               std::vector<double>& dszz, std::vector<double>& dsxy, std::vector<double>& dsyz, std::vector<double>& dsxz, const std::vector<double>& drho,
-               WorkBuffers& wb, const PairGraph& graph);

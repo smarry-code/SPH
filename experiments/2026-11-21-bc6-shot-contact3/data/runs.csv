@@ -1,0 +1,2 @@
+case,dir,delta_x,contact,ntotal,outcome,t_reached,steps,wall_s
+bc6,bc6_dx200_c3,0.0002,3,44638,completed,4.30016e-06,1630,95.1925

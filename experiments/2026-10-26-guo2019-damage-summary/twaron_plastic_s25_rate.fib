@@ -1,0 +1,7 @@
+# Twaron CT 717 for guo2019_shot --fiber-inelastic (material 0), variant s25 + rate hardening (2026-10-18):
+# elastoplastic yarn, Johnson-Cook rate factor on the flow stress (1 + C ln(edot/EDOT0)), C = 0.005, EDOT0 = 1e-3 1/s
+# (as in plastic-branch s30 series). No VISCO. SIGMA_U stays 2.5 GPa (owner's choice): failure stress is NOT rate-scaled.
+# E is set by guo2019_shot --fiber-E (78e9 in this run); eps_break = 0.05 by key.
+PLASTIC 0 SY=2.04e9 H=100e9
+RATE 0 JC C=0.005 EDOT0=1e-3
+FAILURE 0 SIGMA_U=2.5e9

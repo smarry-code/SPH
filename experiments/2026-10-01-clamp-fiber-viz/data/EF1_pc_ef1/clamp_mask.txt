@@ -1,0 +1,4 @@
+# kind index mask (bit d = компонента d зажата)
+fiber 0 7
+fiber 1 7
+fiber 2 7

@@ -1,0 +1,21 @@
+{
+  "run_dir": "2026-09-26-fiber-net-demo/data/v2_mu03",
+  "n_frames": 63,
+  "E_tot0": 1.07495424,
+  "max_E_tot_ratio": 1.0,
+  "max_E_tot_ratio_frame": 0,
+  "max_E_tot_ratio_time": 0.0,
+  "final_E_tot_ratio": 0.9984264053912876,
+  "final_KE_total_ratio": 0.998425601492285,
+  "max_bead_speed": 63.70969593714829,
+  "final_bead_speed": 63.70969593714829,
+  "max_solid_speed": 30.0,
+  "final_solid_speed": 29.52580000000132,
+  "max_momentum_drift_rel": 5.392660276569779e-07,
+  "tol": 0.02,
+  "passed": true,
+  "n_bonds_initial": 40,
+  "n_bonds_final": 30,
+  "n_fiber_beads": 42,
+  "n_anchors": 4
+}

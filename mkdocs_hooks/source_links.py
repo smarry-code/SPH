@@ -8,7 +8,7 @@
 #   а суффикс :32 (номер строки) не является корректным веб-URL (браузер ищет файл
 #   с двоеточием в имени). Hook решает обе проблемы:
 #
-#     1. on_files     — монтирует .cpp/.hpp/.h из src/ и include/ как виртуальные
+#     1. on_files     — монтирует .cpp/.hpp/.h из src/ и include/ (со всеми подкаталогами) как виртуальные
 #                        файлы сайта (site/src/..., site/include/...), чтобы
 #                        относительные пути ../../../src/... резолвились;
 #     2. on_post_page — заменяет в href суффикс :N на #LN, чтобы файл открывался
@@ -43,7 +43,7 @@ def on_files(files, config):
         if not os.path.isdir(src_abs):
             continue
         for pattern in _SOURCE_EXTS:
-            for abs_path in glob(os.path.join(src_abs, pattern)):
+            for abs_path in glob(os.path.join(src_abs, "**", pattern), recursive=True):
                 # Относительный путь внутри сайта (например "src/linked_list.cpp").
                 rel = os.path.relpath(abs_path, project_root).replace(os.sep, "/")
                 files.append(

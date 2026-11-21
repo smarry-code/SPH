@@ -1,0 +1,51 @@
+{
+  "run_dir": "data/v3_mu0/stop",
+  "n_frames": 82,
+  "E_tot0": 0.06406452000000001,
+  "max_E_tot_ratio": 1.0154098015560251,
+  "max_E_tot_ratio_frame": 75,
+  "max_E_tot_ratio_time": 0.00165001,
+  "final_E_tot_ratio": 1.0132917158382693,
+  "final_KE_total_ratio": 1.0090413526111652,
+  "max_bead_speed": 22.719350979720545,
+  "final_bead_speed": 8.874435471606066,
+  "max_solid_speed": 10.0,
+  "final_solid_speed": 5.1118600179906695,
+  "max_momentum_drift_rel": 3.6144389981081307e-07,
+  "tol": 0.02,
+  "passed": true,
+  "n_bonds_initial": 320,
+  "n_bonds_final": 320,
+  "n_fiber_beads": 340,
+  "n_anchors": 40,
+  "layers": [
+    {
+      "layer": 0,
+      "KE_fiber_final": 0.009519679370412799,
+      "KE_fiber_max": 0.009519679370412799,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 1,
+      "KE_fiber_final": 0.009364852878942665,
+      "KE_fiber_max": 0.00999283792810832,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 2,
+      "KE_fiber_final": 0.010357652255678862,
+      "KE_fiber_max": 0.0111634875018961,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    },
+    {
+      "layer": 3,
+      "KE_fiber_final": 0.01866228537111909,
+      "KE_fiber_max": 0.018848992310885656,
+      "bonds_initial": 80,
+      "bonds_final": 80
+    }
+  ]
+}

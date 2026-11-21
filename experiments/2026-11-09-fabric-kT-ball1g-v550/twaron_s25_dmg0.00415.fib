@@ -1,0 +1,5 @@
+# Twaron s25 + повреждённость (fiber/plan-fiber-damage.md): полный разрыв при 4 % полной деформации
+# eps0 = 0,46 % + 2,5e9/80e9 = 3,585 %  =>  DEPS_F = 4 % - 3,585 % = 0,415 % (при E = 80 ГПа)
+PLASTIC 0 SY=2.04e9 H=100e9
+FAILURE 0 SIGMA_U=2.5e9
+DAMAGE  0 DEPS_F=0.00415
