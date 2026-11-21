@@ -31,4 +31,5 @@
    - [`2026-09-23-bc6-xsph`](../../experiments/2026-09-23-bc6-xsph/README.md)
    - [`2026-09-24-bc6-contact-dx010`](../../experiments/2026-09-24-bc6-contact-dx010/README.md)
    - [`2026-11-21-bc6-shot-contact3`](../../experiments/2026-11-21-bc6-shot-contact3/README.md)
+   - [`2026-11-21-bc6-shot-contact-types`](../../experiments/2026-11-21-bc6-shot-contact-types/README.md)
 7. **Постановка.** [`06-e2e-bc6.md`](../../notes/contact/06-e2e-bc6.md).
