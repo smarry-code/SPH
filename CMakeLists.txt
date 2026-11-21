@@ -1138,6 +1138,17 @@ endif()
 add_test(NAME plain_weave_quilt_test COMMAND test_plain_weave_quilt)
 set_tests_properties(plain_weave_quilt_test PROPERTIES LABELS "3d" TIMEOUT 120)
 
+# --- «Шахматная» ткань: кусочки с перекрытием на двух подслоях, стяжки (include/fiber/plain_weave_chess.hpp).
+#     Только заголовки генератора, без конвейера.
+add_executable(test_plain_weave_chess tests/test_plain_weave_chess.cpp)
+target_include_directories(test_plain_weave_chess PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(test_plain_weave_chess PRIVATE SPH_DIM=3)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_plain_weave_chess PRIVATE -fexceptions)
+endif()
+add_test(NAME plain_weave_chess_test COMMAND test_plain_weave_chess)
+set_tests_properties(plain_weave_chess_test PROPERTIES LABELS "3d" TIMEOUT 120)
+
 # --- Ткань «случайная раскройка» (include/fiber/plain_weave_random_cut.hpp).
 add_executable(test_plain_weave_random_cut tests/test_plain_weave_random_cut.cpp ${SPH_PIPELINE_SOURCES})
 target_include_directories(test_plain_weave_random_cut PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -17,6 +17,12 @@
 //                [--stitch-E=<Па>] [--stitch-d=<м>] [--stitch-eps-break=<x>]
 //                [--random-cut=N [--cut-seed=S] [--layers-per-cut=k] [--cut-gap=<м>] [--cut-rot-max=<град>]
 //                 [--cut-stitch-step=<м>] [--cut-size=WxH] [--cut-clamp-edge=<м>]]
+//                [--chess=none|flip|same [--chess-patch=P]]
+//   --chess=flip|same -- «шахматная» ткань (include/fiber/plain_weave_chess.hpp): слой -- два подслоя кусочков
+//   (ядро P x P нитей от центра, по умолчанию P = 5, плюс по нити перекрытия с каждой стороны) в шахматном порядке,
+//   стяжки в пересечениях перекрытия (материал -- --stitch-E/-d/-eps-break); flip -- у слоя k + 1 чётность доски
+//   обратная, same -- у всех слоёв одна доска. Подслои с шагом Delta_ply, пакет вдвое толще сплошного. Только
+//   мишени без пластины; несовместим с --stitch=grid|seam и --random-cut. К имени каталога -- _ch<f|s>P<P>.
 //   --random-cut=N -- мозаичная ткань (случайная раскройка Вороного на N фрагментов, plain_weave_random_cut.hpp)
 //   вместо сплошного полотна; поле -- габарит сплошной ткани уровня, зажим |y| >= c_e для всех бусин; слои группы
 //   --layers-per-cut делят одну раскройку (по умолчанию -- весь пакет); стежки через швы в слоях и сквозные между
@@ -192,6 +198,11 @@ struct Options
     int layers_per_cut = 0; // 0 -- весь пакет
     double cut_gap = -1.0, cut_rot_max = 25.0, cut_stitch_step = -1.0;
     double cut_size_x = -1.0, cut_size_y = -1.0, cut_clamp_edge = -1.0; // своё поле и c_e; < 0 -- уровня
+    // Шахматная ткань (--chess=flip|same)
+    bool chess = false;
+    bool chess_flip = true;
+    int chess_patch = 5;
+    bool chess_param_given = false; // задан --chess-patch
 };
 
 bool parse_double(const std::string& s, double& out)
@@ -246,6 +257,8 @@ void print_usage()
                 "                   [--random-cut=N [--cut-seed=S] [--layers-per-cut=k] [--cut-gap=<м>] [--cut-rot-max=<град>]\n"
                 "                    [--cut-stitch-step=<м>] [--cut-size=WxH] [--cut-clamp-edge=<м>]]  (мозаичная ткань;\n"
                 "                    материал стежка -- --stitch-E/-d/-eps-break; поле и c_e по умолчанию -- уровня)\n"
+                "                   [--chess=none|flip|same [--chess-patch=P]]  (шахматная ткань: кусочки P x P + перекрытие,\n"
+                "                    два подслоя на слой, стяжки; flip -- чётность доски меняется от слоя к слою, same -- нет)\n"
                 "  --random-cut=N: случайная раскройка на N фрагментов, зажим |y| >= c_e для всех бусин; k слоёв на раскройку\n"
                 "  (по умолчанию весь пакет); стежки через швы в слоях и сквозные, шаг вдоль шва по умолчанию p. Без --stitch.\n"
                 "  --stitch=grid: связи-стежки между соседними слоями на линиях шва сетки патчей N x N (--stitch-tile, по\n"
@@ -525,6 +538,16 @@ int parse_args(int argc, char** argv, Options& o)
             o.cut_clamp_edge = d;
             o.mosaic_param_given = true;
         }
+        else if (a == "--chess=none") o.chess = false;
+        else if (a == "--chess=flip") { o.chess = true; o.chess_flip = true; }
+        else if (a == "--chess=same") { o.chess = true; o.chess_flip = false; }
+        else if (a.rfind("--chess=", 0) == 0) return bad("--chess (none|flip|same)");
+        else if (a.rfind("--chess-patch=", 0) == 0)
+        {
+            if (!parse_ll(val("--chess-patch="), n) || n < 1 || n > 1000) return bad("--chess-patch");
+            o.chess_patch = static_cast<int>(n);
+            o.chess_param_given = true;
+        }
         else if (a.rfind("--fiber-inelastic=", 0) == 0)
         {
             o.fiber_inelastic = val("--fiber-inelastic=");
@@ -660,9 +683,34 @@ int parse_args(int argc, char** argv, Options& o)
             return 2;
         }
     }
-    if (o.stitch_param_given && !o.stitch && !o.mosaic)
+    if (o.chess_param_given && !o.chess)
     {
-        std::fprintf(stderr, "Ключи --stitch-* допустимы только вместе с --stitch=grid|seam или --random-cut=N\n");
+        std::fprintf(stderr, "--chess-patch допустим только вместе с --chess=flip|same\n");
+        return 2;
+    }
+    if (o.chess)
+    {
+        if (o.stitch || o.mosaic)
+        {
+            std::fprintf(stderr, "--chess несовместим с --stitch=grid|seam и --random-cut\n");
+            return 2;
+        }
+        if (!config_has_fabric(o.config) || config_has_plate(o.config))
+        {
+            std::fprintf(stderr, "--chess требует мишени из ткани без пластины (--config=1T или <k>T)\n");
+            return 2;
+        }
+        const LevelSpec ls = level_spec(o.level);
+        const int cn = o.fabric_n > 0 ? o.fabric_n : static_cast<int>(ls.nx);
+        if (o.chess_patch >= cn || ((cn - o.chess_patch) % 2 != 0 && cn % 2 != 0))
+        {
+            std::fprintf(stderr, "--chess-patch=%d: нужно P < n (n = %d), при нечётном n -- P нечётно\n", o.chess_patch, cn);
+            return 2;
+        }
+    }
+    if (o.stitch_param_given && !o.stitch && !o.mosaic && !o.chess)
+    {
+        std::fprintf(stderr, "Ключи --stitch-* допустимы только вместе с --stitch=grid|seam, --random-cut=N или --chess\n");
         return 2;
     }
     if (o.stitch)
@@ -901,7 +949,10 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                                                                                             : std::string("L"))
                                                       : std::string())
                                            : std::string();
-    const fs::path sub = fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + ball_tag + fabric_tag + cut_tag +
+    // Шахматная ткань -- свой каталог: _ch<f|s>P<P>
+    const std::string chess_tag =
+        opt.chess ? std::string("_ch") + (opt.chess_flip ? "f" : "s") + "P" + std::to_string(opt.chess_patch) : std::string();
+    const fs::path sub = fs::absolute(opt.out) / (cname + "_" + lname + nz_tag + ball_tag + fabric_tag + cut_tag + chess_tag +
                                                   "_v" + fmt_v0(V0) + "_r" + std::to_string(rep));
     rec.dir = sub;
     try
@@ -936,9 +987,13 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             ms.size_x = opt.cut_size_x;
             ms.size_y = opt.cut_size_y;
             ms.clamp_edge = opt.cut_clamp_edge;
+            ChessSpec cs;
+            cs.enabled = opt.chess;
+            cs.flip = opt.chess_flip;
+            cs.patch = opt.chess_patch;
             sc = build_guo_scene(opt.config, opt.level, V0, sub, opt.mu, opt.body_isolation, opt.plate_nz,
                                   opt.plies, opt.ball_d, opt.ball_m, opt.ball_dx, opt.fabric_n, opt.fabric_ce,
-                                  opt.fabric_ey, ss, ms);
+                                  opt.fabric_ey, ss, ms, cs);
         }
         const double build_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
         rec.m_s = sc.ball_mass;
@@ -1043,7 +1098,13 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
                                                                   " fabric_ce=" + fmtg(sc.spec.c_e, 17) +
                                                                   " fabric_ey=" + fmtg(sc.spec.e_y, 17)
                                                             : std::string()) +
-                                     stitch_id + mosaic_id + "\n";
+                                     stitch_id + mosaic_id +
+                                     (opt.chess ? std::string(" chess=") + (opt.chess_flip ? "flip" : "same") +
+                                                      " patch=" + std::to_string(opt.chess_patch) + " E=" + fmtg(opt.stitch_E, 17) +
+                                                      " d=" + fmtg(opt.stitch_d, 17) + " eps_break=" + fmtg(opt.stitch_eps_break, 17) +
+                                                      " n_stitch=" + std::to_string(sc.n_stitch)
+                                                : std::string()) +
+                                     "\n";
         const fs::path id_path = sub / "scene_id.txt";
         if (opt.checkpoint && !opt.restart)
         {
@@ -1214,6 +1275,17 @@ ShotRecord run_shot(const Options& opt, double V0, int rep, const std::string& n
             add("n_stitch", std::to_string(sc.n_stitch));
             add("n_stitch_in", std::to_string(sc.n_stitch_in));
             add("n_stitch_through", std::to_string(sc.n_stitch_through));
+        }
+        if (opt.chess)
+        {
+            add("chess", opt.chess_flip ? "flip" : "same");
+            add("chess_patch", std::to_string(opt.chess_patch));
+            add("chess_pieces_per_layer", std::to_string(sc.chess_pieces_per_layer));
+            add("chess_stitches_per_layer", std::to_string(sc.chess_stitches_per_layer));
+            add("stitch_E", fmtg(opt.stitch_E));
+            add("stitch_d", fmtg(opt.stitch_d));
+            add("stitch_eps_break", fmtg(opt.stitch_eps_break));
+            add("n_stitch", std::to_string(sc.n_stitch));
         }
         if (opt.ball_d > 0.0 || opt.ball_m > 0.0 || opt.ball_dx > 0.0) // шар не по умолчанию
         {

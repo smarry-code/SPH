@@ -49,6 +49,7 @@
 #include "fiber/fiber_input.hpp"
 #include "fiber/model.hpp"
 #include "fiber/plain_weave.hpp"
+#include "fiber/plain_weave_chess.hpp"
 #include "fiber/plain_weave_quilt.hpp"
 #include "fiber/plain_weave_random_cut.hpp"
 #include "input.hpp"
@@ -149,6 +150,11 @@ struct GuoScene
     double mosaic_size_x = 0.0, mosaic_size_y = 0.0, mosaic_gap = 0.0, mosaic_stitch_step = 0.0;
     bool mosaic_own_field = false;      // поле или c_e заданы явно (MosaicSpec::size_x/y, clamp_edge)
     std::filesystem::path cut_json_path;
+    // Шахматная ткань (ChessSpec)
+    bool chess = false;
+    bool chess_flip = true;
+    int chess_patch = 0;
+    std::size_t chess_pieces_per_layer = 0, chess_stitches_per_layer = 0;
 
     // --- диапазоны индексов Solid -----------------------------------------
     std::size_t ntotal = 0;
@@ -315,6 +321,18 @@ struct MosaicSpec
     double clamp_edge = -1.0;
 };
 
+// «Шахматная» ткань (include/fiber/plain_weave_chess.hpp, решение владельца 2026-11-21): слой -- два подслоя
+// кусочков (ядро patch x patch плюс по нити перекрытия с каждой стороны) в шахматном порядке, стяжки в
+// пересечениях перекрытия; flip -- у слоя k + 1 чётность доски обратная, иначе у всех слоёв одна доска.
+// Только мишени без пластины; несовместима с мозаикой и --stitch; материал стяжки -- из StitchSpec (E, nu, d, rho,
+// eps_break). Пакет вдвое толще сплошного: 2k подслоёв с шагом Delta_ply.
+struct ChessSpec
+{
+    bool enabled = false;
+    bool flip = true;
+    int patch = 5;
+};
+
 // Дополнение .fib: MATERIAL 1 и строки BOND i j 1 (глобальные индексы бусин).
 struct StitchFibExtra
 {
@@ -426,7 +444,8 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
                                 int plies = 0, double ball_d_override = 0.0, double ball_m_override = 0.0,
                                 double ball_dx_override = 0.0, int fabric_n_override = 0,
                                 double fabric_clamp_edge_override = 0.0, double fabric_overhang_y_override = 0.0,
-                                const StitchSpec& stitch = StitchSpec{}, const MosaicSpec& mosaic = MosaicSpec{})
+                                const StitchSpec& stitch = StitchSpec{}, const MosaicSpec& mosaic = MosaicSpec{},
+                                const ChessSpec& chess = ChessSpec{})
 {
     // plies -- число слоёв для Config::TK; ball_*_override > 0 заменяют D_s, m_s, dx_s шара уровня
     // (решение владельца 2026-11-09); плотность по-прежнему выводится из массы: m_s / (n_ball dx_s^3).
@@ -484,6 +503,10 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
     if (mosaic.enabled && !sc.has_fabric) throw std::invalid_argument("guo2019: мозаика требует конфигурации с тканью");
     if (mosaic.enabled && stitch.enabled)
         throw std::invalid_argument("guo2019: мозаика несовместима с --stitch=grid|seam (стежки мозаики строятся по швам раскройки)");
+    if (chess.enabled && (!sc.has_fabric || sc.has_plate))
+        throw std::invalid_argument("guo2019: шахматная ткань -- только для мишеней без пластины (kT)");
+    if (chess.enabled && (mosaic.enabled || stitch.enabled))
+        throw std::invalid_argument("guo2019: шахматная ткань несовместима с мозаикой и --stitch=grid|seam");
     if (sc.has_fabric)
     {
         fiber::PlainWeaveParams q;
@@ -570,6 +593,24 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             sc.mosaic_gap = R.params.gap;
             sc.mosaic_stitch_step = R.params.stitch_step;
         }
+        else if (chess.enabled)
+        {
+            fiber::ChessParams P;
+            P.base = q;
+            P.patch = chess.patch;
+            P.layers = sc.n_plies;
+            P.sub_pitch = sc.ply_pitch;
+            P.mode = chess.flip ? fiber::ChessMode::Flip : fiber::ChessMode::Same;
+            fiber::ChessFabric C = fiber::build_plain_weave_chess(P);
+            sc.plies = std::move(C.plies);
+            sc.chess = true;
+            sc.chess_flip = chess.flip;
+            sc.chess_patch = chess.patch;
+            sc.chess_pieces_per_layer = C.pieces_per_layer;
+            sc.chess_stitches_per_layer = C.stitches_per_layer;
+            sc.stitch_pairs = std::move(C.stitch_pairs);
+            sc.n_stitch = sc.stitch_pairs.size();
+        }
         else // Генератор сам проверяет диапазон c_e и бросает исключение.
             sc.plies = build_fabric_stack(q, sc.n_plies, sc.ply_pitch);
         sc.W = sc.plies.front(); // слой 1 (лицевой): на него опирается остальной код
@@ -635,6 +676,10 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             sc.z_b = -(static_cast<double>(sc.n_plies) * (2.0 * A + d) + static_cast<double>(sc.n_plies - 1) * kEpsPly);
             break;
         }
+        // Шахматная ткань: 2k подслоёв с шагом Delta_ply, тыл -- нижний подслой.
+        if (sc.chess)
+            sc.z_b = -(2.0 * static_cast<double>(sc.n_plies) * (2.0 * A + d) +
+                       static_cast<double>(2 * sc.n_plies - 1) * kEpsPly);
     }
 
     // ----------------------------------------------------------- пластина
@@ -758,14 +803,14 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
                 if (ex.comments.size() >= 3) ex.comments[2] = c3.str();
                 fiber::write_plain_weave_fib(f, rcut->W, "guo2019_scene build_guo_scene (мозаика)", ex);
             }
-            else if (sc.n_plies == 1 && !stitch.enabled) // шов-строчка для 1T идёт через писатель пакета (MATERIAL 1, BOND)
+            else if (sc.n_plies == 1 && !stitch.enabled && !sc.chess) // шов-строчка и шахматная 1T -- писатель пакета (MATERIAL 1, BOND)
                 fiber::write_plain_weave_fib(f, sc.W, "guo2019_scene build_guo_scene");
             else
             {
                 StitchFibExtra ex;
-                if (stitch.enabled)
+                if (stitch.enabled || (sc.chess && !sc.stitch_pairs.empty()))
                 {
-                    ex.spec = &stitch;
+                    ex.spec = &stitch; // у шахматной ткани -- только материал стяжки
                     ex.pairs = &sc.stitch_pairs;
                 }
                 write_fabric_stack_fib(f, sc.plies, "guo2019_scene build_guo_scene", ex);
@@ -774,7 +819,7 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
         {
             std::ofstream f(sc.layout_path);
             if (!f) throw std::runtime_error("guo2019: не удалось открыть " + sc.layout_path.string());
-            if (sc.n_plies == 1 && !rcut)
+            if (sc.n_plies == 1 && !rcut && !sc.chess)
                 fiber::write_plain_weave_layout(f, sc.W);
             else
                 write_fabric_stack_layout(f, sc.plies);
@@ -928,7 +973,7 @@ struct PlyGapReport
 inline PlyGapReport ply_vertex_gaps(const GuoScene& sc)
 {
     PlyGapReport r;
-    if (sc.n_plies < 2 || sc.mosaic) return r; // мозаика: сетки пересечений nx x ny нет
+    if (sc.n_plies < 2 || sc.mosaic || sc.chess) return r; // мозаика, шахматная ткань: сетки пересечений nx x ny у слоя нет
     r.valid = true;
     const auto& fb = sc.model.fiber;
     const int nx = sc.W.params.nx, ny = sc.W.params.ny;
@@ -1226,7 +1271,7 @@ inline void print_scene_summary(std::FILE* f, const GuoScene& sc)
                      sb, sn, scl, sum_w, sum_s, 2.0 * kArealDensityPaper, 4.0 * kArealDensityPaper);
         const PlyGapReport pg = ply_vertex_gaps(sc);
         if (!pg.valid)
-            std::fprintf(f, "  зазор слоёв по вершинным бусинам: не считается (мозаика)\n");
+            std::fprintf(f, "  зазор слоёв по вершинным бусинам: не считается (%s)\n", sc.chess ? "шахматная ткань" : "мозаика");
         else
         std::fprintf(f, "  зазор слоёв по вершинным бусинам (мин / макс; ожидание eps_ply = %.3e м): %.12e / %.12e м по %zu "
                      "пересечениям; мин в паре слоёв %d, пересечение (%d, %d); макс в паре %d, (%d, %d)\n",
