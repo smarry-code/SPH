@@ -788,10 +788,10 @@ static void input_builtin(SimulationConfig& cfg, ParticleSystem& sys, size_t& nt
         }
 
         xv_file >> ntotal;
-        std::wcout << " ******************************\n";
-        std::wcout << " Загрузка начальной конфигурации...\n";
-        std::wcout << " Общее количество частиц " << ntotal << "\n";
-        std::wcout << " ******************************\n";
+        std::cout << " ******************************\n";
+        std::cout << " Загрузка начальной конфигурации...\n";
+        std::cout << " Общее количество частиц " << ntotal << "\n";
+        std::cout << " ******************************\n";
 
         for (size_t i = 0; i < ntotal; ++i)
         {
@@ -903,10 +903,10 @@ static void input_builtin(SimulationConfig& cfg, ParticleSystem& sys, size_t& nt
         {
             shear_cavity(sys, ntotal);
         }
-        std::wcout << " ******************************\n";
-        std::wcout << " Начальная конфигурация сгенерирована\n";
-        std::wcout << " Общее количество частиц " << ntotal << "\n";
-        std::wcout << " ******************************\n";
+        std::cout << " ******************************\n";
+        std::cout << " Начальная конфигурация сгенерирована\n";
+        std::cout << " Общее количество частиц " << ntotal << "\n";
+        std::cout << " ******************************\n";
     }
 }
 

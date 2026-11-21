@@ -238,9 +238,9 @@ inline void validate_clamps(const ClampSet& clamps, const ParticleSystem& sys, s
     }
     if (!clamps.empty())
     {
-        std::wcout << L"Clamp: закреплено частиц Solid " << n_solid << L" (полностью " << n_solid_full
-                   << L"), бусин " << n_bead << L" (полностью " << n_bead_full
-                   << L"), solid_max_h = " << max_h << std::endl;
+        std::cout << "Clamp: закреплено частиц Solid " << n_solid << " (полностью " << n_solid_full
+                   << "), бусин " << n_bead << " (полностью " << n_bead_full
+                   << "), solid_max_h = " << max_h << std::endl;
     }
 }
 

@@ -288,7 +288,7 @@ inline void warn_fiber_solid_contact_undefined_itype_once(int itype)
     static std::set<int> warned;
     if (warned.insert(itype).second)
     {
-        std::wcout << "ПРЕДУПРЕЖДЕНИЕ: Fiber-Solid-Contact не формируется для "
+        std::cout << "ПРЕДУПРЕЖДЕНИЕ: Fiber-Solid-Contact не формируется для "
                       "Solid-частиц itype=" << itype << " -- модуль Юнга/Пуассона "
                       "не определены (нет модуля объёмного сжатия и/или сдвига, "
                       "напр. газ/вода itype 1-2; notes/fiber-model/fiber-problem-statement.md, \"Fiber-Solid-"

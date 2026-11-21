@@ -60,7 +60,7 @@ void time_print()
     std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
 
     // Выводим отформатированное время
-    std::wcout << "Текущее время: " << buffer << std::endl;
+    std::cout << "Текущее время: " << buffer << std::endl;
 }
 
 // ============================================================================

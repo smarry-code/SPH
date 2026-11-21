@@ -423,19 +423,19 @@ void run_time_integration(const SimulationConfig& cfg, ParticleSystem& sys, fibe
         // Вывод прогресса
         if (current_ts % print_step == 0)
         {
-            std::wcout << "______________________________________" << std::endl;
-            std::wcout << "  Текущий щаг по времени = " << dt
+            std::cout << "______________________________________" << std::endl;
+            std::cout << "  Текущий щаг по времени = " << dt
                       << "    текущее время расчета = " << time + dt
                       << "    текущий цикл = " << current_ts << std::endl;
             if (cfg.contact_force_type != 0)
             {
                 const bool limited_by_contact = (wb.min_dt_contact < 1e30) &&
                     (wb.min_dt_contact <= compute_cfl_timestep(cfg, sys, ntotal));
-                std::wcout << "  Шаг ограничен " << (limited_by_contact ? "КОНТАКТОМ" : "CFL")
+                std::cout << "  Шаг ограничен " << (limited_by_contact ? "КОНТАКТОМ" : "CFL")
                           << "    contact_pair_count = " << wb.contact_pair_count
                           << "    contact_max_delta = " << wb.contact_max_delta << std::endl;
             }
-            std::wcout << "______________________________________" << std::endl;
+            std::cout << "______________________________________" << std::endl;
         }
 
         // OdeSolver: предиктор (State::save + полушаг по f^{n-1}; нет-оп у

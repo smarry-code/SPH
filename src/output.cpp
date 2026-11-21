@@ -106,7 +106,7 @@ void output(ParticleSystem& sys, size_t ntotal, double time, size_t itimestep, d
     file1.close();
     //--------------------------
     // Вывод информации о сохранении данных
-    std::wcout << "Данные сохранены в файл: " << filename.str().c_str() << "\n";
-    std::wcout << "Шаг по времени: " << dt << " Время расчета: " << time << "\n";
-    std::wcout << "Текущий цикл: " << itimestep << "\n";
+    std::cout << "Данные сохранены в файл: " << filename.str().c_str() << "\n";
+    std::cout << "Шаг по времени: " << dt << " Время расчета: " << time << "\n";
+    std::cout << "Текущий цикл: " << itimestep << "\n";
 }

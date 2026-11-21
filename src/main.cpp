@@ -157,7 +157,7 @@ static int run_sph()
 
     time_print();
     time_elapsed(s2);
-    std::wcout << "Затраченное время на расчет = " << s2 - s1 << " секунд" << std::endl;
+    std::cout << "Затраченное время на расчет = " << s2 - s1 << " секунд" << std::endl;
 
 
     return 0;
