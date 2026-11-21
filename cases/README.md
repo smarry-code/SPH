@@ -40,7 +40,7 @@ cases/
    `diff -r cases/<кейс>/regression cases/<кейс>/experiment`. Перенос изменений эксперимента в регрессию —
    отдельный коммит по п. 2.
 4. **Проверки самих экспериментальных утилит** (`checkpoint_cli_test`, `stitch_kt_cli_test`,
-   `mosaic_kt_cli_test`, `fabric_checks_smoke_*`) собираются из `experiment/`: они проверяют утилиту, а не
+   `mosaic_kt_cli_test`, `fabric_checks_smoke_*`, `bc2_shot_cli_test`, `bc6_shot_cli_test`) собираются из `experiment/`: они проверяют утилиту, а не
    физику постановки.
 5. **`common/`** — только код, не зависящий от кейса; его правка касается обеих сторон и проверяется полным
    `ctest`.

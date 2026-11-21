@@ -44,6 +44,8 @@ OMP_NUM_THREADS=4 ./build/bc2_shot --contact-type=3 --dx-list=4e-4,2e-4,1e-4 --t
 ./build/bc2_shot --delta-x=8e-4 --t-total=3e-7 --out=runs/bc2-smoke
 ```
 
+Саму утилиту (ключи, файлы, рестарт) проверяет `ctest -R bc2_shot_cli_test`; физику — сквозной тест ниже.
+
 Полный прогон на 4 потоках (Release) — около 7 минут.
 
 ### Выходные файлы

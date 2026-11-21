@@ -15,6 +15,8 @@
   контакта, чекпоинты и рестарт, `shot.txt`, `curve.txt`, `compare.svg`, `runs.csv`. Общий драйвер —
   `cases/common/ceramic_shot.hpp`; обвязка сверки `e2e_{curve,shape,staircase,frames,plot}.hpp`
   перенесена из `tests/` в `cases/common/`.
+- Тесты `bc2_shot_cli_test`, `bc6_shot_cli_test` (`tests/ceramic_shot_cli_test.sh`): коды выхода,
+  выходные файлы, серия и рестарт утилит `bc2_shot`, `bc6_shot`.
 - Каркас каталога `docs/` по модели Diátaxis.
 - Главная страница сайта документации ([`index.md`](../index.md)).
 - Корневой `README.md` (корень репозитория) — точка входа для отображения на GitHub.

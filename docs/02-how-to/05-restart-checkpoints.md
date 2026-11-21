@@ -178,6 +178,9 @@ guo2019_shot --config=1T --level=base --v0-list=100 --out=run1 \
   полный шаг с контактом на 1 и 4 потоках даёт побитово одно и то же состояние;
 - round-trip со связью-стежком (`mat >= 0`) и с материалом Джонсона–Кука 4340 с нагревом Тейлора–Куинни
   (поля `T`, `edot`, `r0` переживают рестарт побитово);
+- CLI-тест `ceramic_shot_cli_test.sh` (`bc2_shot_cli_test`, `bc6_shot_cli_test`): прогон с
+  `--checkpoint-every=8 --max-steps=20`, затем `--restart` — `curve.txt` и финальный кадр совпадают с
+  непрерывным прогоном побайтно;
 - CLI-тесты `checkpoint_cli_test.sh`, `stitch_kt_cli_test.sh`, `mosaic_kt_cli_test.sh` (1T/3T/2T, `smoke`,
   `--checkpoint-every=4 --max-steps=10`, затем `--restart --max-steps=15`): финальный кадр
   `fiber_output_99999.txt` (у 1T ещё и `sph_output_99999.txt`) и `t_end` в `shots.csv` совпадают с непрерывным

@@ -46,6 +46,8 @@ OMP_NUM_THREADS=4 ./build/bc6_shot --contact-type=3 --dx-list=4e-4,2e-4,1e-4 --t
 ./build/bc6_shot --delta-x=8e-4 --t-total=1e-6 --out=runs/bc6-smoke
 ```
 
+Саму утилиту (ключи, файлы, рестарт) проверяет `ctest -R bc6_shot_cli_test`; физику — сквозной тест ниже.
+
 Полный прогон на 4 потоках (Release) — около 6–8 минут.
 
 ### Выходные файлы
