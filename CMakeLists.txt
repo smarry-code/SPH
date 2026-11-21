@@ -1018,6 +1018,26 @@ elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(guo2019_shot PRIVATE -fopenmp)
 endif()
 
+# --- Экспериментальные утилиты керамики BC2 и BC6 (cases/<кейс>/experiment/, драйвер
+#     cases/common/ceramic_shot.hpp), без add_test. 2D-постановки: свои объектники конвейера
+#     с SPH_DIM=2, как у test_e2e_bc2/test_e2e_bc6.
+foreach(_kase bc2 bc6)
+    add_executable(${_kase}_shot cases/${_kase}/experiment/${_kase}_shot.cpp ${SPH_PIPELINE_SOURCES})
+    sph_case(${_kase}_shot ${_kase} experiment)
+    target_include_directories(${_kase}_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${_kase}_shot PRIVATE SPH_DIM=2)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_kase}_shot PRIVATE -fexceptions)
+    endif()
+    if(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        target_compile_options(${_kase}_shot PRIVATE ${SPH_APPLECLANG_OMP_COMPILE_OPTIONS})
+        target_link_options(${_kase}_shot PRIVATE ${SPH_APPLECLANG_OMP_LINK_OPTIONS})
+    elseif(SPH_USE_OPENMP AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${_kase}_shot PRIVATE -fopenmp)
+        target_link_options(${_kase}_shot PRIVATE -fopenmp)
+    endif()
+endforeach()
+
 # --- CLI чекпоинтов guo2019_shot: коды ошибок и сравнение раздельного прогона с непрерывным
 #     (tests/checkpoint_cli_test.sh; требует собранный guo2019_shot).
 add_test(NAME checkpoint_cli_test COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/checkpoint_cli_test.sh $<TARGET_FILE:guo2019_shot>)
