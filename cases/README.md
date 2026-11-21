@@ -12,7 +12,9 @@ cases/
 ├── common/                  ← общая библиотека постановок (не зависит от кейса)
 │   ├── e2e_harness.hpp      ← обвязка: изоляция каталога, глушение вывода, check/note, ru_num
 │   ├── energy.hpp           ← импульс и энергии Solid и Fiber
-│   └── lattice.hpp          ← правило числа ячеек решётки (cell_count)
+│   ├── lattice.hpp          ← правило числа ячеек решётки (cell_count)
+│   └── e2e_curve.hpp, e2e_shape.hpp, e2e_staircase.hpp, e2e_frames.hpp, e2e_plot.hpp
+│                            ← кривая монитора, сверка формы и лесенки, чтение кадров, SVG
 └── <кейс>/
     ├── README.md            ← карточка (шаблон ниже)
     ├── source/              ← архив опыта: исходные данные как получены, не правятся

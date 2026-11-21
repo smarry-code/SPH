@@ -133,6 +133,6 @@ cmake -B build2 -DSPH_E2E_SLOW_TESTS=ON && ctest --test-dir build2 -R e2e_jc_tay
 - В 2D у решателя всегда осесимметрия (`axis_sim` compile-time), масса «плоская»: m = ρ0·dx². Физическая масса кольца 2π·r0·m; лог энергии теперь её учитывает.
 - XSPH меняет саму скорость, поэтому реально рассеивает кинетическую энергию (канал `D_xsph`), и его вклад зависит от dt.
 - Режим нагрева JC: `jc_heating = energy` (по умолчанию) или `taylor_quinney` (`jc_chi`, 0.9).
-- Извлекатель ступеней BC6 — `tests/e2e_staircase.hpp`.
+- Извлекатель ступеней BC6 — `cases/common/e2e_staircase.hpp`.
 - У `e2e::ScopedWorkDir` в имени каталога случайный суффикс.
 - Тест Тейлора печатает энергию в трёх вариантах (без веса, вес r0, вес r), см. `tests/jc_taylor.hpp`.

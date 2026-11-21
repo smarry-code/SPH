@@ -23,7 +23,7 @@
 //   cases/bc6/regression/bc6_geometry.hpp         построение геометрии, независимое от BC2
 //   cases/bc6/regression/initial_conditions.txt  параметры решателя
 //   cases/bc6/regression/reference.txt   приборный эталон (tools/bc6_make_reference.py)
-//   tests/e2e_*.hpp                обвязка, общая для сквозных тестов
+//   cases/common/e2e_*.hpp         обвязка, общая для сквозных тестов
 //
 // ОДИН ПРОГОН — ОДИН ТИП КОНТАКТА (--contact-type=0..3), как и у BC2: обрыв
 // одного сценария не должен скрывать результат остальных, а в отчёте ctest

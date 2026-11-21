@@ -1282,7 +1282,7 @@ add_custom_target(bc2_plot
 # на contact_force_type, smoke по умолчанию, полный режим под опцией), но
 # кейс независим: свои данные (cases/bc6/regression/bc6_case.hpp), своя геометрия
 # (cases/bc6/regression/bc6_geometry.hpp), свой конфиг и свой эталон там же.
-# Общая обвязка вынесена в tests/e2e_*.hpp; tests/test_e2e_bc2.cpp НЕ изменён
+# Общая обвязка вынесена в cases/common/e2e_*.hpp; tests/test_e2e_bc2.cpp НЕ изменён
 # и продолжает жить со своими копиями.
 add_executable(test_e2e_bc6 tests/test_e2e_bc6.cpp ${SPH_PIPELINE_SOURCES})
 sph_case(test_e2e_bc6 bc6 regression)
