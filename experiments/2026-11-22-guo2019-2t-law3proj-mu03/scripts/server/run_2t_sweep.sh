@@ -2,6 +2,7 @@
 # Задача автозапуска guo2t_proj_mu (claude-compute): подбор mu для Guo 2019 2T base, закон 3 с проекцией,
 # без выталкивания, пара V0 = 144 / 150 м/с на каждое mu, mu по очереди. Каждое mu -- run_2t.sh в подкаталоге W/muX
 # (условия -- в шапке run_2t.sh). Аргументы: W MU... (по умолчанию ~/guo2t_proj_mu 0.2 0.27 0.25).
+# STOP_ON_WINDOW=1 -- остановиться на первом mu, где 144 не пробит, а 150 пробит (окно).
 set -u
 W=${1:-$HOME/guo2t_proj_mu}; shift || true
 MUS=("$@"); [ ${#MUS[@]} -eq 0 ] && MUS=(0.2 0.27 0.25)
@@ -17,6 +18,9 @@ for MU in "${MUS[@]}"; do
   rc=$?
   log "mu = $MU: rc=$rc; $(grep -h 'mu = ' "$D/window.md" 2>/dev/null | tail -1)"
   [ $rc -ne 0 ] && rc_all=$rc
+  if [ "${STOP_ON_WINDOW:-0}" = 1 ] && grep -q "(window)" "$D/window.md" 2>/dev/null; then
+    log "mu = $MU: окно найдено, остальные mu не считаю"; break
+  fi
 done
 log "серия завершена, rc=$rc_all"
 exit $rc_all
