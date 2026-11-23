@@ -5,12 +5,15 @@
 индекс, первая и последняя бусина нити). Подслой нити определяется по её среднему z: s = round((c_z0 - z) / D).
 
 Страницы на каждый режим:
+  0. раскройка по слоям: какой подслой владеет каждым пересечением (по вершинным бусинам), линии шва слоёв
+     (сдвиг --chess-shift берётся из shot.txt) и их наложение со следом шара;
   1. вид сверху на фрагмент: нити по подслоям (основа и уток), стяжки -- точки;
   2. сечение y = 0 (основа j = 21 и утки в пересечениях с ней) и сечение по крайней нити ядра;
   3. 3D-вид фрагмента у угла кусочков.
 
 Запуск (claude-compute-8t: ~/fabric_kT/vizenv/bin/python):
   chess_fib_view.py --scene flip=<каталог выстрела> --scene same=<каталог> --out chess_generated.pdf [--png pg]
+  (claude-compute: системный python3 с numpy и matplotlib тоже подходит)
 """
 import argparse, math, os
 
@@ -69,6 +72,86 @@ def read_scene(d):
 
 def coord(i):
     return (i - (N - 1) / 2) * P_
+
+
+def shot_keys(d):
+    kv = {}
+    p = os.path.join(d, "shot.txt")
+    if os.path.exists(p):
+        for t in open(p, encoding="utf-8").read().split():
+            if "=" in t:
+                k, v = t.split("=", 1)
+                kv[k] = v
+    return kv
+
+
+def seam_lefts(patch, shift):
+    """Линии шва (шов между нитями l и l + 1): centered_patch_seams + сдвиг, как в plain_weave_chess.hpp."""
+    base2 = (N - 1) + (patch if (N - patch) % 2 == 0 else 0)
+    out = []
+    for j in range(-N, N):
+        s2 = base2 + 2 * j * patch
+        if 0 < s2 < 2 * (N - 1):
+            l = (s2 - 1) // 2 + shift
+            if 0 <= l <= N - 2:
+                out.append(l)
+    return out
+
+
+def board(X, yarns, layer):
+    """[i, j] -> 0 / 1 -- подслой (лицевой / тыльный) слоя, 2 -- перекрытие, -1 -- нет."""
+    B = -np.ones((N, N), dtype=int)
+    for y in yarns:
+        if y["ply"] != layer:
+            continue
+        seg = X[y["a"]:y["b"] + 1]
+        g = np.round(seg[:, :2] / P_ + (N - 1) / 2)
+        on = np.all(np.abs(seg[:, :2] - (g - (N - 1) / 2) * P_) < 1e-7, axis=1)
+        for (gi, gj) in g[on].astype(int):
+            if 0 <= gi < N and 0 <= gj < N:
+                v = y["sub"] % 2
+                B[gi, gj] = v if B[gi, gj] in (-1, v) else 2
+    return B
+
+
+def board_page(pdf, X, yarns, mode, kv):
+    patch, shift = int(kv.get("chess_patch", 5)), int(kv.get("chess_shift", 0))
+    plies = sorted({y["ply"] for y in yarns})[:2]
+    from matplotlib.colors import ListedColormap
+    cmap = ListedColormap(["#ffffff", "#5dade2", "#f5b041", "#c0392b"])
+    fig, axs = plt.subplots(1, 3, figsize=(11.7, 4.6))
+    ext = (coord(-0.5) * 1e3, coord(N - 0.5) * 1e3, coord(-0.5) * 1e3, coord(N - 0.5) * 1e3)
+    sty = {0: dict(color="k", lw=1.3, ls="-"), 1: dict(color="#8e44ad", lw=1.3, ls="--")}
+
+    def seams(ax, k):
+        sh = shift if k % 2 == 1 else 0
+        for l in seam_lefts(patch, sh):
+            c = (coord(l) + 0.5 * P_) * 1e3
+            ax.axvline(c, **sty[k % 2])
+            ax.axhline(c, **sty[k % 2])
+
+    for n, k in enumerate(plies):
+        B = board(X, yarns, k)
+        axs[n].imshow(B.T + 1, origin="lower", extent=ext, cmap=cmap, vmin=0, vmax=3, interpolation="nearest")
+        seams(axs[n], n)
+        axs[n].set_title("слой %d: синий — подслой i − h, оранжевый — i + h,\nкрасный — перекрытие (стяжки)%s" % (
+            n + 1, ", сдвиг %d нити" % shift if n % 2 == 1 and shift else ""), fontsize=9)
+    ax = axs[2]
+    seams(ax, 0)
+    seams(ax, 1)
+    ax.add_patch(Circle((0, 0), 6.253 / 2, fc="#e74c3c", alpha=0.35, ec="#c0392b"))
+    ax.set_title("наложение швов: слой 1 — сплошные,\nслой 2 — пунктир; круг — шар D = 6,25 мм", fontsize=9)
+    for a in axs:
+        a.set_xlim(-12, 12)
+        a.set_ylim(-12, 12)
+        a.set_aspect("equal")
+        a.set_xlabel("x, мм")
+        a.set_ylabel("y, мм")
+    fig.suptitle("Сгенерированная ткань 2T, %s; --chess-patch=%d, --chess-shift=%d (центральная часть |x|, |y| ≤ 12 мм)"
+                 % (NAMES[mode], patch, shift), fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    pdf.savefig(fig)
+    plt.close(fig)
 
 
 def plan_page(pdf, X, yarns, bonds, mode, box):
@@ -201,6 +284,7 @@ def main():
             X, yarns, bonds = read_scene(d)
             subs = sorted({y["sub"] for y in yarns})
             print(mode, "бусин", len(X), "нитей", len(yarns), "стяжек", len(bonds), "подслои", subs)
+            board_page(pdf, X, yarns, mode, shot_keys(d))
             plan_page(pdf, X, yarns, bonds, mode, a.box)
             section_page(pdf, X, yarns, bonds, mode)
             view3d_page(pdf, X, yarns, bonds, mode, (0.6, 0.6), (6.5, 6.5))
