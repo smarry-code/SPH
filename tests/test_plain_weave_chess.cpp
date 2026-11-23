@@ -10,7 +10,11 @@
 //   5 test_stitches   -- число (864 на слой), вертикальны, длина D - 2A, верх -> низ;
 //   6 test_clamp      -- зажатые выступы только у кусочков у края, в боксах ровно они;
 //   7 test_distance   -- оси нитей разных нитей не ближе d (проникания нет), до 2 слоёв;
-//   8 test_errors     -- нечётный seg и малый шаг подслоёв -- исключения.
+//   8 test_errors     -- нечётный seg, малый шаг подслоёв, |shift| >= patch -- исключения;
+//   9 test_shift      -- сдвиг раскройки нечётных слоёв (shift = 2): кусочки 6 + 7*5 + 2, швы соседних слоёв
+//                        не совпадают, владельцы и стяжки нечётного слоя, расстояние осей >= d;
+//  10 test_through    -- стяжки между слоями: число = перебор пересечений, вертикальны, длина d + eps, соединяют
+//                        подслой 2k + 1 с 2k + 2 (flip / same, сдвиг 0 / 2, 3 слоя).
 #include "fiber/plain_weave.hpp"
 #include "fiber/plain_weave_chess.hpp"
 
@@ -287,6 +291,128 @@ static void test_errors()
     }
     catch (const std::invalid_argument&) { thrown = true; }
     check(thrown, "шаг подслоёв < 2A + d -- invalid_argument");
+    thrown = false;
+    try
+    {
+        ChessParams P = params(2, ChessMode::Flip);
+        P.shift = 5;
+        (void)fiber::build_plain_weave_chess(P);
+    }
+    catch (const std::invalid_argument&) { thrown = true; }
+    check(thrown, "shift = patch -- invalid_argument");
+}
+
+static void test_shift()
+{
+    std::printf("9 test_shift\n");
+    for (ChessMode m : {ChessMode::Flip, ChessMode::Same})
+    {
+        ChessParams P = params(2, m);
+        P.shift = 2;
+        const ChessFabric C = fiber::build_plain_weave_chess(P);
+        const std::string tag = std::string(fiber::chess_mode_name(m)) + ": ";
+        if (m == ChessMode::Flip)
+        {
+            const fiber::ChessAxis& a = C.ax_odd;
+            check(a.count() == 9 && a.core.front() == std::make_pair(0, 5) && a.core.back() == std::make_pair(41, 42),
+                  "нечётный слой: 9 кусочков, края 6 и 2 нити");
+            check(a.core[a.center] == std::make_pair(21, 25), "нечётный слой: центральный кусочек -- нити 21..25");
+            bool apart = true;
+            for (std::size_t t = 0; t + 1 < a.core.size(); ++t)
+                for (std::size_t u = 0; u + 1 < C.ax.core.size(); ++u)
+                    if (a.core[t].second == C.ax.core[u].second) apart = false;
+            check(apart, "линии шва слоёв 1 и 2 не совпадают (сдвиг 2 нити)");
+            check(C.ay_odd.core == a.core, "по y сдвиг тот же");
+            int n2 = 0, bad = 0;
+            for (int i = 0; i < 43; ++i)
+                for (int j = 0; j < 43; ++j)
+                {
+                    int n = 0;
+                    for (int mx = 0; mx < a.count(); ++mx)
+                        for (int my = 0; my < C.ay_odd.count(); ++my)
+                            if (fiber::plain_weave_chess_detail::owns(a, C.ay_odd, mx, my, i, j)) ++n;
+                    if (n == 2) ++n2;
+                    else if (n != 1) ++bad;
+                }
+            check(bad == 0 && static_cast<std::size_t>(n2) == C.stitches_per_layer_odd,
+                  "нечётный слой: пересечения у 1 или 2 кусочков, стяжек = пересечений перекрытия (" +
+                      std::to_string(C.stitches_per_layer_odd) + ")");
+        }
+        check(C.stitch_pairs.size() == C.stitches_per_layer + C.stitches_per_layer_odd, tag + "стяжек -- сумма по слоям");
+        std::vector<std::array<double, 3>> X;
+        for (const auto& L : C.plies)
+            for (const auto& F : L.fibers)
+                for (const auto& p : F.pts) X.push_back(p);
+        bool ok = true;
+        const double len = P.sub_pitch - 2.0 * P.base.amp;
+        for (const auto& pr : C.stitch_pairs)
+        {
+            const auto &a = X[pr.first], &b = X[pr.second];
+            if (a[0] != b[0] || a[1] != b[1] || std::fabs((a[2] - b[2]) - len) > 1e-12) ok = false;
+        }
+        check(ok, tag + "стяжки вертикальны, длина d + eps");
+        const double dmin = min_axis_distance(C, P.base.d, 10e-3);
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "%sнаименьшее расстояние осей разных нитей %.4f мм >= d", tag.c_str(), dmin * 1e3);
+        check(dmin >= P.base.d * (1.0 - 1e-9), buf);
+    }
+}
+
+static void test_through()
+{
+    std::printf("10 test_through\n");
+    for (ChessMode m : {ChessMode::Flip, ChessMode::Same})
+        for (int sh : {0, 2})
+        {
+            ChessParams P = params(3, m);
+            P.shift = sh;
+            P.through = true;
+            const ChessFabric C = fiber::build_plain_weave_chess(P);
+            ChessParams P0 = P;
+            P0.through = false;
+            const ChessFabric C0 = fiber::build_plain_weave_chess(P0);
+            char tag[64];
+            std::snprintf(tag, sizeof tag, "%s, shift %d: ", fiber::chess_mode_name(m), sh);
+            // перебор: пересечения, где у слоя k кусочек на 2k + 1, а у k + 1 -- на 2k + 2
+            std::size_t want = 0;
+            for (int k = 0; k + 1 < 3; ++k)
+                for (int i = 0; i < 43; ++i)
+                    for (int j = 0; j < 43; ++j)
+                    {
+                        bool up = false, dn = false;
+                        for (int t = 0; t < 2; ++t)
+                        {
+                            const int kk = k + t;
+                            const auto &ax = C.axis_x(kk), &ay = C.axis_y(kk);
+                            for (int mx = 0; mx < ax.count(); ++mx)
+                                for (int my = 0; my < ay.count(); ++my)
+                                    if (fiber::plain_weave_chess_detail::owns(ax, ay, mx, my, i, j) &&
+                                        fiber::chess_sublayer(C, kk, mx, my) == 2 * k + 1 + t)
+                                        (t == 0 ? up : dn) = true;
+                        }
+                        if (up && dn) ++want;
+                    }
+            check(C.n_in == C0.stitch_pairs.size() && C.n_through == want && want > 0,
+                  std::string(tag) + "стяжек между слоями " + std::to_string(C.n_through) + " (перебор " +
+                      std::to_string(want) + "), в слоях как без них");
+            std::vector<std::array<double, 3>> X;
+            for (const auto& L : C.plies)
+                for (const auto& F : L.fibers)
+                    for (const auto& p : F.pts) X.push_back(p);
+            bool ok = true;
+            const double len = P.sub_pitch - 2.0 * P.base.amp;
+            for (std::size_t t = C.n_in; t < C.stitch_pairs.size(); ++t)
+            {
+                const auto &a = X[C.stitch_pairs[t].first], &b = X[C.stitch_pairs[t].second];
+                const int k = C.stitch_cross[t][0];
+                const double za = C.sub_cz[static_cast<std::size_t>(2 * k + 1)] - P.base.amp;
+                const double zb = C.sub_cz[static_cast<std::size_t>(2 * k + 2)] + P.base.amp;
+                if (a[0] != b[0] || a[1] != b[1] || std::fabs((a[2] - b[2]) - len) > 1e-12 ||
+                    std::fabs(a[2] - za) > 1e-9 || std::fabs(b[2] - zb) > 1e-9)
+                    ok = false;
+            }
+            check(ok, std::string(tag) + "вертикальны, длина d + eps, от подслоя 2k + 1 к 2k + 2");
+        }
 }
 
 int main()
@@ -298,6 +424,8 @@ int main()
     test_stitches();
     test_clamp();
     test_distance();
+    test_shift();
+    test_through();
     test_errors();
     std::printf("%s: %d ошибок\n", failures == 0 ? "OK" : "FAIL", failures);
     return failures == 0 ? 0 : 1;

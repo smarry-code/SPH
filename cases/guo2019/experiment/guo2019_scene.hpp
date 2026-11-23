@@ -154,7 +154,11 @@ struct GuoScene
     bool chess = false;
     bool chess_flip = true;
     int chess_patch = 0;
+    int chess_shift = 0; // сдвиг раскройки нечётных слоёв, нитей
     std::size_t chess_pieces_per_layer = 0, chess_stitches_per_layer = 0;
+    std::size_t chess_pieces_per_layer_odd = 0, chess_stitches_per_layer_odd = 0; // нечётные слои (k = 1, 3, ...)
+    bool chess_through = false;          // стяжки между слоями
+    std::size_t chess_n_in = 0, chess_n_through = 0, chess_through_first_pair = 0;
 
     // --- диапазоны индексов Solid -----------------------------------------
     std::size_t ntotal = 0;
@@ -331,6 +335,8 @@ struct ChessSpec
     bool enabled = false;
     bool flip = true;
     int patch = 5;
+    int shift = 0; // сдвиг раскройки нечётных слоёв по x и y, нитей (ChessParams::shift)
+    bool through = false; // стяжки между слоями (ChessParams::through)
 };
 
 // Дополнение .fib: MATERIAL 1 и строки BOND i j 1 (глобальные индексы бусин).
@@ -601,6 +607,8 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             P.layers = sc.n_plies;
             P.sub_pitch = sc.ply_pitch;
             P.mode = chess.flip ? fiber::ChessMode::Flip : fiber::ChessMode::Same;
+            P.shift = chess.shift;
+            P.through = chess.through;
             fiber::ChessFabric C = fiber::build_plain_weave_chess(P);
             sc.plies = std::move(C.plies);
             sc.chess = true;
@@ -608,6 +616,13 @@ inline GuoScene build_guo_scene(Config config, Level level, double V0, const std
             sc.chess_patch = chess.patch;
             sc.chess_pieces_per_layer = C.pieces_per_layer;
             sc.chess_stitches_per_layer = C.stitches_per_layer;
+            sc.chess_shift = chess.shift;
+            sc.chess_pieces_per_layer_odd = C.pieces_per_layer_odd;
+            sc.chess_stitches_per_layer_odd = C.stitches_per_layer_odd;
+            sc.chess_through = chess.through;
+            sc.chess_n_in = C.n_in;
+            sc.chess_n_through = C.n_through;
+            sc.chess_through_first_pair = C.through_first_pair;
             sc.stitch_pairs = std::move(C.stitch_pairs);
             sc.n_stitch = sc.stitch_pairs.size();
         }

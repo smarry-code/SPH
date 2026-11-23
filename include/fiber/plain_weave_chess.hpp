@@ -21,6 +21,14 @@
 //     у края полотна сохраняет выступ полотна (overhang_x, overhang_y; зажатые выступы -- в зажим).
 //   * Стяжки: в каждом пересечении перекрытия (два кусочка одного слоя друг над другом) -- связь от нижней из
 //     двух вершинных бусин верхнего кусочка к верхней вершинной бусине нижнего (длина sub_pitch - 2A = d + eps).
+//   * Сдвиг доски (shift = S, решение владельца 2026-11-22): у нечётных слоёв (k = 1, 3, ...) линии шва сдвинуты на
+//     S нитей по x и по y (к большим индексам), чтобы швы соседних слоёв не лежали друг над другом. Линии, вышедшие
+//     за полотно, отбрасываются: у краёв остатки другой ширины (n = 43, P = 5, S = 2: 6 + 7*5 + 2). Цвет кусочка и
+//     центральный кусочек -- по сдвинутой раскройке (центральный -- тот, в ядро которого входит средняя нить).
+//   * Стяжки между слоями (through = true, вариант 2 владельца 2026-11-22): в каждом пересечении, где у слоя k есть
+//     кусочек на тыльном подслое 2k + 1, а у слоя k + 1 -- на лицевом 2k + 2, связь от нижней вершинной бусины
+//     первого к верхней вершинной бусине второго (длина тоже sub_pitch - 2A = d + eps). Идут в stitch_pairs после
+//     стяжек в слоях (тот же материал).
 //   * Зажим: как у полотна (CLAMP_BOX по |y - cy| >= c_e и/или |x - cx| >= c_e), боксы -- по габариту слоя.
 //
 // ПОРЯДОК НИТЕЙ. Слой k: кусочки по mx (вдоль x), внутри -- по my; в кусочке сначала основа по j, затем уток
@@ -57,6 +65,8 @@ struct ChessParams
     int layers = 1;        // число слоёв k
     double sub_pitch = 0.0; // шаг подслоёв по z, м (> 2A + d)
     ChessMode mode = ChessMode::Flip;
+    int shift = 0;          // сдвиг раскройки нечётных слоёв по x и y, нитей (|shift| < patch; 0 -- без сдвига)
+    bool through = false;   // стяжки между слоями (подслой 2k + 1 -> 2k + 2)
 };
 
 // Кусочки вдоль одной оси: ядра [lo, hi] в индексах нитей, нити у швов, номер центрального кусочка.
@@ -88,14 +98,22 @@ struct ChessFabric
     std::vector<std::pair<std::size_t, std::size_t>> stitch_pairs; // глобальные бусины (верхний кусочек, нижний)
     std::vector<std::array<int, 3>> stitch_cross;                  // (слой, i, j) стяжки
     ChessAxis ax, ay;                // ax -- вдоль x (индексы утка i, ny нитей), ay -- вдоль y (индексы основы j, nx)
-    std::size_t pieces_per_layer = 0, stitches_per_layer = 0;
+    ChessAxis ax_odd, ay_odd;        // то же для нечётных слоёв (k = 1, 3, ...): сдвиг на params.shift нитей
+    std::size_t pieces_per_layer = 0, stitches_per_layer = 0;           // слой 1 (k = 0)
+    std::size_t pieces_per_layer_odd = 0, stitches_per_layer_odd = 0;   // слой 2 (k = 1); 0 -- слой один
+    std::size_t n_in = 0;              // стяжек внутри слоёв (первые n_in в stitch_pairs)
+    std::size_t n_through = 0;         // стяжек между слоями (после них)
+    std::size_t through_first_pair = 0; // между слоями 1 и 2
+
+    const ChessAxis& axis_x(int k) const { return k % 2 == 1 ? ax_odd : ax; }
+    const ChessAxis& axis_y(int k) const { return k % 2 == 1 ? ay_odd : ay; }
     double z_top = 0.0, z_bottom = 0.0; // огибающая пакета: оси крайних подслоёв +- (A + d/2)
 };
 
 namespace plain_weave_chess_detail
 {
 
-inline ChessAxis make_axis(double c, double pitch, int n, int patch)
+inline ChessAxis make_axis(double c, double pitch, int n, int patch, int shift = 0)
 {
     ChessAxis A;
     const std::vector<double> seams = centered_patch_seams(c, pitch, n, patch);
@@ -104,8 +122,10 @@ inline ChessAxis make_axis(double c, double pitch, int n, int patch)
     for (double s : seams)
     {
         const double si = (s - c) / pitch + 0.5 * (n - 1); // полуцелое
-        const int left = static_cast<int>(std::floor(si));
-        if (std::fabs(si - (left + 0.5)) > 1e-6) throw std::logic_error("plain_weave_chess: шов не посередине между нитями");
+        const int left0 = static_cast<int>(std::floor(si));
+        if (std::fabs(si - (left0 + 0.5)) > 1e-6) throw std::logic_error("plain_weave_chess: шов не посередине между нитями");
+        const int left = left0 + shift; // шов между нитями left и left + 1
+        if (left < 0 || left > n - 2) continue;
         A.core.push_back({lo, left});
         A.adj[static_cast<std::size_t>(left)] = 1;
         A.adj[static_cast<std::size_t>(left + 1)] = 1;
@@ -139,7 +159,7 @@ inline int color(const ChessAxis& ax, const ChessAxis& ay, int mx, int my)
 // Подслой (0 -- лицевой) кусочка (mx, my) слоя k.
 inline int chess_sublayer(const ChessFabric& C, int k, int mx, int my)
 {
-    const int c = plain_weave_chess_detail::color(C.ax, C.ay, mx, my);
+    const int c = plain_weave_chess_detail::color(C.axis_x(k), C.axis_y(k), mx, my);
     const int sign = (C.params.mode == ChessMode::Flip && k % 2 == 1) ? -1 : 1;
     return 2 * k + (c * sign > 0 ? 0 : 1);
 }
@@ -150,15 +170,19 @@ inline ChessFabric build_plain_weave_chess(const ChessParams& P)
     const PlainWeaveParams& q = P.base;
     if (P.layers < 1) throw std::invalid_argument("plain_weave_chess: число слоёв должно быть >= 1");
     if (q.seg % 2 != 0) throw std::invalid_argument("plain_weave_chess: нужно чётное seg (обрез нити на середине полуволны)");
+    if (P.shift <= -P.patch || P.shift >= P.patch)
+        throw std::invalid_argument("plain_weave_chess: сдвиг раскройки должен быть меньше кусочка (|shift| < patch)");
     if (!(P.sub_pitch >= 2.0 * q.amp + q.d))
         throw std::invalid_argument("plain_weave_chess: шаг подслоёв меньше 2A + d -- перекрытия входят друг в друга");
     ChessFabric C;
     C.params = P;
     C.ax = make_axis(q.cx, q.pitch, q.ny, P.patch); // вдоль x: нити утка i
     C.ay = make_axis(q.cy, q.pitch, q.nx, P.patch); // вдоль y: нити основы j
-    const ChessAxis &ax = C.ax, &ay = C.ay;
-    const int Mx = ax.count(), My = ay.count();
-    C.pieces_per_layer = static_cast<std::size_t>(Mx) * static_cast<std::size_t>(My);
+    C.ax_odd = make_axis(q.cx, q.pitch, q.ny, P.patch, P.shift);
+    C.ay_odd = make_axis(q.cy, q.pitch, q.nx, P.patch, P.shift);
+    C.pieces_per_layer = static_cast<std::size_t>(C.ax.count()) * static_cast<std::size_t>(C.ay.count());
+    if (P.layers > 1)
+        C.pieces_per_layer_odd = static_cast<std::size_t>(C.ax_odd.count()) * static_cast<std::size_t>(C.ay_odd.count());
 
     const PlainWeave W0 = build_plain_weave(q); // полное полотно на подслое 0
     const int half = q.seg / 2;
@@ -191,6 +215,8 @@ inline ChessFabric build_plain_weave_chess(const ChessParams& P)
     int oid = 0;
     for (int k = 0; k < P.layers; ++k)
     {
+        const ChessAxis &ax = C.axis_x(k), &ay = C.axis_y(k);
+        const int Mx = ax.count(), My = ay.count();
         PlainWeave L;
         L.params = q;
         L.params.cz = C.sub_cz[static_cast<std::size_t>(2 * k)];
@@ -292,6 +318,7 @@ inline ChessFabric build_plain_weave_chess(const ChessParams& P)
         const auto it = where.find({k, mx, my, dir, idx});
         if (it == where.end()) throw std::logic_error("plain_weave_chess: нет нити кусочка в пересечении");
         const PlainWeaveFiber& F = C.plies[static_cast<std::size_t>(k)].fibers[it->second];
+        const ChessAxis &ax = C.axis_x(k), &ay = C.axis_y(k);
         // вершины нити -- подряд с первого её пересечения
         const int v0 = dir == 'x' ? ax.ext(mx).first : ay.ext(my).first;
         int a = -1;
@@ -305,6 +332,8 @@ inline ChessFabric build_plain_weave_chess(const ChessParams& P)
     // Стяжки: пересечения перекрытия.
     for (int k = 0; k < P.layers; ++k)
     {
+        const ChessAxis &ax = C.axis_x(k), &ay = C.axis_y(k);
+        const int Mx = ax.count(), My = ay.count();
         std::size_t n_k = 0;
         for (int i = 0; i < q.ny; ++i)
             for (int j = 0; j < q.nx; ++j)
@@ -337,7 +366,47 @@ inline ChessFabric build_plain_weave_chess(const ChessParams& P)
                 ++n_k;
             }
         if (k == 0) C.stitches_per_layer = n_k;
+        if (k == 1) C.stitches_per_layer_odd = n_k;
     }
+    C.n_in = C.stitch_pairs.size();
+
+    // Стяжки между слоями: тыльный подслой слоя k -> лицевой подслой слоя k + 1.
+    auto owner_on = [&](int k, int i, int j, int sub, int& omx, int& omy) {
+        const ChessAxis &ax = C.axis_x(k), &ay = C.axis_y(k);
+        const int px = ax.patch_of(i), py = ay.patch_of(j);
+        for (int mx = std::max(0, px - 1); mx <= std::min(ax.count() - 1, px + 1); ++mx)
+            for (int my = std::max(0, py - 1); my <= std::min(ay.count() - 1, py + 1); ++my)
+                if (owns(ax, ay, mx, my, i, j) && chess_sublayer(C, k, mx, my) == sub)
+                {
+                    omx = mx;
+                    omy = my;
+                    return true;
+                }
+        return false;
+    };
+    if (P.through)
+        for (int k = 0; k + 1 < P.layers; ++k)
+        {
+            std::size_t n_k = 0;
+            for (int i = 0; i < q.ny; ++i)
+                for (int j = 0; j < q.nx; ++j)
+                {
+                    int ux = 0, uy = 0, lx = 0, ly = 0;
+                    if (!owner_on(k, i, j, 2 * k + 1, ux, uy) || !owner_on(k + 1, i, j, 2 * k + 2, lx, ly)) continue;
+                    double zw, zf;
+                    const std::size_t uw = vertex(k, ux, uy, 'x', j, i, zw);
+                    const std::size_t uf = vertex(k, ux, uy, 'y', i, j, zf);
+                    const std::size_t up = zw < zf ? uw : uf; // нижняя нить кусочка слоя k
+                    const std::size_t lw = vertex(k + 1, lx, ly, 'x', j, i, zw);
+                    const std::size_t lf = vertex(k + 1, lx, ly, 'y', i, j, zf);
+                    const std::size_t dn = zw > zf ? lw : lf; // верхняя нить кусочка слоя k + 1
+                    C.stitch_pairs.push_back({up, dn});
+                    C.stitch_cross.push_back({k, i, j});
+                    ++n_k;
+                }
+            if (k == 0) C.through_first_pair = n_k;
+        }
+    C.n_through = C.stitch_pairs.size() - C.n_in;
     C.z_top = C.sub_cz.front() + q.amp + 0.5 * q.d;
     C.z_bottom = C.sub_cz.back() - q.amp - 0.5 * q.d;
     return C;
